@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 jsonschema = { version = "=0.59.0", default-features = false, features = ["arbitrary-precision"] }
 serde = { version = "=1.0.228", default-features = false, features = ["std"] }
-serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
+serde_json = { version = "=1.0.154", features = ["arbitrary_precision", "raw_value"] }
 
 [lints.rust]
 unsafe_code = "forbid"

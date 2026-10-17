@@ -461,3 +461,110 @@ fn unions_without_defaults_are_validated_without_candidate_explosion() {
         json!({"value": 1})
     );
 }
+
+#[test]
+fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
+    let host = SchemaModule::from_olaf_json(
+        "Host",
+        r#"{"type":"object","default":{"__type__":"Provider","value":1}}"#,
+    )
+    .unwrap();
+    let provider = SchemaModule::from_value(json!({"types": {
+        "Provider": {"schema": {"type": "object", "default": {"value": 2}}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([host, provider]).unwrap();
+    let partial = parse("{}").unwrap();
+    assert_eq!(
+        schemas.resolve_as(&partial, "Host").unwrap_err().kind,
+        ResolveErrorKind::AmbiguousDefault
+    );
+    let explicitly_tagged = parse("!Provider").unwrap();
+    assert_eq!(
+        schemas
+            .resolve_as(&explicitly_tagged, "Host")
+            .unwrap_err()
+            .kind,
+        ResolveErrorKind::AmbiguousDefault
+    );
+    let supplied = parse("{ value: 9 }").unwrap();
+    let completed = schemas.resolve_as(&supplied, "Host").unwrap();
+    assert_eq!(completed.root().tag(), Some("Provider"));
+    assert_eq!(completed.to_json(), json!({"value": 9}));
+}
+
+#[test]
+fn different_generated_tags_make_equal_json_completions_ambiguous() {
+    let host = SchemaModule::from_olaf_json(
+        "Host",
+        r#"{"type":"object","anyOf":[
+            {"default":{"__type__":"A","value":1}},
+            {"default":{"__type__":"B","value":1}}
+        ]}"#,
+    )
+    .unwrap();
+    let providers = SchemaModule::from_value(json!({"types": {
+        "A": {"schema": {"type": "object"}},
+        "B": {"schema": {"type": "object"}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([host, providers]).unwrap();
+    let partial = parse("{}").unwrap();
+    assert_eq!(
+        schemas.resolve_as(&partial, "Host").unwrap_err().kind,
+        ResolveErrorKind::AmbiguousDefault
+    );
+}
+
+#[test]
+fn one_of_still_requires_exactly_one_branch_after_equal_completion() {
+    let schemas = schemas(json!({
+        "type": "object",
+        "oneOf": [
+            {"properties": {"value": {"default": 1}}},
+            {"properties": {"value": {"default": 1.0}}}
+        ]
+    }));
+    let input = parse("!app.Config").unwrap();
+    assert_eq!(
+        schemas.resolve(&input).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
+    );
+}
+
+#[test]
+fn uniqueness_uses_json_data_not_tag_metadata() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({"types": {
+        "List": {"schema": {"type": "array", "uniqueItems": true}},
+        "A": {"schema": {"type": "integer"}},
+        "B": {"schema": {"type": "integer"}}
+    }}))
+    .unwrap()])
+    .unwrap();
+    let input = parse("!List [!A 1\n!B 1.0]").unwrap();
+    assert_eq!(
+        schemas.resolve(&input).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
+    );
+    let distinct = parse("!List [1e400\n2e400]").unwrap();
+    let resolved = schemas.resolve(&distinct).unwrap();
+    let items = resolved.root().items().unwrap();
+    assert_ne!(items[0].to_json(), items[1].to_json());
+}
+
+#[test]
+fn expensive_exact_number_uniqueness_fails_through_the_work_budget() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({"types": {
+        "List": {"schema": {"type": "array", "uniqueItems": true}}
+    }}))
+    .unwrap()])
+    .unwrap();
+    let mut source = String::from("!List [\n");
+    for coefficient in 1..=2_000 {
+        source.push_str(&format!("{coefficient}e400\n"));
+    }
+    source.push(']');
+    let input = parse(source).unwrap();
+    let error = schemas.resolve(&input).unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
+}

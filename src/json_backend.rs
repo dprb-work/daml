@@ -38,6 +38,41 @@ impl<'a> NodeRef<'a> {
     }
 }
 
+pub(crate) fn equal_resolved(
+    left: &ResolvedNode<'_>,
+    right: &ResolvedNode<'_>,
+    tags: bool,
+) -> bool {
+    if tags && left.tag() != right.tag() {
+        return false;
+    }
+    match (&left.value, &right.value) {
+        (ResolvedValue::Null, ResolvedValue::Null) => true,
+        (ResolvedValue::Bool(left), ResolvedValue::Bool(right)) => left == right,
+        (ResolvedValue::Number(left), ResolvedValue::Number(right)) => {
+            left == right
+                || jsonschema::json::cmp::equal_numbers(&NumberRef(left.as_ref()), right.as_ref())
+        }
+        (ResolvedValue::String(left), ResolvedValue::String(right)) => left == right,
+        (ResolvedValue::Sequence(left), ResolvedValue::Sequence(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| equal_resolved(left, right, tags))
+        }
+        (ResolvedValue::Mapping(left), ResolvedValue::Mapping(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, value)| {
+                    right
+                        .get(key.as_ref())
+                        .is_some_and(|other| equal_resolved(value, other, tags))
+                })
+        }
+        _ => false,
+    }
+}
+
 impl Json for DamlJson {
     type Node<'a> = NodeRef<'a>;
     type PreparedKey = String;
@@ -232,5 +267,13 @@ impl<'a> Array<'a, DamlJson> for &'a [ResolvedNode<'a>] {
             NodeRef::new(value)
         }
         self.iter().map(node)
+    }
+
+    fn is_unique(&self) -> bool {
+        self.iter().enumerate().all(|(index, value)| {
+            !self[index + 1..]
+                .iter()
+                .any(|other| equal_resolved(value, other, false))
+        })
     }
 }

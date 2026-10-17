@@ -1,7 +1,7 @@
 use crate::{
     Document, Node, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
     ResolvedNode, ResolvedValue, SchemaLocation, Schemas, Value,
-    json_backend::{NodeRef, NumberRef},
+    json_backend::{NodeRef, equal_resolved},
     resolved::{ErrorOrigin, ResolvedTag, checked_number},
     schema::SchemaView,
 };
@@ -182,47 +182,77 @@ impl Schemas {
             ));
         }
         let mut schemas = schemas.to_vec();
-        loop {
-            schemas = self.applicable(&schemas, &node, path, budget, search)?;
-            let had_tag = node.tag().is_some();
-            if matches!(node.value, ResolvedValue::Mapping(_)) {
-                let mut baseline = None;
+        if matches!(node.value, ResolvedValue::Mapping(_)) {
+            // Imported identity defaults can introduce a tag whose schema owns
+            // additional defaults. Discover every tag assertion before applying
+            // payloads, so generated values never become supplied precedence.
+            loop {
+                schemas = self.applicable(&schemas, &node, path, budget, search)?;
+                if node.tag().is_some() {
+                    break;
+                }
+                let mut discovered: Option<ResolvedTag<'a>> = None;
                 for schema in &schemas {
                     let Some(default) = schema.value.get("default") else {
                         continue;
                     };
-                    if !default.is_object() {
-                        continue;
-                    }
-                    let location = schema.default_origin.unwrap_or(schema.location);
-                    let candidate = from_default(
+                    let Some(tag) = default_tag(
                         default,
-                        location,
+                        schema.default_origin.unwrap_or(schema.location),
                         schema.legacy_defaults,
-                        depth,
                         budget,
                         path,
-                    )?;
-                    if node.tag().is_some()
-                        && candidate.tag().is_some()
-                        && node.tag() != candidate.tag()
-                    {
+                    )?
+                    else {
                         continue;
-                    }
-                    if let Some(prior) = &mut baseline {
-                        merge_candidates(prior, candidate, Some(&node), path, search);
+                    };
+                    if let Some(prior) = &mut discovered {
+                        if prior.name != tag.name && search.conflicting_default_tag(&tag, path) == 1
+                        {
+                            *prior = tag;
+                        }
                     } else {
-                        baseline = Some(candidate);
+                        discovered = Some(tag);
                     }
                 }
-                if let Some(default) = baseline {
-                    apply_default(&mut node, default);
-                    if !had_tag && node.tag().is_some() {
-                        continue;
-                    }
+                let Some(tag) = discovered else { break };
+                node.tag = Some(tag);
+            }
+            schemas = self.applicable(&schemas, &node, path, budget, search)?;
+            let mut baseline = None;
+            for schema in &schemas {
+                let Some(default) = schema.value.get("default") else {
+                    continue;
+                };
+                if !default.is_object() {
+                    continue;
+                }
+                let location = schema.default_origin.unwrap_or(schema.location);
+                let candidate = from_default(
+                    default,
+                    location,
+                    schema.legacy_defaults,
+                    depth,
+                    budget,
+                    path,
+                )?;
+                if node.tag().is_some()
+                    && candidate.tag().is_some()
+                    && node.tag() != candidate.tag()
+                {
+                    continue;
+                }
+                if let Some(prior) = &mut baseline {
+                    merge_candidates(prior, candidate, Some(&node), path, search);
+                } else {
+                    baseline = Some(candidate);
                 }
             }
-            break;
+            if let Some(default) = baseline {
+                apply_default(&mut node, default);
+            }
+        } else {
+            schemas = self.applicable(&schemas, &node, path, budget, search)?;
         }
 
         if let ResolvedValue::Mapping(fields) = &mut node.value {
@@ -567,6 +597,13 @@ impl Schemas {
             node,
             path,
         )?;
+        if self.uses_uniqueness(*schema) {
+            budget.charge_work(
+                self.evaluation_cost(*schema, uniqueness_work(node)),
+                node,
+                path,
+            )?;
+        }
         self.check(NodeRef::new(node), *schema)
             .map_err(|failure_info| {
                 let full_path = format!("{path}{}", failure_info.path);
@@ -608,6 +645,24 @@ fn resolved_work(node: &ResolvedNode<'_>) -> usize {
             1usize.saturating_add(value.as_ref().as_str().len().div_ceil(64))
         }
         _ => 1,
+    }
+}
+
+fn uniqueness_work(node: &ResolvedNode<'_>) -> usize {
+    match &node.value {
+        ResolvedValue::Sequence(items) => {
+            let item_work = items.iter().map(resolved_work).max().unwrap_or(0);
+            let pairs = items.len().saturating_mul(items.len().saturating_sub(1)) / 2;
+            items
+                .iter()
+                .fold(pairs.saturating_mul(item_work), |work, item| {
+                    work.saturating_add(uniqueness_work(item))
+                })
+        }
+        ResolvedValue::Mapping(fields) => fields.values().fold(0usize, |work, child| {
+            work.saturating_add(uniqueness_work(child))
+        }),
+        _ => 0,
     }
 }
 
@@ -684,6 +739,20 @@ impl<'a> CompletionSearch<'a> {
                 location,
                 path,
                 "applicable schemas provide conflicting defaults",
+            ));
+        }
+        self.choose(2)
+    }
+
+    fn conflicting_default_tag(&mut self, tag: &ResolvedTag<'_>, path: &str) -> usize {
+        if self.conflict.is_none() {
+            let Origin::Default(location) = tag.origin else {
+                unreachable!("only default tags are discovered")
+            };
+            self.conflict = Some(default_failure(
+                location,
+                path,
+                "applicable schemas provide conflicting default tags",
             ));
         }
         self.choose(2)
@@ -909,38 +978,9 @@ fn from_default<'a>(
                 })
                 .collect::<Result<_, _>>()?,
         ),
+
         JsonValue::Object(values) => {
-            let mut tag = None;
-            if legacy {
-                let identities = ["__type__", "__fn__"]
-                    .into_iter()
-                    .filter_map(|key| values.get(key).map(|value| (key, value)))
-                    .collect::<Vec<_>>();
-                if identities.len() > 1 {
-                    return Err(failure(
-                        ResolveErrorKind::UnknownTag,
-                        &node,
-                        "legacy default has multiple identity fields",
-                        Some(location.clone()),
-                        path,
-                    ));
-                }
-                if let Some((_, value)) = identities.first() {
-                    let name = value.as_str().ok_or_else(|| {
-                        failure(
-                            ResolveErrorKind::UnknownTag,
-                            &node,
-                            "legacy default identity must be a string",
-                            Some(location.clone()),
-                            path,
-                        )
-                    })?;
-                    tag = Some(ResolvedTag {
-                        name: Cow::Borrowed(name),
-                        origin,
-                    });
-                }
-            }
+            let tag = default_tag(value, location, legacy, budget, path)?;
             let mut fields = BTreeMap::new();
             for (key, value) in values {
                 if legacy && (key == "__type__" || key == "__fn__") {
@@ -958,6 +998,54 @@ fn from_default<'a>(
         }
     };
     Ok(node)
+}
+fn default_tag<'a>(
+    value: &'a JsonValue,
+    location: &'a SchemaLocation,
+    legacy: bool,
+    budget: &mut Budget,
+    path: &str,
+) -> Result<Option<ResolvedTag<'a>>, ResolveError> {
+    if !legacy {
+        return Ok(None);
+    }
+    let Some(values) = value.as_object() else {
+        return Ok(None);
+    };
+    let mut identities = ["__type__", "__fn__"]
+        .into_iter()
+        .filter_map(|key| values.get(key));
+    let Some(identity) = identities.next() else {
+        return Ok(None);
+    };
+    let placeholder = ResolvedNode {
+        value: ResolvedValue::Null,
+        tag: None,
+        origin: Origin::Default(location),
+    };
+    if identities.next().is_some() {
+        return Err(failure(
+            ResolveErrorKind::UnknownTag,
+            &placeholder,
+            "legacy default has multiple identity fields",
+            Some(location.clone()),
+            path,
+        ));
+    }
+    let name = identity.as_str().ok_or_else(|| {
+        failure(
+            ResolveErrorKind::UnknownTag,
+            &placeholder,
+            "legacy default identity must be a string",
+            Some(location.clone()),
+            path,
+        )
+    })?;
+    budget.add_bytes(&placeholder, name, path)?;
+    Ok(Some(ResolvedTag {
+        name: Cow::Borrowed(name),
+        origin: Origin::Default(location),
+    }))
 }
 
 fn merge_candidates<'a>(
@@ -1088,28 +1176,7 @@ fn untagged_placeholder(origin: Origin<'_>) -> ResolvedNode<'_> {
 }
 
 fn same_json(left: &ResolvedNode<'_>, right: &ResolvedNode<'_>) -> bool {
-    if left.tag() != right.tag() {
-        return false;
-    }
-    match (&left.value, &right.value) {
-        (ResolvedValue::Null, ResolvedValue::Null) => true,
-        (ResolvedValue::Bool(a), ResolvedValue::Bool(b)) => a == b,
-        (ResolvedValue::Number(a), ResolvedValue::Number(b)) => {
-            a == b || jsonschema::json::cmp::equal_numbers(&NumberRef(a.as_ref()), b.as_ref())
-        }
-        (ResolvedValue::String(a), ResolvedValue::String(b)) => a == b,
-        (ResolvedValue::Sequence(a), ResolvedValue::Sequence(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_json(a, b))
-        }
-        (ResolvedValue::Mapping(a), ResolvedValue::Mapping(b)) => {
-            a.len() == b.len()
-                && a.iter().all(|(key, value)| {
-                    b.get(key.as_ref())
-                        .is_some_and(|other| same_json(value, other))
-                })
-        }
-        _ => false,
-    }
+    equal_resolved(left, right, true)
 }
 
 fn default_failure(location: &SchemaLocation, path: &str, message: &str) -> ResolveError {

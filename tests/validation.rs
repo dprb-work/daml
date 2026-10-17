@@ -321,3 +321,37 @@ fn completion_accounts_for_default_bytes_and_validation_work() {
         .unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
 }
+
+#[test]
+fn implemented_contracts_apply_structure_and_defaults_standalone_and_in_slots() {
+    let module = SchemaModule::from_value(json!({
+        "contracts": {"Shape": {
+            "type": "object",
+            "properties": {"enabled": {"const": true, "default": true}},
+            "required": ["enabled"]
+        }},
+        "types": {
+            "Member": {"implements": ["Shape"], "schema": {"type": "object"}},
+            "Host": {"schema": {"type": "object", "properties": {
+                "member": {"x-daml-slot": "Shape"}
+            }, "required": ["member"]}}
+        }
+    }))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let standalone = parse("!Member").unwrap();
+    assert_eq!(
+        schemas.resolve(&standalone).unwrap().to_json(),
+        json!({"enabled": true})
+    );
+    let nested = parse("!Host { member: !Member }").unwrap();
+    assert_eq!(
+        schemas.resolve(&nested).unwrap().to_json(),
+        json!({"member": {"enabled": true}})
+    );
+    let invalid = parse("!Host { member: !Member { enabled: false } }").unwrap();
+    assert_eq!(
+        schemas.resolve(&invalid).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
+    );
+}

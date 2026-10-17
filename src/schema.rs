@@ -36,13 +36,7 @@ impl SchemaModule {
     /// Loads a JSON-compatible module document.
     pub fn from_json(source: &str) -> Result<Self, SchemaError> {
         check_source(source)?;
-        let value = crate::strict_json::parse(source).map_err(|error| {
-            SchemaError::new(
-                SchemaErrorKind::Parse,
-                format!("invalid schema JSON: {error}"),
-            )
-            .caused_by(error)
-        })?;
+        let value = crate::strict_json::parse(source)?;
         Self::from_value(value)
     }
 
@@ -144,13 +138,7 @@ impl SchemaModule {
     pub fn from_olaf_json(tag: &str, source: &str) -> Result<Self, SchemaError> {
         check_source(source)?;
         valid_name(tag)?;
-        let mut value = crate::strict_json::parse(source).map_err(|error| {
-            SchemaError::new(
-                SchemaErrorKind::Parse,
-                format!("invalid Olaf schema JSON: {error}"),
-            )
-            .caused_by(error)
-        })?;
+        let mut value = crate::strict_json::parse(source)?;
         check_schema_shape(&value)?;
         check_value_limits(&value)?;
         let root_aliases = olaf_root_identities(&value)?;
@@ -200,6 +188,7 @@ struct SchemaEntry {
     validator: Validator<DamlJson>,
     work: usize,
     has_defaults: bool,
+    uses_uniqueness: bool,
 }
 
 /// Immutable, explicitly composed schema registry and its compiled validators.
@@ -348,7 +337,6 @@ impl Schemas {
             .chain(resources.values())
         {
             validate_exact_numbers(schema)?;
-            validate_default_placements(schema, false)?;
         }
         let mut registry = Registry::new();
         for (uri, schema) in &registry_contents {
@@ -449,6 +437,7 @@ impl Schemas {
                 .expect("every compiled view was preflighted");
             entry.work = info.work;
             entry.has_defaults = info.defaults;
+            entry.uses_uniqueness = info.uniqueness;
         }
         let mut by_address = HashMap::new();
         for (id, entry) in entries.iter().enumerate() {
@@ -597,6 +586,9 @@ impl Schemas {
     pub(crate) fn has_defaults(&self, view: SchemaView<'_>) -> bool {
         self.entries[view.id].has_defaults
     }
+    pub(crate) fn uses_uniqueness(&self, view: SchemaView<'_>) -> bool {
+        self.entries[view.id].uses_uniqueness
+    }
 }
 
 pub(crate) struct SchemaFailure {
@@ -692,6 +684,7 @@ fn append_schema_entries(
             validator,
             work: 0,
             has_defaults: false,
+            uses_uniqueness: false,
         });
         for (key, child) in value.as_object().into_iter().flat_map(|m| m.iter()) {
             if schema_map_key(key) {
@@ -811,8 +804,30 @@ fn normalize_olaf_resources(
         .filter(|uri| uri.starts_with("@/"))
         .map(|uri| (uri.clone(), olaf_resource_uri(uri)))
         .collect::<HashMap<_, _>>();
-    for binding in types.values_mut().filter(|binding| binding.legacy_defaults) {
+    let shared_aliases = types
+        .iter()
+        .filter(|(_, binding)| binding.legacy_defaults)
+        .fold(
+            HashMap::<usize, Vec<String>>::new(),
+            |mut groups, (name, binding)| {
+                groups
+                    .entry(Arc::as_ptr(&binding.value) as usize)
+                    .or_default()
+                    .push(name.clone());
+                groups
+            },
+        );
+    for names in shared_aliases.values() {
+        let first = &names[0];
+        let binding = types.get_mut(first).expect("grouped type binding exists");
         rewrite_olaf_references(Arc::make_mut(&mut binding.value), &aliases);
+        let value = Arc::clone(&binding.value);
+        for name in &names[1..] {
+            types
+                .get_mut(name)
+                .expect("grouped type binding exists")
+                .value = Arc::clone(&value);
+        }
     }
     let mut normalized = HashMap::with_capacity(resources.len());
     for (uri, mut schema) in std::mem::take(resources) {
@@ -1192,6 +1207,7 @@ fn validate_exact_numbers(value: &Value) -> Result<(), SchemaError> {
 struct SchemaStats {
     work: usize,
     defaults: bool,
+    uniqueness: bool,
     height: usize,
 }
 
@@ -1235,8 +1251,8 @@ fn prepare_schema_graph(
     struct Prepared<'a> {
         value: &'a Value,
         base: String,
+        edges: Vec<(usize, bool, bool)>,
         location: SchemaLocation,
-        edges: Vec<(usize, bool)>,
         own_work: usize,
     }
     let mut locations = Vec::new();
@@ -1295,7 +1311,7 @@ fn prepare_schema_graph(
                 .get(&(resolved.contents() as *const Value as usize))
                 .copied()
                 .ok_or_else(|| unknown("references into non-schema data are unsupported"))?;
-            edges.push((target, false));
+            edges.push((target, false, true));
         }
         let pattern_properties = node.value.get("patternProperties").is_some();
         for (key, child) in node
@@ -1319,12 +1335,13 @@ fn prepare_schema_graph(
                     | "additionalItems"
                     | "contentSchema"
             ) || (key == "additionalProperties" && pattern_properties);
+            let applicable = !matches!(key.as_str(), "$defs" | "definitions");
             let mut add = |value: &Value| -> Result<(), SchemaError> {
                 let target = addresses
                     .get(&(value as *const Value as usize))
                     .copied()
                     .ok_or_else(|| invalid("schema child is absent from the prepared registry"))?;
-                edges.push((target, restricted));
+                edges.push((target, restricted, applicable));
                 Ok(())
             };
             if schema_map_key(key) {
@@ -1365,18 +1382,15 @@ fn prepare_schema_graph(
         let mut info = SchemaStats {
             work: nodes[id].own_work,
             defaults: nodes[id].value.get("default").is_some(),
+            uniqueness: nodes[id].value.get("uniqueItems") == Some(&Value::Bool(true)),
             height: 1,
         };
-        for &(target, restricted) in &nodes[id].edges {
+        for &(target, _restricted, applicable) in &nodes[id].edges {
             let child = evaluate(target, nodes, active, memo, depth + 1)?;
-            if restricted && child.defaults {
-                return Err(SchemaError::new(
-                    SchemaErrorKind::UnsupportedDefaults,
-                    "defaults reachable through an unsupported applicator are unsupported",
-                )
-                .at(nodes[target].location.clone()));
+            if applicable {
+                info.defaults |= child.defaults;
+                info.uniqueness |= child.uniqueness;
             }
-            info.defaults |= child.defaults;
             info.work = info.work.saturating_add(child.work);
             info.height = info.height.max(child.height.saturating_add(1));
             if info.height > MAX_SCHEMA_DEPTH {
@@ -1400,53 +1414,47 @@ fn prepare_schema_graph(
             return Err(limit("aggregate expanded compilation work exceeds bound"));
         }
     }
+    fn check_default_reachability(
+        id: usize,
+        nodes: &[Prepared<'_>],
+        memo: &[Option<SchemaStats>],
+        visited: &mut HashSet<usize>,
+    ) -> Result<(), SchemaError> {
+        if !visited.insert(id) {
+            return Ok(());
+        }
+        for &(target, restricted, applicable) in &nodes[id].edges {
+            if !applicable {
+                continue;
+            }
+            if restricted
+                && memo[target]
+                    .expect("graph statistics were computed")
+                    .defaults
+            {
+                return Err(SchemaError::new(
+                    SchemaErrorKind::UnsupportedDefaults,
+                    "defaults reachable through an unsupported applicator are unsupported",
+                )
+                .at(nodes[target].location.clone()));
+            }
+            check_default_reachability(target, nodes, memo, visited)?;
+        }
+        Ok(())
+    }
+    let mut reachable = HashSet::new();
+    for (id, _) in prepared
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.location.pointer.is_empty())
+    {
+        check_default_reachability(id, &prepared, &memo, &mut reachable)?;
+    }
     Ok(prepared
         .into_iter()
         .enumerate()
         .map(|(id, node)| (node.location, memo[id].expect("every view was evaluated")))
         .collect())
-}
-fn validate_default_placements(schema: &Value, unsupported: bool) -> Result<(), SchemaError> {
-    if unsupported && schema.get("default").is_some() {
-        return Err(SchemaError::new(
-            SchemaErrorKind::UnsupportedDefaults,
-            "defaults under this applicator are unsupported",
-        ));
-    }
-    let Some(map) = schema.as_object() else {
-        return Ok(());
-    };
-    for (key, value) in map {
-        let nested_unsupported = unsupported
-            || matches!(
-                key.as_str(),
-                "patternProperties"
-                    | "dependentSchemas"
-                    | "not"
-                    | "contains"
-                    | "propertyNames"
-                    | "if"
-                    | "then"
-                    | "else"
-                    | "unevaluatedProperties"
-                    | "unevaluatedItems"
-                    | "additionalItems"
-                    | "contentSchema"
-            )
-            || (key == "additionalProperties" && map.contains_key("patternProperties"));
-        if schema_map_key(key) {
-            for child in value.as_object().into_iter().flat_map(|m| m.values()) {
-                validate_default_placements(child, nested_unsupported)?
-            }
-        } else if schema_array_key(key) {
-            for child in value.as_array().into_iter().flatten() {
-                validate_default_placements(child, nested_unsupported)?
-            }
-        } else if schema_single_key(key) && (value.is_object() || value.is_boolean()) {
-            validate_default_placements(value, nested_unsupported)?
-        }
-    }
-    Ok(())
 }
 fn check_schema_shape(v: &Value) -> Result<(), SchemaError> {
     if !v.is_object() && !v.is_boolean() {
@@ -1466,6 +1474,23 @@ fn walk_schema(
         return Err(limit("schema exceeds node/depth bound"));
     }
     if let Some(m) = v.as_object() {
+        if let Some(dialect) = m.get("$schema")
+            && !matches!(
+                dialect.as_str(),
+                Some("https://json-schema.org/draft/2020-12/schema")
+                    | Some("https://json-schema.org/draft/2020-12/schema#")
+            )
+        {
+            return Err(invalid("$schema must select JSON Schema 2020-12"));
+        }
+        if m.contains_key("dependencies") || m.contains_key("additionalItems") {
+            return Err(invalid(
+                "legacy dependencies and additionalItems are unsupported",
+            ));
+        }
+        if m.get("items").is_some_and(Value::is_array) {
+            return Err(invalid("tuple-form items is unsupported"));
+        }
         for k in ["$dynamicRef", "$recursiveRef"] {
             if m.contains_key(k) {
                 return Err(invalid(format!("{k} is unsupported")));

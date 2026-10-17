@@ -150,6 +150,11 @@ unevaluated/content schemas, or legacy `additionalItems`—fail composition inst
 of being silently ignored. Those constraints without defaults remain ordinary
 engine validation.
 
+When `$schema` is present, it must select Draft 2020-12. The legacy
+`dependencies` keyword and pre-2020-12 array form of `items` are rejected rather
+than delegated to engine compatibility behavior. Use `dependentSchemas`,
+`dependentRequired`, and `prefixItems`.
+
 ## Olaf schema inspiration and explicit import
 
 Olaf emits Draft 2020-12 schemas with properties, required fields, definitions,
@@ -201,7 +206,9 @@ materialized nesting is bounded at 128.
 Default resolution limits are 100,000 cumulatively materialized nodes, 8 MiB of
 value/key/tag bytes, and 1,000,000 conservative work units. Alternative candidates
 share those budgets. Validation charges expanded schema work against instance
-nodes and text in 64-byte blocks, not just the number of top-level checks.
+nodes and text in 64-byte blocks. Schemas that can evaluate `uniqueItems` also
+reserve worst-case exact pair-comparison work before entering the validator;
+oversized comparisons return `LimitExceeded` rather than exceeding the budget.
 
 Composition bounds the selected schemas to 10,000 JSON nodes and 8 MiB, compiled
 schema-view copies to 8 MiB, and aggregate expanded compilation work to 100,000.

@@ -1,6 +1,6 @@
 //! Declarative modules, reference resolution, and composition failures.
 
-use daml::{SchemaErrorKind, SchemaModule, Schemas, parse};
+use daml::{ResolveErrorKind, SchemaErrorKind, SchemaModule, Schemas, parse};
 use serde_json::json;
 
 fn config_schema() -> serde_json::Value {
@@ -304,11 +304,10 @@ fn explicit_olaf_references_resolve_only_supplied_resources() {
 fn additional_unsupported_default_applicators_are_rejected() {
     for schema in [
         json!({"dependentSchemas":{"trigger":{"properties":{"x":{"default":1}}}}}),
-        json!({"items":false,"additionalItems":{"default":1}}),
         json!({"contentSchema":{"properties":{"x":{"default":1}}}}),
     ] {
         let module = SchemaModule::from_value(json!({"types":{"app.Bad":{"schema":schema}}}))
-            .expect("module parses");
+            .expect("modern schema loads");
         assert_eq!(
             Schemas::compose([module])
                 .err()
@@ -317,6 +316,12 @@ fn additional_unsupported_default_applicators_are_rejected() {
             SchemaErrorKind::UnsupportedDefaults
         );
     }
+    let legacy = SchemaModule::from_value(json!({"types":{"app.Bad":{"schema":{
+        "items": false, "additionalItems": {"default": 1}
+    }}}}))
+    .err()
+    .expect("legacy applicator rejected during admission");
+    assert_eq!(legacy.kind, SchemaErrorKind::InvalidSchema);
 }
 
 #[test]
@@ -402,4 +407,196 @@ fn diagnostic_constraint_location_tracks_the_referenced_resource() {
     let location = error.schema.unwrap();
     assert_eq!(location.resource, "https://example.invalid/port");
     assert_eq!(location.pointer, "/minimum");
+}
+
+#[test]
+fn definition_defaults_are_contained_but_not_applied_until_referenced() {
+    let branches = (0..20)
+        .map(|index| {
+            json!({
+                "type":"string",
+                "$defs":{"unused":{"not":{"properties":{"x":{"default":index}}}}}
+            })
+        })
+        .collect::<Vec<_>>();
+    let unused = SchemaModule::from_value(json!({
+        "types":{"app.Safe":{"schema":{"anyOf":branches}}}
+    }))
+    .expect("unused definition defaults are accepted");
+    Schemas::compose([unused]).expect("unreachable defaults do not affect applicability");
+
+    let referenced = SchemaModule::from_value(json!({
+        "types":{"app.Bad":{"schema":{
+            "not":{"$ref":"#/$defs/target"},
+            "$defs":{"target":{"properties":{"x":{"default":1}}}}
+        }}}
+    }))
+    .expect("module parses");
+    assert_eq!(
+        Schemas::compose([referenced])
+            .err()
+            .expect("referenced default under not")
+            .kind,
+        SchemaErrorKind::UnsupportedDefaults
+    );
+}
+
+#[test]
+fn legacy_keywords_and_non_2020_dialects_are_rejected_at_schema_nodes() {
+    for schema in [
+        json!({"dependencies":{"trigger":["value"]}}),
+        json!({"additionalItems":false}),
+        json!({"items":[{"type":"string"}]}),
+        json!({"$schema":"http://json-schema.org/draft-07/schema#"}),
+        json!({"$schema":"https://json-schema.org/draft/2019-09/schema"}),
+        json!({"properties":{"nested":{"$schema":"https://json-schema.org/draft/2019-09/schema"}}}),
+        json!({"properties":{"nested":{"dependencies":{"x":["y"]}}}}),
+        json!({"$defs":{"nested":{"items":[false]}}}),
+    ] {
+        let module = SchemaModule::from_value(json!({
+            "types":{"app.Bad":{"schema":schema}}
+        }))
+        .err()
+        .expect("unsupported schema profile");
+        assert_eq!(module.kind, SchemaErrorKind::InvalidSchema);
+    }
+
+    for module_value in [
+        json!({"contracts":{"app.Bad":{"$schema":"http://json-schema.org/draft-07/schema#"}}}),
+        json!({"resources":[{"uri":"https://example.invalid/schema","schema":{
+            "$defs":{"nested":{"dependencies":{"x":["y"]}}}
+        }}]}),
+    ] {
+        let error = SchemaModule::from_value(module_value)
+            .err()
+            .expect("profile checked in all declarations");
+        assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+    }
+    assert_eq!(
+        SchemaModule::from_json(
+            r#"{"types":{"Bad":{"schema":{"properties":{"nested":{"dependencies":{"x":["y"]}}}}}}}"#,
+        )
+        .err()
+        .expect("JSON loader checks nested legacy keywords")
+        .kind,
+        SchemaErrorKind::InvalidSchema
+    );
+    assert_eq!(
+        SchemaModule::from_olaf_json(
+            "legacy.Bad",
+            r#"{"properties":{"nested":{"$schema":"http://json-schema.org/draft-07/schema#"}}}"#,
+        )
+        .err()
+        .expect("Olaf loader checks nested dialects")
+        .kind,
+        SchemaErrorKind::InvalidSchema
+    );
+}
+
+#[test]
+fn modern_dependency_keywords_remain_supported_and_data_is_not_walked_as_schema() {
+    let module = SchemaModule::from_value(json!({
+        "types":{"app.Dependent":{"schema":{
+            "type":"object",
+            "properties":{
+                "credit_card":{"type":"string"},
+                "billing_address":{"type":"string"},
+                "kind":{"type":"object"}
+            },
+            "dependentRequired":{"credit_card":["billing_address"]},
+            "dependentSchemas":{"kind":{"required":["billing_address"]}},
+            "examples":[{"$schema":"http://json-schema.org/draft-07/schema#","dependencies":{}}]
+        }}}
+    }))
+    .expect("modern dependencies and schema-looking data are accepted");
+    let schemas = Schemas::compose([module]).expect("compose");
+    assert!(
+        schemas
+            .resolve(&parse("!app.Dependent { kind: { } }").unwrap())
+            .is_err()
+    );
+    schemas
+        .resolve(&parse("!app.Dependent { kind: { }\n billing_address: \"here\" }").unwrap())
+        .expect("modern dependentSchemas accepts satisfied input");
+    assert!(
+        schemas
+            .resolve(&parse("!app.Dependent { credit_card: \"123\" }").unwrap())
+            .is_err()
+    );
+}
+
+#[test]
+fn olaf_aliases_share_normalized_schema_identity() {
+    let module = SchemaModule::from_olaf_json(
+        "legacy.Short",
+        r#"{
+            "type":"object",
+            "properties":{
+                "__fn__":{"enum":["legacy.Short","legacy.Canonical"]},
+                "value":{"$ref":"@/shared/value.json"}
+            },
+            "required":["value"]
+        }"#,
+    )
+    .expect("Olaf aliases");
+    let resource = SchemaModule::from_value(json!({
+        "resources":[{"uri":"@/shared/value.json","schema":{"type":"string"}}]
+    }))
+    .expect("resource");
+    let schemas = Schemas::compose([module, resource]).expect("aliased schemas keep identity");
+    for tag in ["legacy.Short", "legacy.Canonical"] {
+        let good = parse(format!("!{tag} {{ value: \"ok\" }}")).unwrap();
+        assert!(schemas.resolve(&good).is_ok());
+        let bad = parse(format!("!{tag} {{ value: 3 }}")).unwrap();
+        assert!(schemas.resolve(&bad).is_err());
+    }
+    assert!(
+        SchemaModule::from_olaf_json(
+            "legacy.Wrong",
+            r#"{"type":"object","properties":{"__fn__":{"const":"legacy.Actual"}}}"#
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn nested_olaf_identities_do_not_create_outer_aliases() {
+    let module = SchemaModule::from_olaf_json(
+        "legacy.Root",
+        r#"{
+            "type":"object",
+            "properties":{
+                "child":{
+                    "type":"object",
+                    "properties":{"__fn__":{"const":"legacy.Nested"}}
+                }
+            }
+        }"#,
+    )
+    .expect("nested discriminator does not rename the imported root");
+    let schemas = Schemas::compose([module]).expect("compose");
+    let untagged_child = parse("!legacy.Root { child: { } }").unwrap();
+    assert_eq!(
+        schemas.resolve(&untagged_child).unwrap_err().kind,
+        ResolveErrorKind::TagMismatch
+    );
+    let unbound_nested = parse("{ child: { } }").unwrap();
+    assert_eq!(
+        schemas
+            .resolve_as(&unbound_nested, "legacy.Nested")
+            .unwrap_err()
+            .kind,
+        ResolveErrorKind::UnknownExpectedType
+    );
+
+    let aliases_without_resources = SchemaModule::from_olaf_json(
+        "legacy.Short",
+        r#"{"type":"object","properties":{"__fn__":{"enum":["legacy.Short","legacy.Canonical"]}}}"#,
+    )
+    .expect("root aliases without resources");
+    let schemas = Schemas::compose([aliases_without_resources]).expect("compose aliases");
+    for tag in ["legacy.Short", "legacy.Canonical"] {
+        let document = parse(format!("!{tag}")).unwrap();
+        assert!(schemas.resolve(&document).is_ok());
+    }
 }
