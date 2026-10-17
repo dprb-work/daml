@@ -320,11 +320,11 @@ fn scan_triple(
     };
     let raw = &source[content_start..content_end];
     let value = if quote == b'\'' {
-        wrap_lines(raw, quote)
+        wrap_lines(raw, content_start, quote)
     } else {
         dedent_and_join(raw, content_start, quote)?
     };
-    Ok((StringValue::Decoded(value), end))
+    Ok((value, end))
 }
 
 fn next_line(raw: &str, at: usize) -> (usize, usize) {
@@ -361,8 +361,19 @@ fn append_triple_text(output: &mut String, text: &str, quote: u8) {
     }
 }
 
-fn wrap_lines(raw: &str, quote: u8) -> String {
-    let mut output = String::new();
+fn triple_needs_decoding(text: &str, quote: u8) -> bool {
+    let bytes = text.as_bytes();
+    let delimiter = [quote; 3];
+    bytes.iter().enumerate().any(|(at, byte)| {
+        *byte == b'\\'
+            && (bytes.get(at + 1) == Some(&b'\\')
+                || bytes.get(at + 1..at + 4) == Some(delimiter.as_slice()))
+    })
+}
+
+fn wrap_lines(raw: &str, source_at: usize, quote: u8) -> StringValue {
+    let mut first = None;
+    let mut output = None;
     let mut at = 0;
     while at < raw.len() {
         let (end, next) = next_line(raw, at);
@@ -375,17 +386,38 @@ fn wrap_lines(raw: &str, quote: u8) -> String {
             finish -= 1;
         }
         if begin < finish {
-            if !output.is_empty() {
-                output.push(' ');
+            if let Some((first_begin, first_end)) = first {
+                let value = output.get_or_insert_with(|| {
+                    let mut value = String::with_capacity(raw.len());
+                    append_triple_text(&mut value, &raw[first_begin..first_end], quote);
+                    value
+                });
+                value.push(' ');
+                append_triple_text(value, &raw[begin..finish], quote);
+            } else {
+                first = Some((begin, finish));
             }
-            append_triple_text(&mut output, &raw[begin..finish], quote);
         }
         at = next;
     }
-    output
+    if let Some(output) = output {
+        return StringValue::Decoded(output);
+    }
+    let (begin, end) = first.unwrap_or((0, 0));
+    let text = &raw[begin..end];
+    if triple_needs_decoding(text, quote) {
+        let mut output = String::with_capacity(text.len());
+        append_triple_text(&mut output, text, quote);
+        StringValue::Decoded(output)
+    } else {
+        StringValue::Source(Span {
+            start: source_at + begin,
+            end: source_at + end,
+        })
+    }
 }
 
-fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<String, ParseError> {
+fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<StringValue, ParseError> {
     let bytes = raw.as_bytes();
     let mut margin = usize::MAX;
     let mut at = 0;
@@ -407,7 +439,21 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<String, Par
         margin = 0;
     }
 
-    let mut output = String::new();
+    let unchanged = margin == 0
+        && !raw.contains('\r')
+        && (!raw.contains('\\')
+            || (!triple_needs_decoding(raw, quote)
+                && !raw
+                    .split('\n')
+                    .any(|line| line.trim_end_matches([' ', '\t']).ends_with('\\'))));
+    if unchanged {
+        return Ok(StringValue::Source(Span {
+            start: source_at,
+            end: source_at + raw.len(),
+        }));
+    }
+
+    let mut output = String::with_capacity(raw.len());
     at = 0;
     let mut joined = false;
     while at < bytes.len() {
@@ -442,7 +488,7 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<String, Par
             while before_tail > begin && bytes[before_tail - 1] == b'\\' {
                 before_tail -= 1;
             }
-            if next > end && htail != end && (htail - before_tail) % 2 == 1 {
+            if htail != end && (htail - before_tail) % 2 == 1 {
                 return Err(ParseError::new(
                     ErrorKind::InvalidEscape,
                     source_at + before_tail,
@@ -463,5 +509,5 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<String, Par
         }
         at = next;
     }
-    Ok(output)
+    Ok(StringValue::Decoded(output))
 }

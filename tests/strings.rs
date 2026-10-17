@@ -43,6 +43,8 @@ fn invalid_continuations_and_scalar_limit_are_reported() {
     for source in [
         "\"\"\"\n  ends with slash \\\n\"\"\"",
         "\"\"\"\n  slash \\ \n  next\n\"\"\"",
+        "\"\"\"\n  final slash \\ \n\"\"\"",
+        "\"\"\"\n  final slash \\\t\n\"\"\"",
     ] {
         assert_eq!(parse(source).unwrap_err().kind, ErrorKind::InvalidEscape);
     }
@@ -175,4 +177,39 @@ fn string_decoding_is_independent_of_embedding_depth() {
 #[test]
 fn wrapped_strings_keep_comments_and_syntax_characters_as_data() {
     assert_eq!(root_string("'''\n # { !tag }\n'''"), "# { !tag }");
+}
+
+#[test]
+fn closing_boundary_preserves_escaped_slashes_and_rejects_continuations() {
+    for eol in ["\n", "\r\n", "\r"] {
+        for tail in ["", " ", "\t"] {
+            for (slashes, decoded) in [
+                (r"\", None),
+                (r"\\", Some(r"\")),
+                (r"\\\", None),
+                (r"\\\\", Some(r"\\")),
+            ] {
+                let source = format!("\"\"\"{eol}text{slashes}{tail}{eol}\"\"\"");
+                if let Some(decoded) = decoded {
+                    assert_eq!(root_string(&source), format!("text{decoded}{tail}"));
+                } else {
+                    let error = parse(&source).unwrap_err();
+                    assert_eq!(error.kind, ErrorKind::InvalidEscape);
+                    assert!(source.get(error.span.start..error.span.end).is_some());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn unchanged_literal_and_single_wrapped_lines_keep_exact_text() {
+    for (source, expected) in [
+        ("\"\"\"\nalpha\nbeta\n\"\"\"", "alpha\nbeta"),
+        ("\"\"\"\n\\n remains literal\n\"\"\"", "\\n remains literal"),
+        ("'''\n  \n  one line \t\n\n'''", "one line"),
+        ("'''\n  a \\q remains literal\n'''", "a \\q remains literal"),
+    ] {
+        assert_eq!(root_string(source), expected);
+    }
 }
