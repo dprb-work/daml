@@ -598,27 +598,36 @@ fn expensive_exact_number_uniqueness_fails_through_the_work_budget() {
 #[test]
 fn uniqueness_work_propagates_through_references_to_default_created_arrays() {
     let values = (0..500).map(|value| json!(value)).collect::<Vec<_>>();
-    let schemas = schemas(json!({
-        "type": "object",
-        "properties": {"values": {
-            "$ref": "#/$defs/Unique",
-            "default": values
-        }},
-        "required": ["values"],
-        "$defs": {"Unique": {"type": "array", "uniqueItems": true}}
-    }));
+    let schema = |unique, values| {
+        json!({
+            "type": "object",
+            "properties": {"values": {
+                "$ref": "#/$defs/Items",
+                "default": values
+            }},
+            "required": ["values"],
+            "$defs": {"Items": {"type": "array", "uniqueItems": unique}}
+        })
+    };
+    let ordinary = schemas(schema(false, values.clone()));
+    let exact = schemas(schema(true, values));
     let input = parse("!app.Config").unwrap();
     let limits = ResolutionLimits {
-        max_steps: 100_000,
+        max_steps: 10_000_000,
         ..Default::default()
     };
+    ordinary
+        .resolve_with_limits(&input, None, limits)
+        .expect("ordinary validation fits the same budget");
     assert_eq!(
-        schemas
+        exact
             .resolve_with_limits(&input, None, limits)
             .unwrap_err()
             .kind,
         ResolveErrorKind::LimitExceeded
     );
     let small = parse("!app.Config { values: [1\n2] }").unwrap();
-    assert!(schemas.resolve(&small).is_ok());
+    exact
+        .resolve_with_limits(&small, None, limits)
+        .expect("small exact comparison fits the same budget");
 }
