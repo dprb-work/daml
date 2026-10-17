@@ -1,9 +1,10 @@
 # DAML syntax contract
 
-This contract owns the first syntax-to-document implementation (plan milestones
-1–2). Schema validation, formatting, and LSP integration remain subsequent
-milestones. The governing rule is **one parse, no guessing**: no implicit nesting,
-implicit string typing, missing-value defaults, or YAML fallback.
+This contract owns syntax-to-document parsing (plan milestones 1–2).
+[Schema completion and validation](schemas.md) are separate passes; formatting
+and LSP integration remain planned. The governing rule is **one parse, no
+guessing**: parsing never infers nesting, string types, or missing values and
+never falls back to YAML.
 
 ## Structure and names
 
@@ -148,7 +149,8 @@ not a stack overflow or a fabricated partial document.
 
 The small native parser implements this contract directly. Upstream YAML/KYAML
 and Rust parser sources were consulted through the [reuse assessment](parser-reuse.md),
-but this implementation does not copy or vendor upstream code or tests and adds
-no third-party dependency. YAML's full acceptance corpus is not the DAML grammar.
+but this syntax implementation does not copy or vendor upstream code or tests
+and needs no YAML parser dependency. YAML's full acceptance corpus is not the
+DAML grammar.
 Permanent cases cover consumer-visible syntax, values, original spans, failure
 categories, and limits; final key/tag alphabet restrictions are not pinned.

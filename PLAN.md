@@ -1,16 +1,16 @@
 # DAML implementation plan
 
-Status: the first syntax-to-document implementation follows
-[the syntax contract](docs/syntax.md), covering milestones 1–2. Subsequent schema,
-formatter, and LSP milestones remain planned. Final key/tag alphabets and whether
-they align remain deliberately deferred.
+Status: syntax parsing and deep assertion/default resolution are implemented
+(milestones 1–3). [Syntax](docs/syntax.md) and [schemas](docs/schemas.md) own their
+public contracts. Retained fuzzing, measurements, formatter, and LSP work remain
+planned. Final key/tag alphabets and whether they align remain deferred.
 
 ## Target result
 
 A standalone safe-Rust library that parses DAML into a source-backed document,
 preserves deeply nested tags, and validates their assertions against independently
 composed schema modules. A real consumer can inspect values, tags, and source
-locations without depending on Olaf or a global discriminator union.
+locations without a global discriminator union or vendor-specific core behavior.
 
 Ship complete consumer-visible behavior in each implementation slice. A lexer,
 AST skeleton, forwarding API, or passing empty test suite is not a milestone.
@@ -29,11 +29,13 @@ AST skeleton, forwarding API, or passing empty test suite is not a milestone.
 - Backslash immediately before a physical newline can explicitly join literal
   string lines; joining inserts no space.
 - No YAML `|`, `|-`, `|+`, `>`, `>-`, or `>+` string variants.
-- Rust implementation, reusable independently of Olaf. Keep later Python
+- Rust implementation, reusable by independent consumers. Keep later Python
   integration possible without embedding Python into the core.
 - Reuse or port existing code when its technical fit and license justify it.
 - Provide a DAML formatter, primarily for indentation, and an LSP after the
   parser/library core. These are planned deliverables, not optional ideas.
+- Schemas are expressible in DAML as well as JSON. Explicit defaults complete
+  partial objects recursively, followed by full validation of required fields.
 
 DAML is its own grammar, not a YAML/KYAML subset. The
 [reuse assessment](docs/parser-reuse.md) explains the mismatches, pinned sources,
@@ -197,6 +199,11 @@ schema registry is required just to parse. `./scripts/check` passes.
 **Result:** a document's nested assertions are actually enforced without editing
 a central union whenever a new module supplies a type.
 
+The implemented schema/default contract is in [docs/schemas.md](docs/schemas.md).
+It uses JSON Schema 2020-12 constraints serialized as JSON or DAML, with explicit
+tag/slot keywords and an offline, tag-aware validation engine. Consumers translate
+their own formats into native `SchemaModule` values; DAML has no vendor importer.
+
 - Add a separate validation pass over the parsed document. Unknown tags survive
   syntax parsing but fail validation unless explicitly supplied by the caller.
 - Keep tag resolution separate from application-object construction. Validators
@@ -220,8 +227,8 @@ implementation validates without changing the host schema's discriminator union.
 Nested invalid fields, unknown tags, incompatible field/tag contracts, and
 composition collisions produce structured paths plus original source spans.
 Tagged scalars, lists, mappings, and empty mappings are all exercised. A real
-consumer calls parse then validate; parser errors and validation errors stay
-separate. `./scripts/check` passes.
+consumer calls parse then resolve, including defaults; syntax, schema-loading,
+and resolution failures stay separate. `./scripts/check` passes.
 
 An effective name-to-schema lookup is still necessary. The decoupling is in
 schema ownership and extension contracts, not the absence of an index.
@@ -303,8 +310,8 @@ unsafe prohibition is not evidence that transitive code contains no unsafe.
 
 Do not silently substitute YAML preprocessing for parsing DAML, implement every
 YAML feature, or lose tags by converting immediately to JSON/dictionaries.
-Do not couple the grammar or schema owner to Olaf's `__type__`/`__fn__` wire
-format, callable runtime, parameter templates, or execution lifecycle.
+Do not couple the grammar or schema owner to a consumer's wire format, callable
+runtime, parameter templates, foreign references, or execution lifecycle.
 
 The formatter and LSP are planned follow-on milestones after the standalone
 library, not hidden prerequisites for completing that library. Preserve source
@@ -313,6 +320,6 @@ information now so they do not require another grammar or changed string rules.
 Serde integration, Python bindings/wheels, and a full command-line product remain
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
-The next implementation milestone after syntax parsing is independently composed
-schema validation. Parsing currently preserves tag assertions without resolving
-them; it must not be presented as runtime type validation.
+The next library milestone is hardening: retain a fuzz harness and measure real
+workloads. Schema resolution already enforces independently supplied assertions
+and completes explicit defaults without constructing application objects.
