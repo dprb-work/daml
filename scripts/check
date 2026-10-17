@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+# Resolve the crate root so this also works from outside the repository.
+cd "$(dirname "$0")/.."
+
+cargo fmt --all --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --no-deps --locked
