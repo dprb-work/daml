@@ -1,0 +1,28 @@
+# This source, including its comments, remains available to later tooling.
+!demo.Application {
+  adapter: !network.Adapter
+
+  tasks: [
+    !demo.Task {
+      request: !text.Request {
+        instruction: '''
+          Extract the release name.
+          Return JSON only.
+        '''
+
+        context: """
+            release:
+              name: daml
+        """
+      }
+    }
+  ]
+
+  ports: !network.Ports [
+    !network.Port 8080
+    443
+  ]
+  enabled: true
+  optional: null
+  exact: 9007199254740993
+}
