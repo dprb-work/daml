@@ -11,8 +11,8 @@ The parser, schema APIs, and Python bindings are not implemented yet.
 
 ## Design
 
-- [Implementation plan](PLAN.md): user-confirmed syntax, mandatory multiline
-  dedent, proposed grammar decisions, and consumer-visible implementation gates.
+- [Implementation plan](PLAN.md): unquoted key rules, mandatory multiline dedent,
+  grammar proposals, library acceptance gates, and planned formatter/LSP milestones.
 - [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
   references, pinned candidates, test-corpus reuse, and license obligations.
 

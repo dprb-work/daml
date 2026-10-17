@@ -17,6 +17,11 @@ empty scalars; DAML wants that spelling to mean an empty tagged mapping.
 A stock YAML parser followed by a shape validator cannot supply these grammar
 changes. [YAML flow collections](https://yaml.org/spec/1.2.2/#74-flow-collection-styles), [flow scalars](https://yaml.org/spec/1.2.2/#73-flow-scalar-styles), [flow nodes](https://yaml.org/spec/1.2.2/#75-flow-nodes)
 
+DAML also requires unquoted, spaceless keys; unlike YAML/KYAML, it has no
+quoted-key fallback. The proposed identifier character set is a separate DAML
+decision recorded in the plan. An upstream parser accepting quoted keys cannot
+serve unchanged as DAML's syntax authority.
+
 Reuse YAML's separation of syntax, tag resolution, and construction as a design
 lesson. Parsing a tag need not recognize its schema or construct an application
 object. YAML's presentation model also distinguishes comments and scalar style
@@ -73,6 +78,9 @@ Use selected YAML Test Suite cases to probe shared Unicode, escape, key,
 collection, and tag behavior, not to claim full YAML compatibility. Every
 selected case needs a DAML expectation: unchanged, adapted, or intentionally
 rejected. Preserve the original case ID and record adaptations.
+Quoted-key and whitespace-containing-key cases must be adapted to DAML's
+unquoted-key contract or retained as explicit rejection cases, not counted as
+shared positive syntax.
 
 Use a dated data release, not the moving `data` branch: upstream warns that the
 latter can be incorrect and is force-pushed. A concrete available pair is:

@@ -17,7 +17,9 @@ AST skeleton, forwarding API, or passing empty test suite is not a milestone.
 ## User-confirmed requirements
 
 - Explicit mapping/list structure inspired by KYAML, without commas.
-- `!tags` on nested nodes; an empty tagged mapping can omit `{}`.
+- Keys are unquoted and contain no spaces. Quoted keys are not an escape hatch.
+- `!tags` on nested nodes; an empty tagged mapping can omit `{}`. Fields of a
+  nonempty tagged mapping belong inside its braces, not under a bare tag.
 - Ordinary `"..."` strings.
 - `'''...'''` for one logical line wrapped over multiple source lines: trim each
   source line, discard blank lines, and join remaining lines with one space.
@@ -29,10 +31,31 @@ AST skeleton, forwarding API, or passing empty test suite is not a milestone.
 - Rust implementation, reusable independently of Olaf. Keep later Python
   integration possible without embedding Python into the core.
 - Reuse or port existing code when its technical fit and license justify it.
+- Provide a DAML formatter, primarily for indentation, and an LSP after the
+  parser/library core. These are planned deliverables, not optional ideas.
 
 DAML is its own grammar, not a YAML/KYAML subset. The
 [reuse assessment](docs/parser-reuse.md) explains the mismatches, pinned sources,
 and license lineage.
+
+## Key policy boundary
+
+Unquoted, spaceless keys are confirmed. The exact allowed character set is a
+local lexical policy, not a prerequisite for starting the parser. Keep it in one
+character predicate rather than scattering punctuation rules through parsing,
+schema lookup, formatting, or the language server.
+
+The initial recommendation is ASCII letters or underscore first, followed by
+letters, digits, underscore, or hyphen; disallowing a leading digit is a
+recommendation, not yet a confirmed requirement. Whether to include literal `.`
+and `/` remains open and can be adjusted later. Do not expose alternative key
+modes or freeze the provisional alphabet as a public compatibility promise.
+
+If accepted, dots and slashes remain literal key characters: neither implies
+nesting, path traversal, references, or file access. Braces establish nesting.
+Keep lookup and duplicate detection based on the actual key spelling rather
+than splitting punctuation. Tag names have their own grammar; dotted names
+such as `!olaf.llm.TextRequest` remain valid independently of this choice.
 
 ## First acceptance specimen
 
@@ -74,6 +97,24 @@ Expected observations:
 - Parsing works without loading schemas. Semantic validation checks the tags
   later and never imports or invokes anything named by the document.
 
+### Tagged mapping ownership
+
+Braces establish nesting; indentation presents it. In this document, the first
+`timeout` belongs to the adapter and the second belongs to the outer mapping:
+
+```daml
+{
+  adapter: !network.Adapter {
+    timeout: 30
+  }
+  timeout: 60
+}
+```
+
+Without the adapter's braces it is an empty mapping, and the following key is
+a sibling regardless of how it is indented. The formatter should make that
+ownership obvious; parsing must not infer additional ownership from indentation.
+
 ### Mandatory dedent contract
 
 Define and test the transformation in this order:
@@ -104,8 +145,9 @@ different original source spans.
   structured errors. Carry the acceptance specimen and dedent cases into it.
 - Mark each YAML-derived fixture as unchanged, adapted, or intentionally rejected.
   Record the original upstream case ID and selected immutable corpus revision.
-- Settle the proposals in the following table; do not grow a YAML compatibility
-  mode or multiple competing policies while implementing.
+- Settle the semantically consequential proposals in the following table; do not
+  grow a YAML compatibility mode or multiple competing policies while implementing.
+  The final literal key alphabet may remain provisional behind one lexical rule.
 - Use the same hard fixtures to assess a candidate reuse seam. Prefer a small
   native scanner/direct parser unless a targeted adaptation or helper such as
   Winnow demonstrably simplifies the implementation. Do not build two complete
@@ -117,18 +159,18 @@ different original source spans.
 | Decision to close | Proposed initial behavior |
 |---|---|
 | Entry boundaries | Newlines separate mapping/list entries outside strings; blank lines and comments are allowed. Multiple same-line entries without separators are errors. Single-entry inline collections remain valid. |
-| Empty tagged mapping | A tag with no payload before an entry boundary or closing delimiter means `{}`. Make next-line payload handling explicit; do not inherit YAML's empty-scalar interpretation. |
-| Scalars and keys | String keys only, bare safe identifiers or quoted keys. Reject duplicate decoded keys. Values use quoted strings, lowercase `true`/`false`/`null`, and a deliberately specified decimal-number grammar; no implicit dates, booleans such as `NO`, NaN, or Infinity. Preserve numeric precision/range intentionally. |
+| Key characters | Unquoted and spaceless is confirmed. Use a provisional identifier-style alphabet; leading-digit policy and literal `.`/`/` support can be finalized later without changing tree ownership or adding path semantics. |
+| Scalar values | Quoted strings, lowercase `true`/`false`/`null`, and a deliberately specified decimal-number grammar; no implicit dates, booleans such as `NO`, NaN, or Infinity. Preserve numeric precision/range intentionally. |
 | Ordinary strings | A closed escape vocabulary, initially JSON-style; reject invalid/truncated escapes and invalid Unicode scalars. Do not inherit YAML's full escape/folding vocabulary accidentally. |
 | Triple-string boundaries | Opening delimiter ends its line; closing delimiter occupies its own line. Boundary newlines are syntax, but deliberate additional blank lines in literal content are data. No implicit trailing-newline stripping beyond those boundaries. |
 | Dedent whitespace and escapes | Freeze spaces/tabs, blank-line whitespace, escaped delimiters, literal backslashes, and trailing whitespace after continuation markers. Dedent remains mandatory under one rule, not configurable. |
 | Input and excluded YAML | One UTF-8 document, explicit empty document values, defined line-ending policy. Reject anchors, aliases, directives, merge-key semantics, block collections, complex keys, and unsupported string forms rather than silently accepting them. |
 | Resource policy | Choose documented input, scalar, node, and nesting bounds before accepting untrusted input; test each boundary and one-over. Do not rely on stack overflow or allocation failure as validation. |
 
-**Gate:** every confirmed spelling has an expected outcome, every proposed choice
-above has one selected rule, imported material has its provenance, and there is
-one chosen production parsing path. The complete YAML specification is a source,
-not DAML's acceptance oracle.
+**Gate:** every confirmed spelling has an expected outcome, semantic choices
+affecting structure or decoded values have one selected rule, imported material
+has its provenance, and there is one chosen production parsing path. The final
+literal key alphabet is not a blocker. YAML is a source, not DAML's acceptance oracle.
 
 ## Milestone 2 — complete syntax-to-document parsing
 
@@ -216,10 +258,46 @@ an uncontrolled panic, hang, unbounded recursion, or unintended execution.
 - Run the consumer smoke, targeted regressions, and full gate; review the final
   complete head rather than approving lexer/AST checkpoints.
 
-**Gate:** all accepted behavior is implemented, assertions work in an independent
+**Gate:** all accepted library behavior is implemented, assertions work in an independent
 consumer, no known correctness/security defects remain, bounded fuzz findings
 are resolved, and documented commands work. Coverage is assessed by grammar and
 failure behavior, not a decorative percentage or test count.
+
+## Milestone 5 — indentation-focused DAML formatter
+
+**Result:** a contributor formats a real DAML document without changing its
+meaning, comments, or string content.
+
+- Use the same parsed syntax/source model, not another parser or YAML emitter.
+- Apply one initial canonical indentation/layout policy; retain unquoted keys
+  and explicit mapping ownership. Do not introduce a style-option framework.
+- Preserve decoded literal/wrapped strings, relative content indentation, tags,
+  and comments. Indenting a surrounding collection must not alter a dedented
+  string's value. Do not rewrite ordinary string data as structural whitespace.
+
+**Gate:** formatting is idempotent; parsing before and after formatting produces
+the same values and tags; nested dedent/continuation and comment fixtures retain
+their meaning. Exercise an actual file-formatting command, not only a formatter
+helper in isolation.
+
+## Milestone 6 — DAML language server
+
+**Result:** an editor receives current-document syntax diagnostics and formatting
+from the same library used by ordinary consumers.
+
+- Reuse the parser, validator, and formatter. Start with document open/change/
+  close, syntax diagnostics, and document formatting; add schema diagnostics
+  when the client supplies the relevant schema modules.
+- Convert original byte spans to the negotiated LSP position encoding correctly,
+  including multibyte characters in values/comments.
+- Associate results with document versions so stale work does not replace newer
+  diagnostics or format a different revision. Keep workspace schema discovery
+  separate from executing application code.
+
+**Gate:** a real LSP client session opens a document, introduces and fixes an
+error, and requests formatting. Diagnostics clear on the correct revision,
+Unicode ranges are correct, and edits preserve the parser's values/tags. No
+editor-specific duplicate grammar becomes the language authority.
 
 ## Boundaries and implementation discipline
 
@@ -234,10 +312,12 @@ YAML feature, or lose tags by converting immediately to JSON/dictionaries.
 Do not couple the grammar or schema owner to Olaf's `__type__`/`__fn__` wire
 format, callable runtime, parameter templates, or execution lifecycle.
 
-Formatting, Serde integration, Python bindings/wheels, editor/LSP support, and a
-full command-line product are later scopes, not hidden prerequisites for this
-parser result. Retaining source and declarative schemas keeps those paths open;
-it does not commit us to their earlier illustrative APIs.
+The formatter and LSP are planned follow-on milestones after the standalone
+library, not hidden prerequisites for completing that library. Preserve source
+information now so they do not require another grammar or changed string rules.
+
+Serde integration, Python bindings/wheels, and a full command-line product remain
+separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
 The next implementation action is Milestone 1's grammar/fixture contract,
 including the mandatory dedent cases, followed by the complete parsing slice.
