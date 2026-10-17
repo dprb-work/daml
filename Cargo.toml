@@ -1,0 +1,10 @@
+[package]
+name = "daml"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+description = "Definitively Asserted Markup Language"
+repository = "https://github.com/dprb-work/daml"
+publish = false
+
+[dependencies]
