@@ -411,19 +411,24 @@ fn diagnostic_constraint_location_tracks_the_referenced_resource() {
 
 #[test]
 fn definition_defaults_are_contained_but_not_applied_until_referenced() {
-    let branches = (0..20)
+    let conjunctions = (0..20)
         .map(|index| {
-            json!({
-                "type":"string",
-                "$defs":{"unused":{"not":{"properties":{"x":{"default":index}}}}}
-            })
+            json!({"anyOf": [
+                {"type":"string","$defs":{"unused":{"not":{"default":index}}}},
+                {"type":"string","$defs":{"unused":{"not":{"default":index}}}}
+            ]})
         })
         .collect::<Vec<_>>();
     let unused = SchemaModule::from_value(json!({
-        "types":{"app.Safe":{"schema":{"anyOf":branches}}}
+        "types":{"app.Safe":{"schema":{"type":"string","allOf":conjunctions}}}
     }))
     .expect("unused definition defaults are accepted");
-    Schemas::compose([unused]).expect("unreachable defaults do not affect applicability");
+    let schemas =
+        Schemas::compose([unused]).expect("unreachable defaults do not affect applicability");
+    let input = parse("!app.Safe \"ok\"").unwrap();
+    schemas
+        .resolve(&input)
+        .expect("unused defaults do not enumerate union completions");
 
     let referenced = SchemaModule::from_value(json!({
         "types":{"app.Bad":{"schema":{

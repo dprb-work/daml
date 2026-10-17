@@ -494,6 +494,32 @@ fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
 }
 
 #[test]
+fn a_missing_tagged_property_keeps_default_conflicts_visible() {
+    let host = SchemaModule::from_olaf_json(
+        "Host",
+        r#"{"$id":"urn:host","type":"object","default":{"__type__":"Provider","value":1}}"#,
+    )
+    .unwrap();
+    let module = SchemaModule::from_value(json!({
+        "types": {
+            "Provider": {"schema": {"type": "object", "default": {"value": 2}}},
+            "Container": {"schema": {"type": "object", "properties": {
+                "child": {"$ref": "urn:host"}
+            }}}
+        }
+    }))
+    .unwrap();
+    let schemas = Schemas::compose([host, module]).unwrap();
+    for input in ["!Container", "!Container { child: {} }"] {
+        let document = parse(input).unwrap();
+        assert_eq!(
+            schemas.resolve(&document).unwrap_err().kind,
+            ResolveErrorKind::AmbiguousDefault
+        );
+    }
+}
+
+#[test]
 fn different_generated_tags_make_equal_json_completions_ambiguous() {
     let host = SchemaModule::from_olaf_json(
         "Host",
@@ -521,8 +547,8 @@ fn one_of_still_requires_exactly_one_branch_after_equal_completion() {
     let schemas = schemas(json!({
         "type": "object",
         "oneOf": [
-            {"properties": {"value": {"default": 1}}},
-            {"properties": {"value": {"default": 1.0}}}
+            {"properties": {"value": {"default": 1}}, "required": ["value"]},
+            {"properties": {"value": {"default": 1.0}}, "maxProperties": 1}
         ]
     }));
     let input = parse("!app.Config").unwrap();
@@ -567,4 +593,32 @@ fn expensive_exact_number_uniqueness_fails_through_the_work_budget() {
     let input = parse(source).unwrap();
     let error = schemas.resolve(&input).unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
+}
+
+#[test]
+fn uniqueness_work_propagates_through_references_to_default_created_arrays() {
+    let values = (0..500).map(|value| json!(value)).collect::<Vec<_>>();
+    let schemas = schemas(json!({
+        "type": "object",
+        "properties": {"values": {
+            "$ref": "#/$defs/Unique",
+            "default": values
+        }},
+        "required": ["values"],
+        "$defs": {"Unique": {"type": "array", "uniqueItems": true}}
+    }));
+    let input = parse("!app.Config").unwrap();
+    let limits = ResolutionLimits {
+        max_steps: 100_000,
+        ..Default::default()
+    };
+    assert_eq!(
+        schemas
+            .resolve_with_limits(&input, None, limits)
+            .unwrap_err()
+            .kind,
+        ResolveErrorKind::LimitExceeded
+    );
+    let small = parse("!app.Config { values: [1\n2] }").unwrap();
+    assert!(schemas.resolve(&small).is_ok());
 }

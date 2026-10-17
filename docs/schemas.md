@@ -145,15 +145,14 @@ unambiguous union paths. Branch candidates are checked against the completed
 document's ancestor constraints before ambiguity is reported. Unions without
 reachable defaults use ordinary validation without enumerating unchanged data.
 Defaults reachable in unsupported applicator positions—negation, conditionals,
-`contains`, `propertyNames`, `dependentSchemas`, pattern-selected properties,
-unevaluated/content schemas, or legacy `additionalItems`—fail composition instead
-of being silently ignored. Those constraints without defaults remain ordinary
-engine validation.
+`contains`, `propertyNames`, `dependentSchemas`, pattern-selected properties, or
+unevaluated/content schemas—fail composition instead of being silently ignored.
+Those constraints without defaults remain ordinary engine validation.
 
 When `$schema` is present, it must select Draft 2020-12. The legacy
-`dependencies` keyword and pre-2020-12 array form of `items` are rejected rather
-than delegated to engine compatibility behavior. Use `dependentSchemas`,
-`dependentRequired`, and `prefixItems`.
+`dependencies` and `additionalItems` keywords, plus the pre-2020-12 array form
+of `items`, are rejected rather than delegated to engine compatibility behavior.
+Use `dependentSchemas`, `dependentRequired`, and `prefixItems`.
 
 ## Olaf schema inspiration and explicit import
 

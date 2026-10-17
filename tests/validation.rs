@@ -302,21 +302,41 @@ fn completion_accounts_for_default_bytes_and_validation_work() {
         "required": ["text"]
     }}}}))
     .unwrap();
-    let schemas = Schemas::compose([module]).unwrap();
+    let config_schemas = Schemas::compose([module]).unwrap();
     let document = parse("!Config").unwrap();
     let byte_limit = daml::ResolutionLimits {
         max_bytes: 10, // Tag + multibyte default exceeds this, even before its key.
         ..Default::default()
     };
-    let error = schemas
+    let error = config_schemas
         .resolve_with_limits(&document, None, byte_limit)
         .unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
+
+    let long_tag = "provider.with.a.generated.identity.longer.than.the.byte.limit";
+    let legacy = SchemaModule::from_olaf_json(
+        "Host",
+        &format!(r#"{{"type":"object","default":{{"__type__":"{long_tag}"}}}}"#),
+    )
+    .unwrap();
+    let legacy_schemas = Schemas::compose([legacy]).unwrap();
+    let input = parse("{}").unwrap();
+    let limits = daml::ResolutionLimits {
+        max_bytes: 8,
+        ..Default::default()
+    };
+    assert_eq!(
+        legacy_schemas
+            .resolve_with_limits(&input, Some("Host"), limits)
+            .unwrap_err()
+            .kind,
+        ResolveErrorKind::LimitExceeded
+    );
     let work_limit = daml::ResolutionLimits {
         max_steps: 1,
         ..Default::default()
     };
-    let error = schemas
+    let error = config_schemas
         .resolve_with_limits(&document, None, work_limit)
         .unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
@@ -352,6 +372,11 @@ fn implemented_contracts_apply_structure_and_defaults_standalone_and_in_slots() 
     let invalid = parse("!Host { member: !Member { enabled: false } }").unwrap();
     assert_eq!(
         schemas.resolve(&invalid).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
+    );
+    let standalone_invalid = parse("!Member { enabled: false }").unwrap();
+    assert_eq!(
+        schemas.resolve(&standalone_invalid).unwrap_err().kind,
         ResolveErrorKind::SchemaViolation
     );
 }

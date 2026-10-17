@@ -89,7 +89,14 @@ impl Schemas {
                 None => from_input(document, document.root(), 0, "", &mut budget)?,
             };
             let candidate = self
-                .complete(root, &root_views, "", 0, &mut budget, &mut search)
+                .complete(
+                    root,
+                    &root_views,
+                    "",
+                    CompletionLevel::existing(0),
+                    &mut budget,
+                    &mut search,
+                )
                 .and_then(|root| {
                     self.validate_tags(&root, "", 0, &mut budget)?;
                     let asserted = root
@@ -162,10 +169,11 @@ impl Schemas {
         mut node: ResolvedNode<'a>,
         schemas: &[SchemaView<'a>],
         path: &str,
-        depth: usize,
+        level: CompletionLevel,
         budget: &mut Budget,
         search: &mut CompletionSearch<'a>,
     ) -> Result<ResolvedNode<'a>, ResolveError> {
+        let depth = level.depth;
         budget.step(&node, path)?;
         if depth >= 128
             && matches!(
@@ -182,7 +190,7 @@ impl Schemas {
             ));
         }
         let mut schemas = schemas.to_vec();
-        if matches!(node.value, ResolvedValue::Mapping(_)) {
+        if level.apply_node_defaults && matches!(node.value, ResolvedValue::Mapping(_)) {
             // Imported identity defaults can introduce a tag whose schema owns
             // additional defaults. Discover every tag assertion before applying
             // payloads, so generated values never become supplied precedence.
@@ -269,7 +277,7 @@ impl Schemas {
                     owned,
                     &child_schemas,
                     &child_path,
-                    depth + 1,
+                    CompletionLevel::existing(depth + 1),
                     budget,
                     search,
                 )?;
@@ -282,42 +290,14 @@ impl Schemas {
                 }
                 let child_schemas = self.property_schemas(&schemas, key);
                 let child_path = join_path(path, key);
-                let applicable = self.applicable(
+                if let Some(child) = self.complete_missing(
                     &child_schemas,
-                    &untagged_placeholder(node.origin),
                     &child_path,
+                    depth + 1,
+                    node.origin,
                     budget,
                     search,
-                )?;
-                let mut child = None;
-                for schema in &applicable {
-                    let Some(default) = schema.value.get("default") else {
-                        continue;
-                    };
-                    let location = schema.default_origin.unwrap_or(schema.location);
-                    let candidate = from_default(
-                        default,
-                        location,
-                        schema.legacy_defaults,
-                        depth + 1,
-                        budget,
-                        &child_path,
-                    )?;
-                    if let Some(prior) = &mut child {
-                        merge_candidates(prior, candidate, None, &child_path, search);
-                    } else {
-                        child = Some(candidate);
-                    }
-                }
-                if let Some(child) = child {
-                    let child = self.complete(
-                        child,
-                        &child_schemas,
-                        &child_path,
-                        depth + 1,
-                        budget,
-                        search,
-                    )?;
+                )? {
                     budget.add_bytes(&node, key, &child_path)?;
                     if let ResolvedValue::Mapping(fields) = &mut node.value {
                         fields.insert(Cow::Borrowed(key), child);
@@ -334,11 +314,98 @@ impl Schemas {
                     origin: child.origin,
                 };
                 let owned = std::mem::replace(child, placeholder);
-                *child =
-                    self.complete(owned, &item_schemas, &child_path, depth + 1, budget, search)?;
+                *child = self.complete(
+                    owned,
+                    &item_schemas,
+                    &child_path,
+                    CompletionLevel::existing(depth + 1),
+                    budget,
+                    search,
+                )?;
             }
         }
         Ok(node)
+    }
+
+    fn complete_missing<'a>(
+        &'a self,
+        schemas: &[SchemaView<'a>],
+        path: &str,
+        depth: usize,
+        origin: Origin<'a>,
+        budget: &mut Budget,
+        search: &mut CompletionSearch<'a>,
+    ) -> Result<Option<ResolvedNode<'a>>, ResolveError> {
+        let mut probe = untagged_placeholder(origin);
+        let mut schemas = schemas.to_vec();
+        loop {
+            schemas = self.applicable(&schemas, &probe, path, budget, search)?;
+            if probe.tag().is_some() {
+                break;
+            }
+            let mut discovered: Option<ResolvedTag<'a>> = None;
+            for schema in &schemas {
+                let Some(default) = schema.value.get("default") else {
+                    continue;
+                };
+                let Some(tag) = default_tag(
+                    default,
+                    schema.default_origin.unwrap_or(schema.location),
+                    schema.legacy_defaults,
+                    budget,
+                    path,
+                )?
+                else {
+                    continue;
+                };
+                if let Some(prior) = &mut discovered {
+                    if prior.name != tag.name && search.conflicting_default_tag(&tag, path) == 1 {
+                        *prior = tag;
+                    }
+                } else {
+                    discovered = Some(tag);
+                }
+            }
+            let Some(tag) = discovered else { break };
+            probe.tag = Some(tag);
+        }
+        schemas = self.applicable(&schemas, &probe, path, budget, search)?;
+        let mut completed = None;
+        for schema in &schemas {
+            let Some(default) = schema.value.get("default") else {
+                continue;
+            };
+            let location = schema.default_origin.unwrap_or(schema.location);
+            let candidate = from_default(
+                default,
+                location,
+                schema.legacy_defaults,
+                depth,
+                budget,
+                path,
+            )?;
+            if probe.tag().is_some() && candidate.tag().is_some() && probe.tag() != candidate.tag()
+            {
+                continue;
+            }
+            if let Some(prior) = &mut completed {
+                merge_candidates(prior, candidate, None, path, search);
+            } else {
+                completed = Some(candidate);
+            }
+        }
+        let Some(completed) = completed else {
+            return Ok(None);
+        };
+        self.complete(
+            completed,
+            &schemas,
+            path,
+            CompletionLevel::merged(depth),
+            budget,
+            search,
+        )
+        .map(Some)
     }
 
     fn conjunction<'a>(
@@ -621,6 +688,28 @@ impl Schemas {
                     &full_path,
                 )
             })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CompletionLevel {
+    depth: usize,
+    apply_node_defaults: bool,
+}
+
+impl CompletionLevel {
+    const fn existing(depth: usize) -> Self {
+        Self {
+            depth,
+            apply_node_defaults: true,
+        }
+    }
+
+    const fn merged(depth: usize) -> Self {
+        Self {
+            depth,
+            apply_node_defaults: false,
+        }
     }
 }
 
