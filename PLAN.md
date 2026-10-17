@@ -1,8 +1,9 @@
 # DAML implementation plan
 
-Status: proposed implementation sequence. User-confirmed requirements are below;
-new grammar and API choices are proposals until the first contract gate closes.
-This change writes the plan and reuse assessment only, not a parser.
+Status: the first syntax-to-document implementation follows
+[the syntax contract](docs/syntax.md), covering milestones 1–2. Subsequent schema,
+formatter, and LSP milestones remain planned. Final key/tag alphabets and whether
+they align remain deliberately deferred.
 
 ## Target result
 
@@ -38,24 +39,18 @@ DAML is its own grammar, not a YAML/KYAML subset. The
 [reuse assessment](docs/parser-reuse.md) explains the mismatches, pinned sources,
 and license lineage.
 
-## Key policy boundary
+## Key and tag policy boundary
 
-Unquoted, spaceless keys are confirmed. The exact allowed character set is a
-local lexical policy, not a prerequisite for starting the parser. Keep it in one
-character predicate rather than scattering punctuation rules through parsing,
-schema lookup, formatting, or the language server.
+Unquoted, spaceless keys are confirmed. Final key/tag character sets and whether
+they align are deferred. They are local lexical policies, not prerequisites for
+starting the parser. The current scanner bounds both by structural delimiters
+and whitespace; it does not freeze numeric-leading, dotted, slashed, or Unicode
+identifier rules.
 
-The initial recommendation is ASCII letters or underscore first, followed by
-letters, digits, underscore, or hyphen; disallowing a leading digit is a
-recommendation, not yet a confirmed requirement. Whether to include literal `.`
-and `/` remains open and can be adjusted later. Do not expose alternative key
-modes or freeze the provisional alphabet as a public compatibility promise.
-
-If accepted, dots and slashes remain literal key characters: neither implies
-nesting, path traversal, references, or file access. Braces establish nesting.
-Keep lookup and duplicate detection based on the actual key spelling rather
-than splitting punctuation. Tag names have their own grammar; dotted names
-such as `!olaf.llm.TextRequest` remain valid independently of this choice.
+Names remain literal. Dots/slashes never imply nesting, path traversal,
+references, or file access; braces establish nesting. Schema lookup, formatting,
+and the language server must use actual names/tree ownership rather than infer
+structure from punctuation. Do not expose competing grammar modes.
 
 ## First acceptance specimen
 
@@ -141,13 +136,17 @@ different original source spans.
 
 **Result:** an implementer can write the parser without inventing language rules.
 
+The initial native implementation now has a [syntax contract](docs/syntax.md)
+and executable acceptance cases. It consulted the reuse research but copied no
+upstream code/tests and introduced no dependency.
+
 - Write a compact grammar and a fixture matrix with exact decoded values or
   structured errors. Carry the acceptance specimen and dedent cases into it.
 - Mark each YAML-derived fixture as unchanged, adapted, or intentionally rejected.
   Record the original upstream case ID and selected immutable corpus revision.
-- Settle the semantically consequential proposals in the following table; do not
-  grow a YAML compatibility mode or multiple competing policies while implementing.
-  The final literal key alphabet may remain provisional behind one lexical rule.
+- Settle semantically consequential structure/value rules in the syntax contract;
+  do not grow a YAML compatibility mode. Final key/tag alphabets may remain
+  provisional behind the lexical policy.
 - Use the same hard fixtures to assess a candidate reuse seam. Prefer a small
   native scanner/direct parser unless a targeted adaptation or helper such as
   Winnow demonstrably simplifies the implementation. Do not build two complete
@@ -156,21 +155,16 @@ different original source spans.
   destinations, local changes, and required license/copyright notices. Do not
   import a full parser merely to avoid attributing a few useful routines.
 
-| Decision to close | Proposed initial behavior |
-|---|---|
-| Entry boundaries | Newlines separate mapping/list entries outside strings; blank lines and comments are allowed. Multiple same-line entries without separators are errors. Single-entry inline collections remain valid. |
-| Key characters | Unquoted and spaceless is confirmed. Use a provisional identifier-style alphabet; leading-digit policy and literal `.`/`/` support can be finalized later without changing tree ownership or adding path semantics. |
-| Scalar values | Quoted strings, lowercase `true`/`false`/`null`, and a deliberately specified decimal-number grammar; no implicit dates, booleans such as `NO`, NaN, or Infinity. Preserve numeric precision/range intentionally. |
-| Ordinary strings | A closed escape vocabulary, initially JSON-style; reject invalid/truncated escapes and invalid Unicode scalars. Do not inherit YAML's full escape/folding vocabulary accidentally. |
-| Triple-string boundaries | Opening delimiter ends its line; closing delimiter occupies its own line. Boundary newlines are syntax, but deliberate additional blank lines in literal content are data. No implicit trailing-newline stripping beyond those boundaries. |
-| Dedent whitespace and escapes | Freeze spaces/tabs, blank-line whitespace, escaped delimiters, literal backslashes, and trailing whitespace after continuation markers. Dedent remains mandatory under one rule, not configurable. |
-| Input and excluded YAML | One UTF-8 document, explicit empty document values, defined line-ending policy. Reject anchors, aliases, directives, merge-key semantics, block collections, complex keys, and unsupported string forms rather than silently accepting them. |
-| Resource policy | Choose documented input, scalar, node, and nesting bounds before accepting untrusted input; test each boundary and one-over. Do not rely on stack overflow or allocation failure as validation. |
+The implemented decisions and limits are owned by the syntax contract, not a
+second grammar table here. It fixes explicit collection boundaries, precise
+decimal lexemes, JSON-style ordinary escapes, both triple-string forms, mandatory
+dedent before continuation, UTF-8/line endings, structured errors, and resource
+bounds. Only the final key/tag alphabets are intentionally left provisional.
 
-**Gate:** every confirmed spelling has an expected outcome, semantic choices
-affecting structure or decoded values have one selected rule, imported material
-has its provenance, and there is one chosen production parsing path. The final
-literal key alphabet is not a blocker. YAML is a source, not DAML's acceptance oracle.
+**Gate:** confirmed structure/value spellings have exact acceptance outcomes,
+imported material (if any) has provenance, and there is one production parsing
+path. Neither final name alphabet is a blocker. YAML is a source, not DAML's
+acceptance oracle.
 
 ## Milestone 2 — complete syntax-to-document parsing
 
@@ -319,5 +313,6 @@ information now so they do not require another grammar or changed string rules.
 Serde integration, Python bindings/wheels, and a full command-line product remain
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
-The next implementation action is Milestone 1's grammar/fixture contract,
-including the mandatory dedent cases, followed by the complete parsing slice.
+The next implementation milestone after syntax parsing is independently composed
+schema validation. Parsing currently preserves tag assertions without resolving
+them; it must not be presented as runtime type validation.
