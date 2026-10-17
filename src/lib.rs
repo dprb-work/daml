@@ -49,6 +49,7 @@ use std::borrow::Cow;
 mod json_backend;
 mod model;
 mod parser;
+mod pointer;
 mod resolve;
 mod resolved;
 mod schema;

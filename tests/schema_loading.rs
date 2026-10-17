@@ -124,6 +124,43 @@ fn unresolved_offline_resources_and_reference_cycles_are_rejected() {
         SchemaErrorKind::ReferenceCycle
     );
 }
+#[test]
+fn reference_cycles_through_schema_child_positions_are_rejected_during_composition() {
+    for schema in [
+        json!({"properties":{"nested":{"$ref":"#"}}}),
+        json!({"patternProperties":{"^nested":{"$ref":"#"}}}),
+        json!({"allOf":[{"$ref":"#"}]}),
+        json!({"anyOf":[{"$ref":"#"}]}),
+        json!({"oneOf":[{"$ref":"#"}]}),
+        json!({"prefixItems":[{"$ref":"#"}]}),
+        json!({"items":{"$ref":"#"}}),
+        json!({"additionalProperties":{"$ref":"#"}}),
+        json!({"not":{"$ref":"#"}}),
+        json!({"contains":{"$ref":"#"}}),
+        json!({"propertyNames":{"$ref":"#"}}),
+        json!({"if":{"$ref":"#"}}),
+        json!({"then":{"$ref":"#"}}),
+        json!({"else":{"$ref":"#"}}),
+        json!({"unevaluatedProperties":{"$ref":"#"}}),
+        json!({"unevaluatedItems":{"$ref":"#"}}),
+        json!({"contentSchema":{"$ref":"#"}}),
+        json!({"dependentSchemas":{"nested":{"$ref":"#"}}}),
+        json!({"$defs":{"nested":{"$ref":"#"}}}),
+        json!({"definitions":{"nested":{"$ref":"#"}}}),
+    ] {
+        let module = SchemaModule::from_value(json!({
+            "types": {"app.Cycle": {"schema": schema}}
+        }))
+        .expect("cycle schema is structurally admitted");
+        assert_eq!(
+            Schemas::compose([module])
+                .err()
+                .expect("cycle rejected")
+                .kind,
+            SchemaErrorKind::ReferenceCycle
+        );
+    }
+}
 
 #[test]
 fn native_tag_keywords_and_default_tag_annotations_are_enforced() {
@@ -372,6 +409,10 @@ fn additional_unsupported_default_applicators_are_rejected() {
     for schema in [
         json!({"dependentSchemas":{"trigger":{"properties":{"x":{"default":1}}}}}),
         json!({"contentSchema":{"properties":{"x":{"default":1}}}}),
+        json!({
+            "patternProperties":{"^x":{"type":"string"}},
+            "additionalProperties":{"properties":{"fallback":{"default":1}}}
+        }),
     ] {
         let module = SchemaModule::from_value(json!({"types":{"app.Bad":{"schema":schema}}}))
             .expect("modern schema loads");
@@ -578,6 +619,41 @@ fn modern_dependency_keywords_remain_supported_and_data_is_not_walked_as_schema(
         schemas
             .resolve(&parse("!app.Dependent { credit_card: \"123\" }").unwrap())
             .is_err()
+    );
+}
+
+#[test]
+fn schema_looking_default_const_enum_and_example_data_remain_inert() {
+    let payload = json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "dependencies": {"legacy": ["data"]}
+    });
+    let module = SchemaModule::from_value(json!({
+        "types": {"app.Data": {"schema": {
+            "type": "object",
+            "default": {"dependencies": {"legacy": []}},
+            "properties": {
+                "payload": {
+                    "const": payload,
+                    "enum": [payload]
+                }
+            },
+            "examples": [payload]
+        }}}
+    }))
+    .expect("schema-looking annotation values are ordinary data");
+    let schemas = Schemas::compose([module]).expect("annotations are not schemas");
+    let input = parse(
+        r##"!app.Data { payload: { $schema: "http://json-schema.org/draft-07/schema#"
+            dependencies: { legacy: ["data"] } } }"##,
+    )
+    .expect("input");
+    let completed = schemas.resolve(&input).expect("literal data resolves");
+    assert_eq!(
+        completed.to_json(),
+        json!({
+            "payload": payload, "dependencies": {"legacy": []}
+        })
     );
 }
 

@@ -138,6 +138,17 @@ by the selected dependencies and forbids validator HTTP/file/async retrieval
 features. No advisories are ignored. Duplicate dependency versions remain
 warnings for review. DAML remains unpublished until its own license is selected.
 
+### Internal boundaries
+
+- `src/schema/profile.rs` owns child-schema classification, traversal roles, and
+  schema-admission limits. Add schema positions there, not in a second walker.
+- `src/schema.rs` owns compiled schemas and registry-bound, opaque views.
+  Validator access stays behind those views; other modules cannot construct IDs.
+- `src/resolve.rs` owns one search and cumulative budget per resolution.
+  Alternative completions reuse that budget rather than resetting it.
+- `src/pointer.rs` owns RFC 6901 path construction and segment decoding.
+  URI-fragment percent encoding remains part of schema reference resolution.
+
 ## Implementation defaults
 
 Keep the library synchronous and safe: the manifest forbids unsafe code and

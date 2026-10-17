@@ -1,15 +1,22 @@
 use crate::{
     Document, Node, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
     ResolvedNode, ResolvedValue, SchemaLocation, Schemas, Value,
-    json_backend::{NodeRef, equal_resolved},
+    json_backend::equal_resolved,
     resolved::{ErrorOrigin, ResolvedTag, checked_number},
-    schema::SchemaView,
+    schema::{SchemaId, SchemaView},
 };
 use serde_json::Value as JsonValue;
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap, HashSet},
 };
+
+struct Resolver<'a> {
+    schemas: &'a Schemas,
+    document: &'a Document,
+    budget: Budget,
+    search: CompletionSearch<'a>,
+}
 
 impl Schemas {
     /// Completes declared defaults and validates every explicit tag, even under open fields.
@@ -48,16 +55,28 @@ impl Schemas {
         expected: Option<&str>,
         limits: ResolutionLimits,
     ) -> Result<ResolvedDocument<'a>, ResolveError> {
-        let mut budget = Budget {
-            limits,
-            nodes: 0,
-            bytes: 0,
-            steps: 0,
-        };
-        let root = from_input(document, document.root(), 0, "", &mut budget)?;
-        self.known_tags(&root, "", &mut budget)?;
+        Resolver {
+            schemas: self,
+            document,
+            budget: Budget {
+                limits,
+                nodes: 0,
+                bytes: 0,
+                steps: 0,
+            },
+            search: CompletionSearch::default(),
+        }
+        .run(expected)
+    }
+}
+
+impl<'a> Resolver<'a> {
+    fn run(&mut self, expected: Option<&str>) -> Result<ResolvedDocument<'a>, ResolveError> {
+        let document = self.document;
+        let root = from_input(document, document.root(), 0, "", &mut self.budget)?;
+        self.known_tags(&root, "")?;
         let expected_view = if let Some(expected) = expected {
-            Some(self.type_schema(expected).ok_or_else(|| {
+            Some(self.schemas.type_schema(expected).ok_or_else(|| {
                 failure(
                     ResolveErrorKind::UnknownExpectedType,
                     &root,
@@ -70,52 +89,44 @@ impl Schemas {
             None
         };
         let mut root_views = Vec::new();
-        if let Some(view) = root.tag().and_then(|tag| self.type_schema(tag)) {
+        if let Some(view) = root.tag().and_then(|tag| self.schemas.type_schema(tag)) {
             root_views.push(view);
         }
         if let Some(view) = expected_view {
             root_views.push(view);
         }
         let mut initial = Some(root);
-        let mut search = CompletionSearch::default();
         let mut selected = None;
         let mut first_error = None;
         loop {
-            search.start();
+            self.search.start();
             // Rebuild from the original input rather than cloning a previous
             // completion. Rejected candidates must never seed later candidates.
             let root = match initial.take() {
                 Some(root) => root,
-                None => from_input(document, document.root(), 0, "", &mut budget)?,
+                None => from_input(document, document.root(), 0, "", &mut self.budget)?,
             };
             let candidate = self
-                .complete(
-                    root,
-                    &root_views,
-                    "",
-                    CompletionLevel::existing(0),
-                    &mut budget,
-                    &mut search,
-                )
+                .complete(root, &root_views, "", CompletionLevel::existing(0))
                 .and_then(|root| {
-                    self.validate_tags(&root, "", 0, &mut budget)?;
+                    self.validate_tags(&root, "", 0)?;
                     let asserted = root
                         .tag()
-                        .and_then(|tag| self.type_schema(tag))
-                        .map(|view| view.id);
+                        .and_then(|tag| self.schemas.type_schema(tag))
+                        .map(|view| view.id());
                     for view in &root_views {
-                        if Some(view.id) != asserted {
-                            self.check_node(&root, view, "", &mut budget)?;
+                        if Some(view.id()) != asserted {
+                            Self::check_node(&root, view, "", &mut self.budget)?;
                         }
                     }
                     // Every selected branch must hold, not merely some branch
                     // of its enclosing union. The enclosing validators above
                     // still enforce oneOf's exact-one semantics.
-                    for (path, views) in &search.branches {
+                    for (path, views) in &self.search.branches {
                         // A missing optional property has no instance to check.
                         if let Some(node) = root.at_pointer(path) {
                             for view in views.values() {
-                                self.check_node(node, view, path, &mut budget)?;
+                                Self::check_node(node, view, path, &mut self.budget)?;
                             }
                         }
                     }
@@ -123,17 +134,18 @@ impl Schemas {
                 });
             match candidate {
                 Ok(candidate) => {
-                    if let Some(error) = search.conflict.take() {
+                    if let Some(error) = self.search.conflict.take() {
                         return Err(error);
                     }
                     if let Some(prior) = &selected {
                         if !same_json(prior, &candidate) {
-                            let location = search
+                            let location = self
+                                .search
                                 .branches
                                 .values()
                                 .flat_map(|views| views.values())
                                 .next()
-                                .map(|view| view.location)
+                                .map(|view| view.location())
                                 .expect("different completions require a union decision");
                             return Err(ambiguous_completion(prior, &candidate, "", location));
                         }
@@ -155,7 +167,7 @@ impl Schemas {
                     }
                 }
             }
-            if !search.advance() {
+            if !self.search.advance() {
                 break;
             }
         }
@@ -163,18 +175,18 @@ impl Schemas {
             .map(|root| ResolvedDocument { document, root })
             .ok_or_else(|| first_error.expect("every unsuccessful candidate records its failure"))
     }
+}
 
-    fn complete<'a>(
-        &'a self,
+impl<'a> Resolver<'a> {
+    fn complete(
+        &mut self,
         mut node: ResolvedNode<'a>,
         schemas: &[SchemaView<'a>],
         path: &str,
         level: CompletionLevel,
-        budget: &mut Budget,
-        search: &mut CompletionSearch<'a>,
     ) -> Result<ResolvedNode<'a>, ResolveError> {
         let depth = level.depth;
-        budget.step(&node, path)?;
+        self.budget.step(&node, path)?;
         if depth >= 128
             && matches!(
                 node.value,
@@ -195,26 +207,25 @@ impl Schemas {
             // additional defaults. Discover every tag assertion before applying
             // payloads, so generated values never become supplied precedence.
             loop {
-                schemas = self.applicable(&schemas, &node, path, budget, search)?;
+                schemas = self.applicable(&schemas, &node, path)?;
                 if node.tag().is_some() {
                     break;
                 }
-                let Some(tag) = discover_default_tag(&schemas, Some(&node), path, budget, search)?
-                else {
+                let Some(tag) = self.discover_default_tag(&schemas, Some(&node), path)? else {
                     break;
                 };
                 node.tag = Some(tag);
             }
-            schemas = self.applicable(&schemas, &node, path, budget, search)?;
+            schemas = self.applicable(&schemas, &node, path)?;
             let mut baseline = None;
             for schema in &schemas {
-                let Some(default) = schema.value.get("default") else {
+                let Some(default) = schema.value().get("default") else {
                     continue;
                 };
                 if !default.is_object() {
                     continue;
                 }
-                let candidate = from_default(default, *schema, depth, budget, path)?;
+                let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
                 if node.tag().is_some()
                     && candidate.tag().is_some()
                     && node.tag() != candidate.tag()
@@ -222,7 +233,7 @@ impl Schemas {
                     continue;
                 }
                 if let Some(prior) = &mut baseline {
-                    merge_candidates(prior, candidate, Some(&node), path, search);
+                    self.merge_candidates(prior, candidate, Some(&node), path);
                 } else {
                     baseline = Some(candidate);
                 }
@@ -231,13 +242,13 @@ impl Schemas {
                 apply_default(&mut node, default);
             }
         } else {
-            schemas = self.applicable(&schemas, &node, path, budget, search)?;
+            schemas = self.applicable(&schemas, &node, path)?;
         }
 
         if let ResolvedValue::Mapping(fields) = &mut node.value {
             for (key, child) in fields.iter_mut() {
                 let child_schemas = self.property_schemas(&schemas, key);
-                let child_path = join_path(path, key);
+                let child_path = crate::pointer::join(path, key);
                 let placeholder = ResolvedNode {
                     value: ResolvedValue::Null,
                     tag: None,
@@ -249,8 +260,6 @@ impl Schemas {
                     &child_schemas,
                     &child_path,
                     CompletionLevel::existing(depth + 1),
-                    budget,
-                    search,
                 )?;
             }
         }
@@ -260,16 +269,11 @@ impl Schemas {
                     continue;
                 }
                 let child_schemas = self.property_schemas(&schemas, key);
-                let child_path = join_path(path, key);
-                if let Some(child) = self.complete_missing(
-                    &child_schemas,
-                    &child_path,
-                    depth + 1,
-                    node.origin,
-                    budget,
-                    search,
-                )? {
-                    budget.add_bytes(&node, key, &child_path)?;
+                let child_path = crate::pointer::join(path, key);
+                if let Some(child) =
+                    self.complete_missing(&child_schemas, &child_path, depth + 1, node.origin)?
+                {
+                    self.budget.add_bytes(&node, key, &child_path)?;
                     if let ResolvedValue::Mapping(fields) = &mut node.value {
                         fields.insert(Cow::Borrowed(key), child);
                     }
@@ -278,7 +282,7 @@ impl Schemas {
         } else if let ResolvedValue::Sequence(items) = &mut node.value {
             for (index, child) in items.iter_mut().enumerate() {
                 let item_schemas = self.items_schemas(&schemas, index);
-                let child_path = join_path(path, &index.to_string());
+                let child_path = crate::pointer::join(path, &index.to_string());
                 let placeholder = ResolvedNode {
                     value: ResolvedValue::Null,
                     tag: None,
@@ -290,48 +294,44 @@ impl Schemas {
                     &item_schemas,
                     &child_path,
                     CompletionLevel::existing(depth + 1),
-                    budget,
-                    search,
                 )?;
             }
         }
         Ok(node)
     }
 
-    fn complete_missing<'a>(
-        &'a self,
+    fn complete_missing(
+        &mut self,
         schemas: &[SchemaView<'a>],
         path: &str,
         depth: usize,
         origin: Origin<'a>,
-        budget: &mut Budget,
-        search: &mut CompletionSearch<'a>,
     ) -> Result<Option<ResolvedNode<'a>>, ResolveError> {
         let mut probe = untagged_placeholder(origin);
         let mut schemas = schemas.to_vec();
         loop {
-            schemas = self.applicable(&schemas, &probe, path, budget, search)?;
+            schemas = self.applicable(&schemas, &probe, path)?;
             if probe.tag().is_some() {
                 break;
             }
-            let Some(tag) = discover_default_tag(&schemas, None, path, budget, search)? else {
+            let Some(tag) = self.discover_default_tag(&schemas, None, path)? else {
                 break;
             };
             probe.tag = Some(tag);
         }
-        schemas = self.applicable(&schemas, &probe, path, budget, search)?;
+        schemas = self.applicable(&schemas, &probe, path)?;
         let mut completed = None;
         for schema in &schemas {
-            let Some(default) = schema.value.get("default") else {
+            let Some(default) = schema.value().get("default") else {
                 continue;
             };
-            let candidate = from_default(default, *schema, depth, budget, path)?;
+            let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
             if probe.tag().is_some() && candidate.tag().is_some() && probe.tag() != candidate.tag()
             {
                 continue;
             }
             if let Some(prior) = &mut completed {
-                merge_candidates(prior, candidate, None, path, search);
+                self.merge_candidates(prior, candidate, None, path);
             } else {
                 completed = Some(candidate);
             }
@@ -339,34 +339,26 @@ impl Schemas {
         let Some(completed) = completed else {
             return Ok(None);
         };
-        self.complete(
-            completed,
-            &schemas,
-            path,
-            CompletionLevel::merged(depth),
-            budget,
-            search,
-        )
-        .map(Some)
+        self.complete(completed, &schemas, path, CompletionLevel::merged(depth))
+            .map(Some)
     }
 
-    fn conjunction<'a>(
-        &'a self,
+    fn conjunction(
+        &mut self,
         schemas: &[SchemaView<'a>],
         node: &ResolvedNode<'a>,
         path: &str,
-        budget: &mut Budget,
     ) -> Result<Vec<SchemaView<'a>>, ResolveError> {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
         let mut cursor = 0;
         for schema in schemas {
-            if seen.insert(schema.id) {
+            if seen.insert(schema.id()) {
                 out.push(*schema);
             }
         }
         if let Some(tag) = node.tag() {
-            let view = self.type_schema(tag).ok_or_else(|| {
+            let view = self.schemas.type_schema(tag).ok_or_else(|| {
                 failure(
                     ResolveErrorKind::UnknownTag,
                     node,
@@ -375,23 +367,23 @@ impl Schemas {
                     path,
                 )
             })?;
-            if seen.insert(view.id) {
+            if seen.insert(view.id()) {
                 out.push(view);
             }
         }
         while cursor < out.len() {
             let view = out[cursor];
             cursor += 1;
-            budget.step(node, path)?;
-            if let Some(reference) = self.referenced(view)
-                && seen.insert(reference.id)
+            self.budget.step(node, path)?;
+            if let Some(reference) = view.referenced()
+                && seen.insert(reference.id())
             {
                 out.push(reference);
             }
-            if let Some(all) = view.value.get("allOf").and_then(JsonValue::as_array) {
+            if let Some(all) = view.value().get("allOf").and_then(JsonValue::as_array) {
                 for value in all {
-                    if let Some(child) = self.locate(value)
-                        && seen.insert(child.id)
+                    if let Some(child) = self.schemas.locate(value)
+                        && seen.insert(child.id())
                     {
                         out.push(child);
                     }
@@ -401,45 +393,49 @@ impl Schemas {
         Ok(out)
     }
 
-    fn applicable<'a>(
-        &'a self,
+    fn applicable(
+        &mut self,
         schemas: &[SchemaView<'a>],
         node: &ResolvedNode<'a>,
         path: &str,
-        budget: &mut Budget,
-        search: &mut CompletionSearch<'a>,
     ) -> Result<Vec<SchemaView<'a>>, ResolveError> {
         let mut schemas = schemas.to_vec();
         let mut skipped = Vec::new();
         loop {
-            schemas = self.conjunction(&schemas, node, path, budget)?;
+            schemas = self.conjunction(&schemas, node, path)?;
             let Some(union) = self.next_union(&schemas, &skipped) else {
                 return Ok(schemas);
             };
-            budget.step(node, path)?;
-            let branch = search.branch(path, union.schema.id, union.keyword, union.branches, self);
-            skipped.push((union.schema.id, union.keyword));
+            self.budget.step(node, path)?;
+            let branch = self.search.branch(
+                path,
+                union.schema.id(),
+                union.keyword,
+                union.branches,
+                self.schemas,
+            );
+            skipped.push((union.schema.id(), union.keyword));
             schemas.push(branch);
         }
     }
 
-    fn next_union<'a>(
-        &'a self,
+    fn next_union(
+        &self,
         schemas: &[SchemaView<'a>],
-        skipped: &[(usize, &'static str)],
+        skipped: &[(SchemaId, &'static str)],
     ) -> Option<Union<'a>> {
         for schema in schemas {
             for keyword in ["anyOf", "oneOf"] {
-                if skipped.contains(&(schema.id, keyword)) {
+                if skipped.contains(&(schema.id(), keyword)) {
                     continue;
                 }
-                if let Some(branches) = schema.value.get(keyword).and_then(JsonValue::as_array) {
+                if let Some(branches) = schema.value().get(keyword).and_then(JsonValue::as_array) {
                     // The engine evaluates unions with no completion work.
                     if branches.iter().any(|branch| {
-                        self.has_defaults(
-                            self.locate(branch)
-                                .expect("preflight indexed every union branch"),
-                        )
+                        self.schemas
+                            .locate(branch)
+                            .expect("preflight indexed every union branch")
+                            .has_defaults()
                     }) {
                         return Some(Union {
                             branches,
@@ -452,38 +448,34 @@ impl Schemas {
         }
         None
     }
-
-    fn property_schemas<'a>(
-        &'a self,
-        schemas: &[SchemaView<'a>],
-        key: &str,
-    ) -> Vec<SchemaView<'a>> {
+    fn property_schemas(&self, schemas: &[SchemaView<'a>], key: &str) -> Vec<SchemaView<'a>> {
         schemas
             .iter()
             .filter_map(|schema| {
                 if let Some(value) = schema
-                    .value
+                    .value()
                     .get("properties")
                     .and_then(|properties| properties.get(key))
                 {
-                    self.locate(value)
-                } else if schema.value.get("patternProperties").is_none() {
+                    self.schemas.locate(value)
+                } else if schema.value().get("patternProperties").is_none() {
                     schema
-                        .value
+                        .value()
                         .get("additionalProperties")
-                        .and_then(|value| self.locate(value))
+                        .and_then(|value| self.schemas.locate(value))
                 } else {
                     None
                 }
             })
             .collect()
     }
-    fn property_names<'a>(&'a self, schemas: &[SchemaView<'a>]) -> Vec<&'a str> {
+
+    fn property_names(&self, schemas: &[SchemaView<'a>]) -> Vec<&'a str> {
         let mut names = Vec::new();
         let mut seen = HashSet::new();
         for schema in schemas {
             if let Some(properties) = schema
-                .value
+                .value()
                 .get("properties")
                 .and_then(JsonValue::as_object)
             {
@@ -496,35 +488,26 @@ impl Schemas {
         }
         names
     }
-    fn items_schemas<'a>(
-        &'a self,
-        schemas: &[SchemaView<'a>],
-        index: usize,
-    ) -> Vec<SchemaView<'a>> {
+    fn items_schemas(&self, schemas: &[SchemaView<'a>], index: usize) -> Vec<SchemaView<'a>> {
         schemas
             .iter()
             .filter_map(|schema| {
                 let prefix = schema
-                    .value
+                    .value()
                     .get("prefixItems")
                     .and_then(JsonValue::as_array);
                 let value = prefix
                     .and_then(|items| items.get(index))
-                    .or_else(|| schema.value.get("items"));
-                value.and_then(|value| self.locate(value))
+                    .or_else(|| schema.value().get("items"));
+                value.and_then(|value| self.schemas.locate(value))
             })
             .collect()
     }
 
-    fn known_tags(
-        &self,
-        node: &ResolvedNode<'_>,
-        path: &str,
-        budget: &mut Budget,
-    ) -> Result<(), ResolveError> {
-        budget.step(node, path)?;
+    fn known_tags(&mut self, node: &ResolvedNode<'_>, path: &str) -> Result<(), ResolveError> {
+        self.budget.step(node, path)?;
         if let Some(tag) = node.tag()
-            && self.type_schema(tag).is_none()
+            && self.schemas.type_schema(tag).is_none()
         {
             return Err(failure(
                 ResolveErrorKind::UnknownTag,
@@ -537,12 +520,12 @@ impl Schemas {
         match &node.value {
             ResolvedValue::Mapping(fields) => {
                 for (key, child) in fields {
-                    self.known_tags(child, &join_path(path, key), budget)?;
+                    self.known_tags(child, &crate::pointer::join(path, key))?;
                 }
             }
             ResolvedValue::Sequence(items) => {
                 for (index, child) in items.iter().enumerate() {
-                    self.known_tags(child, &join_path(path, &index.to_string()), budget)?;
+                    self.known_tags(child, &crate::pointer::join(path, &index.to_string()))?;
                 }
             }
             _ => {}
@@ -551,13 +534,12 @@ impl Schemas {
     }
 
     fn validate_tags(
-        &self,
+        &mut self,
         node: &ResolvedNode<'_>,
         path: &str,
         depth: usize,
-        budget: &mut Budget,
     ) -> Result<(), ResolveError> {
-        budget.step(node, path)?;
+        self.budget.step(node, path)?;
         if depth > 128 {
             return Err(failure(
                 ResolveErrorKind::LimitExceeded,
@@ -568,7 +550,7 @@ impl Schemas {
             ));
         }
         if let Some(tag) = node.tag() {
-            let schema = self.type_schema(tag).ok_or_else(|| {
+            let schema = self.schemas.type_schema(tag).ok_or_else(|| {
                 failure(
                     ResolveErrorKind::UnknownTag,
                     node,
@@ -577,17 +559,21 @@ impl Schemas {
                     path,
                 )
             })?;
-            self.check_node(node, &schema, path, budget)?;
+            Self::check_node(node, &schema, path, &mut self.budget)?;
         }
         match &node.value {
             ResolvedValue::Mapping(fields) => {
                 for (key, child) in fields {
-                    self.validate_tags(child, &join_path(path, key), depth + 1, budget)?;
+                    self.validate_tags(child, &crate::pointer::join(path, key), depth + 1)?;
                 }
             }
             ResolvedValue::Sequence(items) => {
                 for (i, child) in items.iter().enumerate() {
-                    self.validate_tags(child, &join_path(path, &i.to_string()), depth + 1, budget)?;
+                    self.validate_tags(
+                        child,
+                        &crate::pointer::join(path, &i.to_string()),
+                        depth + 1,
+                    )?;
                 }
             }
             _ => {}
@@ -595,41 +581,130 @@ impl Schemas {
         Ok(())
     }
     fn check_node(
-        &self,
         node: &ResolvedNode<'_>,
-        schema: &SchemaView<'_>,
+        schema: &SchemaView<'a>,
         path: &str,
         budget: &mut Budget,
     ) -> Result<(), ResolveError> {
-        budget.charge_work(
-            self.evaluation_cost(*schema, resolved_work(node)),
-            node,
-            path,
-        )?;
-        if self.uses_uniqueness(*schema) {
-            budget.charge_work(
-                self.evaluation_cost(*schema, uniqueness_work(node)),
-                node,
-                path,
-            )?;
+        budget.charge_work(schema.evaluation_cost(resolved_work(node)), node, path)?;
+        if schema.uses_uniqueness() {
+            budget.charge_work(schema.evaluation_cost(uniqueness_work(node)), node, path)?;
         }
-        self.check(NodeRef::new(node), *schema)
-            .map_err(|failure_info| {
-                let full_path = format!("{path}{}", failure_info.path);
-                let failing = node.at_pointer(&failure_info.path).unwrap_or(node);
-                let kind = if failure_info.tag {
-                    ResolveErrorKind::TagMismatch
+        schema.validate(node).map_err(|failure_info| {
+            let full_path = format!("{path}{}", failure_info.path);
+            let failing = node.at_pointer(&failure_info.path).unwrap_or(node);
+            let kind = if failure_info.tag {
+                ResolveErrorKind::TagMismatch
+            } else {
+                ResolveErrorKind::SchemaViolation
+            };
+            failure(
+                kind,
+                failing,
+                failure_info.message,
+                Some(failure_info.schema),
+                &full_path,
+            )
+        })
+    }
+    fn discover_default_tag(
+        &mut self,
+        schemas: &[SchemaView<'a>],
+        supplied: Option<&ResolvedNode<'a>>,
+        path: &str,
+    ) -> Result<Option<ResolvedTag<'a>>, ResolveError> {
+        let mut discovered: Option<ResolvedTag<'a>> = None;
+        for schema in schemas {
+            let Some(default) = schema.value().get("default") else {
+                continue;
+            };
+            // Existing data only merges object defaults. A tag on a skipped
+            // scalar/sequence default must not leak onto a supplied mapping.
+            if supplied.is_some() && !default.is_object() {
+                continue;
+            }
+            let Some(tag) = default_tag(default, *schema, &mut self.budget, path)? else {
+                continue;
+            };
+            if let Some(prior) = &mut discovered {
+                if prior.name != tag.name && self.search.conflicting_default_tag(&tag, path) == 1 {
+                    *prior = tag;
+                }
+            } else {
+                discovered = Some(tag);
+            }
+        }
+        Ok(discovered)
+    }
+
+    fn merge_candidates(
+        &mut self,
+        target: &mut ResolvedNode<'a>,
+        mut incoming: ResolvedNode<'a>,
+        supplied: Option<&ResolvedNode<'a>>,
+        path: &str,
+    ) {
+        if let Some(supplied) = supplied {
+            if !matches!(supplied.value, ResolvedValue::Mapping(_)) {
+                return;
+            }
+            if let Some(tag) = supplied.tag() {
+                if incoming.tag().is_some_and(|incoming| incoming != tag) {
+                    return;
+                }
+                if target.tag().is_some_and(|current| current != tag) {
+                    *target = incoming;
+                    return;
+                }
+            }
+            match (&target.value, &incoming.value) {
+                (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_)) => {}
+                (_, ResolvedValue::Mapping(_)) => {
+                    *target = incoming;
+                    return;
+                }
+                _ => return,
+            }
+        }
+        let both_maps = matches!(
+            (&target.value, &incoming.value),
+            (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_))
+        );
+        if !both_maps {
+            if !same_json(target, &incoming)
+                && self.search.conflicting_default(&incoming, path) == 1
+            {
+                *target = incoming;
+            }
+            return;
+        }
+        if supplied.and_then(ResolvedNode::tag).is_none()
+            && target.tag().is_some()
+            && incoming.tag().is_some()
+            && target.tag() != incoming.tag()
+        {
+            if self.search.conflicting_default(&incoming, path) == 1 {
+                target.tag = incoming.tag.take();
+            }
+        } else if target.tag.is_none() {
+            target.tag = incoming.tag.take();
+        }
+        if let (ResolvedValue::Mapping(target), ResolvedValue::Mapping(incoming)) =
+            (&mut target.value, incoming.value)
+        {
+            for (key, value) in incoming {
+                if let Some(existing) = target.get_mut(key.as_ref()) {
+                    self.merge_candidates(
+                        existing,
+                        value,
+                        supplied.and_then(|node| node.get(&key)),
+                        &crate::pointer::join(path, &key),
+                    );
                 } else {
-                    ResolveErrorKind::SchemaViolation
-                };
-                failure(
-                    kind,
-                    failing,
-                    failure_info.message,
-                    Some(failure_info.schema),
-                    &full_path,
-                )
-            })
+                    target.insert(key, value);
+                }
+            }
+        }
     }
 }
 
@@ -704,7 +779,7 @@ fn uniqueness_work(node: &ResolvedNode<'_>) -> usize {
 struct CompletionSearch<'a> {
     choices: Vec<usize>,
     arities: Vec<usize>,
-    branches: HashMap<String, HashMap<(usize, &'static str), SchemaView<'a>>>,
+    branches: HashMap<String, HashMap<(SchemaId, &'static str), SchemaView<'a>>>,
     conflict: Option<ResolveError>,
 }
 
@@ -727,7 +802,7 @@ impl<'a> CompletionSearch<'a> {
     fn branch(
         &mut self,
         path: &str,
-        id: usize,
+        id: SchemaId,
         keyword: &'static str,
         branches: &[JsonValue],
         schemas: &'a Schemas,
@@ -788,37 +863,6 @@ impl<'a> CompletionSearch<'a> {
         }
         self.choose(2)
     }
-}
-
-fn discover_default_tag<'a>(
-    schemas: &[SchemaView<'a>],
-    supplied: Option<&ResolvedNode<'a>>,
-    path: &str,
-    budget: &mut Budget,
-    search: &mut CompletionSearch<'a>,
-) -> Result<Option<ResolvedTag<'a>>, ResolveError> {
-    let mut discovered: Option<ResolvedTag<'a>> = None;
-    for schema in schemas {
-        let Some(default) = schema.value.get("default") else {
-            continue;
-        };
-        // Existing data only merges object defaults. A tag on a skipped
-        // scalar/sequence default must not leak onto a supplied mapping.
-        if supplied.is_some() && !default.is_object() {
-            continue;
-        }
-        let Some(tag) = default_tag(default, *schema, budget, path)? else {
-            continue;
-        };
-        if let Some(prior) = &mut discovered {
-            if prior.name != tag.name && search.conflicting_default_tag(&tag, path) == 1 {
-                *prior = tag;
-            }
-        } else {
-            discovered = Some(tag);
-        }
-    }
-    Ok(discovered)
 }
 
 struct Budget {
@@ -956,7 +1000,7 @@ fn from_input<'a>(
                         document,
                         item,
                         depth + 1,
-                        &join_path(path, &index.to_string()),
+                        &crate::pointer::join(path, &index.to_string()),
                         budget,
                     )
                 })
@@ -968,7 +1012,7 @@ fn from_input<'a>(
                 let key = document
                     .slice(entry.key)
                     .expect("parser-produced keys have valid source spans");
-                let child_path = join_path(path, key);
+                let child_path = crate::pointer::join(path, key);
                 budget.add_bytes(&result, key, &child_path)?;
                 let value = from_input(document, &entry.value, depth + 1, &child_path, budget)?;
                 fields.insert(Cow::Borrowed(key), value);
@@ -986,7 +1030,7 @@ fn from_default<'a>(
     budget: &mut Budget,
     path: &str,
 ) -> Result<ResolvedNode<'a>, ResolveError> {
-    let location = schema.default_origin.unwrap_or(schema.location);
+    let location = schema.default_origin().unwrap_or(schema.location());
     let origin = Origin::Default(location);
     let mut node = ResolvedNode {
         value: ResolvedValue::Null,
@@ -1034,7 +1078,7 @@ fn from_default<'a>(
                         schema,
                         depth + 1,
                         budget,
-                        &join_path(path, &index.to_string()),
+                        &crate::pointer::join(path, &index.to_string()),
                     )
                 })
                 .collect::<Result<_, _>>()?,
@@ -1043,7 +1087,7 @@ fn from_default<'a>(
         JsonValue::Object(values) => {
             let mut fields = BTreeMap::new();
             for (key, value) in values {
-                let child_path = join_path(path, key);
+                let child_path = crate::pointer::join(path, key);
                 budget.add_bytes(&node, key, &child_path)?;
                 fields.insert(
                     Cow::Borrowed(key.as_str()),
@@ -1064,7 +1108,7 @@ fn default_tag<'a>(
     let Some(name) = schema.default_tag(value) else {
         return Ok(None);
     };
-    let location = schema.default_origin.unwrap_or(schema.location);
+    let location = schema.default_origin().unwrap_or(schema.location());
     let placeholder = ResolvedNode {
         value: ResolvedValue::Null,
         tag: None,
@@ -1075,75 +1119,6 @@ fn default_tag<'a>(
         name: Cow::Borrowed(name),
         origin: Origin::Default(location),
     }))
-}
-
-fn merge_candidates<'a>(
-    target: &mut ResolvedNode<'a>,
-    mut incoming: ResolvedNode<'a>,
-    supplied: Option<&ResolvedNode<'a>>,
-    path: &str,
-    search: &mut CompletionSearch<'a>,
-) {
-    if let Some(supplied) = supplied {
-        if !matches!(supplied.value, ResolvedValue::Mapping(_)) {
-            return;
-        }
-        if let Some(tag) = supplied.tag() {
-            if incoming.tag().is_some_and(|incoming| incoming != tag) {
-                return;
-            }
-            if target.tag().is_some_and(|current| current != tag) {
-                *target = incoming;
-                return;
-            }
-        }
-        match (&target.value, &incoming.value) {
-            (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_)) => {}
-            (_, ResolvedValue::Mapping(_)) => {
-                *target = incoming;
-                return;
-            }
-            _ => return,
-        }
-    }
-    let both_maps = matches!(
-        (&target.value, &incoming.value),
-        (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_))
-    );
-    if !both_maps {
-        if !same_json(target, &incoming) && search.conflicting_default(&incoming, path) == 1 {
-            *target = incoming;
-        }
-        return;
-    }
-    if supplied.and_then(ResolvedNode::tag).is_none()
-        && target.tag().is_some()
-        && incoming.tag().is_some()
-        && target.tag() != incoming.tag()
-    {
-        if search.conflicting_default(&incoming, path) == 1 {
-            target.tag = incoming.tag.take();
-        }
-    } else if target.tag.is_none() {
-        target.tag = incoming.tag.take();
-    }
-    if let (ResolvedValue::Mapping(target), ResolvedValue::Mapping(incoming)) =
-        (&mut target.value, incoming.value)
-    {
-        for (key, value) in incoming {
-            if let Some(existing) = target.get_mut(key.as_ref()) {
-                merge_candidates(
-                    existing,
-                    value,
-                    supplied.and_then(|node| node.get(&key)),
-                    &join_path(path, &key),
-                    search,
-                );
-            } else {
-                target.insert(key, value);
-            }
-        }
-    }
 }
 
 fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>) {
@@ -1170,10 +1145,6 @@ fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>) {
             }
         }
     }
-}
-fn join_path(parent: &str, segment: &str) -> String {
-    let escaped = segment.replace('~', "~0").replace('/', "~1");
-    format!("{parent}/{escaped}")
 }
 fn failure(
     kind: ResolveErrorKind,
