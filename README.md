@@ -9,6 +9,15 @@ part of Olaf; Olaf is a prospective consumer.
 This repository currently contains a dependency-free library crate and CI.
 The parser, schema APIs, and Python bindings are not implemented yet.
 
+## Design
+
+- [Implementation plan](PLAN.md): user-confirmed syntax, mandatory multiline
+  dedent, proposed grammar decisions, and consumer-visible implementation gates.
+- [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
+  references, pinned candidates, test-corpus reuse, and license obligations.
+
+These documents describe planned behavior, not currently available parser APIs.
+
 ## Development
 
 Install [Rust through rustup](https://rustup.rs/). The repository pins its
