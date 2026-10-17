@@ -199,7 +199,8 @@ impl Schemas {
                 if node.tag().is_some() {
                     break;
                 }
-                let Some(tag) = discover_default_tag(&schemas, path, budget, search)? else {
+                let Some(tag) = discover_default_tag(&schemas, Some(&node), path, budget, search)?
+                else {
                     break;
                 };
                 node.tag = Some(tag);
@@ -313,7 +314,7 @@ impl Schemas {
             if probe.tag().is_some() {
                 break;
             }
-            let Some(tag) = discover_default_tag(&schemas, path, budget, search)? else {
+            let Some(tag) = discover_default_tag(&schemas, None, path, budget, search)? else {
                 break;
             };
             probe.tag = Some(tag);
@@ -791,6 +792,7 @@ impl<'a> CompletionSearch<'a> {
 
 fn discover_default_tag<'a>(
     schemas: &[SchemaView<'a>],
+    supplied: Option<&ResolvedNode<'a>>,
     path: &str,
     budget: &mut Budget,
     search: &mut CompletionSearch<'a>,
@@ -800,6 +802,11 @@ fn discover_default_tag<'a>(
         let Some(default) = schema.value.get("default") else {
             continue;
         };
+        // Existing data only merges object defaults. A tag on a skipped
+        // scalar/sequence default must not leak onto a supplied mapping.
+        if supplied.is_some() && !default.is_object() {
+            continue;
+        }
         let Some(tag) = default_tag(default, *schema, budget, path)? else {
             continue;
         };
@@ -1140,7 +1147,10 @@ fn merge_candidates<'a>(
 }
 
 fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>) {
-    if !matches!(target.value, ResolvedValue::Mapping(_)) {
+    if !matches!(
+        (&target.value, &default.value),
+        (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_))
+    ) {
         return;
     }
     if target.tag().is_some() && default.tag().is_some() && target.tag() != default.tag() {

@@ -140,3 +140,51 @@ fn generated_unknown_tags_are_rejected_instead_of_returning_unchecked_data() {
     assert_eq!(error.kind, ResolveErrorKind::UnknownTag);
     assert_eq!(error.path, "/payload");
 }
+
+#[test]
+fn supplied_objects_override_annotated_scalar_and_sequence_defaults() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {"properties": {
+            "scalar": {"default": 7, "x-daml-default-tags": [{"path": "", "tag": "Count"}]},
+            "sequence": {"default": [1], "x-daml-default-tags": [{"path": "", "tag": "List"}]}
+        }}},
+        "Count": {"schema": {"type": "integer"}},
+        "List": {"schema": {"type": "array"}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let supplied = parse("!Host { scalar: {}\n sequence: {} }").unwrap();
+    let completed = schemas.resolve(&supplied).unwrap();
+    assert_eq!(completed.to_json(), json!({"scalar": {}, "sequence": {}}));
+    assert_eq!(completed.root().get("scalar").unwrap().tag(), None);
+    assert_eq!(completed.root().get("sequence").unwrap().tag(), None);
+    let missing = parse("!Host").unwrap();
+    let completed = schemas.resolve(&missing).unwrap();
+    assert_eq!(completed.root().get("scalar").unwrap().tag(), Some("Count"));
+    assert_eq!(
+        completed.root().get("sequence").unwrap().tag(),
+        Some("List")
+    );
+}
+
+#[test]
+fn supplied_objects_override_annotated_nonobject_parent_presets() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {
+            "default": {"scalar": 7, "sequence": [1]},
+            "x-daml-default-tags": [
+                {"path": "/scalar", "tag": "Count"},
+                {"path": "/sequence", "tag": "List"}
+            ]
+        }},
+        "Count": {"schema": {"type": "integer"}},
+        "List": {"schema": {"type": "array"}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let supplied = parse("!Host { scalar: {}\n sequence: {} }").unwrap();
+    let completed = schemas.resolve(&supplied).unwrap();
+    assert_eq!(completed.to_json(), json!({"scalar": {}, "sequence": {}}));
+    assert_eq!(completed.root().get("scalar").unwrap().tag(), None);
+    assert_eq!(completed.root().get("sequence").unwrap().tag(), None);
+}

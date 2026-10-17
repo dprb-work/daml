@@ -219,6 +219,9 @@ The schema must contain `default`.
 
 The annotation preserves the default as ordinary JSON data. It does not add a
 field to that data or reinterpret names such as `__type__` and `__fn__`.
+Tags apply only when their default is inserted or object-merged. Overriding a
+scalar or array default also discards its tag; that discarded assertion cannot
+leak onto supplied data.
 Malformed records, unknown fields, invalid or duplicate paths, missing targets,
 and an empty annotation array are rejected during schema admission. The declared
 tag must satisfy DAML's existing provisional tag-name rules.
