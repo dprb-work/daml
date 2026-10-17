@@ -1,0 +1,32 @@
+{
+  "types": {
+    "network.Adapter": {
+      "schema": {
+        "$id": "https://daml.invalid/network/adapter",
+        "type": "object",
+        "properties": {
+          "timeout": {"type": "integer", "minimum": 1, "default": 30}
+        },
+        "required": ["timeout"],
+        "additionalProperties": false
+      },
+      "implements": ["app.Adapter"]
+    },
+    "network.Port": {
+      "schema": {
+        "$id": "https://daml.invalid/network/port",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 65535
+      }
+    },
+    "network.Ports": {
+      "schema": {
+        "$id": "https://daml.invalid/network/ports",
+        "type": "array",
+        "items": {"$ref": "https://daml.invalid/network/port"},
+        "minItems": 1
+      }
+    }
+  }
+}

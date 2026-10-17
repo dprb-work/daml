@@ -14,14 +14,56 @@
 //! assert_eq!(document.tag(document.root()), Some("app.Config"));
 //! # Ok::<(), daml::ParseError>(())
 //! ```
+//!
+//! Complete a partial value from schema defaults, then enforce all constraints:
+//!
+//! ```
+//! let module = daml::SchemaModule::from_daml(r#"{
+//!   types: {
+//!     app.Config: {
+//!       schema: {
+//!         type: "object"
+//!         properties: {
+//!           timeout: {
+//!             type: "integer"
+//!             minimum: 1
+//!             default: 30
+//!           }
+//!         }
+//!         required: ["timeout"]
+//!         additionalProperties: false
+//!       }
+//!     }
+//!   }
+//! }"#)?;
+//! let schemas = daml::Schemas::compose([module])?;
+//! let supplied = daml::parse("!app.Config")?;
+//! let resolved = schemas.resolve(&supplied)?;
+//! assert_eq!(resolved.root().get("timeout").unwrap().to_json(), 30);
+//! assert!(supplied.get(supplied.root(), "timeout").is_none());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::borrow::Cow;
 
+mod json_backend;
 mod model;
 mod parser;
+mod resolve;
+mod resolved;
+mod schema;
+mod schema_error;
+mod strict_json;
 mod strings;
+mod tag_keywords;
 
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
+pub use resolved::{
+    ErrorOrigin, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
+    ResolvedNode, ResolvedValue, SchemaLocation,
+};
+pub use schema::{SchemaModule, Schemas};
+pub use schema_error::{SchemaError, SchemaErrorKind};
 
 /// Parses one complete DAML value with default resource bounds.
 ///

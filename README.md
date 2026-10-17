@@ -6,10 +6,10 @@ DAML is an independent Rust project for a markup language with explicit
 structure, nested type assertions through tags, and long strings. It is not
 part of Olaf; Olaf is a prospective consumer.
 
-The dependency-free Rust library now parses DAML values, nested tags, ordinary
-strings, dedented literal strings, and wrapped strings into a source-backed
-document. Schema validation, the DAML formatter/LSP, and Python bindings are not
-implemented yet.
+The Rust library parses source-backed documents, resolves deeply nested type
+assertions against independently composed schema modules, and completes partial
+values from declared defaults before validation. Schemas can be written in JSON
+or DAML. The DAML formatter/LSP and Python bindings remain planned.
 
 ## Design
 
@@ -19,9 +19,11 @@ implemented yet.
   references, pinned candidates, test-corpus reuse, and license obligations.
 - [Syntax contract](docs/syntax.md): implemented structure, string decoding,
   provisional key/tag token policy, source spans, errors, and resource bounds.
+- [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
+  independent extension contracts, Olaf imports, partial values, and diagnostics.
 
-The syntax contract describes the parser; the plan records the subsequent
-schema, formatter, and language-server milestones.
+The syntax contract owns parsing behavior; the schema guide owns completion and
+validation. The plan records the remaining hardening, formatter, and LSP work.
 
 ## Parse a document
 
@@ -48,6 +50,36 @@ It prints the tagged tree, original byte spans, and decoded string values.
 Malformed input exits with a structured error category and byte location.
 Use `parse_with_limits` to choose smaller input/scalar/node/nesting bounds;
 the hard nesting ceiling is 128.
+
+## Complete and validate a document
+
+Compose explicitly selected modules, then call `Schemas::resolve(&document)`.
+`resolve_as(&document, "app.Config")` additionally applies a named root schema,
+including to an untagged root. Both parent constraints and explicit tags apply;
+assertions never cast away restrictions.
+
+Run the multi-module consumer:
+
+```sh
+cargo run --locked --example resolve -- examples/application.daml \
+  examples/schemas/application.daml examples/schemas/network.json \
+  examples/schemas/text.daml
+```
+
+The result includes the adapter's default timeout and the request's default ID.
+Supplied values win; object defaults merge recursively, while arrays/scalars
+replace defaults. Missing required fields still fail after completion. The
+original source stays unchanged, and generated values identify their schema
+default rather than a fabricated source span.
+
+`examples/olaf.rs` imports an independently authored Olaf-shaped schema, replacing
+its `__type__` declaration with a tag assertion without running Olaf:
+
+```sh
+cargo run --locked --example olaf
+```
+
+See the [schema guide](docs/schemas.md) for the module format and completion rules.
 
 ## Development
 
@@ -93,6 +125,18 @@ an older compiler requires testing it separately; the current pin does not
 establish compatibility with other versions. `Cargo.lock` is tracked and CI uses
 `--locked` to prevent implicit dependency changes.
 
+Check dependency advisories, licenses, sources, and forbidden retrieval features:
+
+```sh
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --locked check
+```
+
+CI runs this separately from the Rust gate. `deny.toml` allows the licenses used
+by the selected dependencies and forbids validator HTTP/file/async retrieval
+features. No advisories are ignored. Duplicate dependency versions remain
+warnings for review. DAML remains unpublished until its own license is selected.
+
 ## Implementation defaults
 
 Keep the library synchronous and safe: the manifest forbids unsafe code and
@@ -107,8 +151,10 @@ before there is a separate crate boundary. Integration tests exercise complete
 documents, ambiguous/unsupported syntax rejection, exact string transformations,
 source spans, and resource bounds.
 
-Add tooling when it has something to check: dependency policy when dependencies
-arrive, fuzzing when a parser entry point exists, and Miri when an unsafe or FFI
-boundary needs it. Extra test runners, coverage thresholds, and platform matrices
-are not requirements for this dependency-free crate. Review the pinned checkout
-action when maintaining CI dependencies; no automatic update service is enabled.
+The library now depends on a pinned JSON Schema validator and JSON/Serde support.
+Dependency policy runs locally and in CI. Fuzz the actual parser and resolver;
+the hardening milestone calls for a retained harness and measurements.
+Add Miri when an unsafe or FFI boundary needs it. Extra test runners,
+coverage thresholds, and platform matrices are not baseline requirements.
+Review the pinned checkout action when maintaining CI dependencies; no automatic
+update service is enabled.

@@ -24,3 +24,17 @@ jobs:
         run: rustup show
       - name: Verify
         run: ./scripts/check
+
+  dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Install dependency policy tool
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Check advisories, licenses, bans, and sources
+        run: cargo deny --locked check
