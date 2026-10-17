@@ -10,7 +10,7 @@ planned. Final key/tag alphabets and whether they align remain deferred.
 A standalone safe-Rust library that parses DAML into a source-backed document,
 preserves deeply nested tags, and validates their assertions against independently
 composed schema modules. A real consumer can inspect values, tags, and source
-locations without depending on Olaf or a global discriminator union.
+locations without a global discriminator union or vendor-specific core behavior.
 
 Ship complete consumer-visible behavior in each implementation slice. A lexer,
 AST skeleton, forwarding API, or passing empty test suite is not a milestone.
@@ -29,7 +29,7 @@ AST skeleton, forwarding API, or passing empty test suite is not a milestone.
 - Backslash immediately before a physical newline can explicitly join literal
   string lines; joining inserts no space.
 - No YAML `|`, `|-`, `|+`, `>`, `>-`, or `>+` string variants.
-- Rust implementation, reusable independently of Olaf. Keep later Python
+- Rust implementation, reusable by independent consumers. Keep later Python
   integration possible without embedding Python into the core.
 - Reuse or port existing code when its technical fit and license justify it.
 - Provide a DAML formatter, primarily for indentation, and an LSP after the
@@ -201,8 +201,8 @@ a central union whenever a new module supplies a type.
 
 The implemented schema/default contract is in [docs/schemas.md](docs/schemas.md).
 It uses JSON Schema 2020-12 constraints serialized as JSON or DAML, with explicit
-tag/slot keywords and an offline, tag-aware validation engine. The Olaf adapter
-is explicit; it does not import Python code or discover a schema catalog.
+tag/slot keywords and an offline, tag-aware validation engine. Consumers translate
+their own formats into native `SchemaModule` values; DAML has no vendor importer.
 
 - Add a separate validation pass over the parsed document. Unknown tags survive
   syntax parsing but fail validation unless explicitly supplied by the caller.
@@ -310,8 +310,8 @@ unsafe prohibition is not evidence that transitive code contains no unsafe.
 
 Do not silently substitute YAML preprocessing for parsing DAML, implement every
 YAML feature, or lose tags by converting immediately to JSON/dictionaries.
-Do not couple the grammar or schema owner to Olaf's `__type__`/`__fn__` wire
-format, callable runtime, parameter templates, or execution lifecycle.
+Do not couple the grammar or schema owner to a consumer's wire format, callable
+runtime, parameter templates, foreign references, or execution lifecycle.
 
 The formatter and LSP are planned follow-on milestones after the standalone
 library, not hidden prerequisites for completing that library. Preserve source

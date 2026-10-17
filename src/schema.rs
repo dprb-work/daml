@@ -18,9 +18,8 @@ const MAX_COMPILE_NODES: usize = 100_000;
 
 #[derive(Clone)]
 struct Binding {
-    value: Arc<Value>,
+    value: Value,
     id: String,
-    legacy_defaults: bool,
     implements: Vec<String>,
 }
 
@@ -56,6 +55,10 @@ impl SchemaModule {
 
     /// Loads a module from an already constructed JSON-compatible value.
     ///
+    /// This is the interchange boundary for consumer-owned schema adapters.
+    /// Translate foreign schemas into the native module format before calling;
+    /// DAML does not interpret application-specific wire fields or references.
+    ///
     /// # Errors
     ///
     /// Rejects malformed declarations and values exceeding schema bounds.
@@ -80,9 +83,8 @@ impl SchemaModule {
                 module.types.insert(
                     name.clone(),
                     Binding {
-                        value: Arc::new(value),
+                        value,
                         id,
-                        legacy_defaults: false,
                         implements,
                     },
                 );
@@ -98,9 +100,8 @@ impl SchemaModule {
                 module.contracts.insert(
                     name.clone(),
                     Binding {
-                        value: Arc::new(value),
+                        value,
                         id,
-                        legacy_defaults: false,
                         implements: Vec::new(),
                     },
                 );
@@ -132,44 +133,6 @@ impl SchemaModule {
         }
         Ok(module)
     }
-
-    /// Imports one Olaf JSON Schema as a DAML type, lowering discriminator
-    /// properties only in this explicit adapter.
-    pub fn from_olaf_json(tag: &str, source: &str) -> Result<Self, SchemaError> {
-        check_source(source)?;
-        valid_name(tag)?;
-        let mut value = crate::strict_json::parse(source)?;
-        check_schema_shape(&value)?;
-        check_value_limits(&value)?;
-        let root_aliases = olaf_root_identities(&value)?;
-        if !root_aliases.is_empty() && !root_aliases.iter().any(|name| name == tag) {
-            return Err(invalid(format!(
-                "Olaf import tag {tag:?} is not a declared root identity"
-            )));
-        }
-        let aliases = if root_aliases.is_empty() {
-            HashSet::from([tag.to_owned()])
-        } else {
-            root_aliases.into_iter().collect()
-        };
-        lower_olaf_discriminators(&mut value)?;
-        let id = schema_id(&value).unwrap_or_else(|| generated_id("type", tag));
-        assign_id(&mut value, &id)?;
-        let mut module = Self::default();
-        let value = Arc::new(value);
-        for alias in aliases {
-            module.types.insert(
-                alias,
-                Binding {
-                    value: Arc::clone(&value),
-                    id: id.clone(),
-                    legacy_defaults: true,
-                    implements: Vec::new(),
-                },
-            );
-        }
-        Ok(module)
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -178,13 +141,24 @@ pub(crate) struct SchemaView<'a> {
     pub value: &'a Value,
     pub location: &'a SchemaLocation,
     pub default_origin: Option<&'a SchemaLocation>,
-    pub legacy_defaults: bool,
+    pub default_tags: &'a HashMap<usize, usize>,
+}
+
+impl<'a> SchemaView<'a> {
+    pub(crate) fn default_tag(self, value: &Value) -> Option<&'a str> {
+        let index = self.default_tags.get(&(value as *const Value as usize))?;
+        Some(
+            self.value["x-daml-default-tags"][*index]["tag"]
+                .as_str()
+                .expect("default tag annotations are validated during admission"),
+        )
+    }
 }
 struct SchemaEntry {
     value: Value,
     location: SchemaLocation,
     default_origin: Option<SchemaLocation>,
-    legacy_defaults: bool,
+    default_tags: HashMap<usize, usize>,
     validator: Validator<DamlJson>,
     work: usize,
     has_defaults: bool,
@@ -206,7 +180,6 @@ impl Schemas {
         let mut contracts = HashMap::<String, Binding>::new();
         let mut resources = HashMap::<String, Value>::new();
         let (mut input_nodes, mut input_bytes) = (0usize, 0usize);
-        let mut seen_values = HashSet::new();
         for module in modules {
             for (name, binding) in module.types.iter().chain(module.contracts.iter()) {
                 input_nodes = input_nodes.saturating_add(1);
@@ -217,11 +190,9 @@ impl Schemas {
                     input_nodes = input_nodes.saturating_add(1);
                     input_bytes = input_bytes.saturating_add(name.len());
                 }
-                if seen_values.insert(Arc::as_ptr(&binding.value) as usize) {
-                    let (nodes, bytes) = check_value_limits(&binding.value)?;
-                    input_nodes = input_nodes.saturating_add(nodes);
-                    input_bytes = input_bytes.saturating_add(bytes);
-                }
+                let (nodes, bytes) = check_value_limits(&binding.value)?;
+                input_nodes = input_nodes.saturating_add(nodes);
+                input_bytes = input_bytes.saturating_add(bytes);
             }
             for (uri, schema) in &module.resources {
                 let (nodes, bytes) = check_value_limits(schema)?;
@@ -233,7 +204,7 @@ impl Schemas {
             }
             for (name, value) in module.types {
                 if types.insert(name.clone(), value).is_some() {
-                    return Err(duplicate(format!("duplicate type or alias {name:?}")));
+                    return Err(duplicate(format!("duplicate type {name:?}")));
                 }
             }
             for (name, value) in module.contracts {
@@ -247,13 +218,9 @@ impl Schemas {
                 }
             }
         }
-        normalize_olaf_resources(&mut types, &mut resources)?;
-        let mut identifiers = HashMap::<String, Arc<Value>>::new();
+        let mut identifiers = HashSet::new();
         for binding in types.values().chain(contracts.values()) {
-            if let Some(previous) =
-                identifiers.insert(binding.id.clone(), Arc::clone(&binding.value))
-                && !Arc::ptr_eq(&previous, &binding.value)
-            {
+            if !identifiers.insert(binding.id.clone()) {
                 return Err(duplicate(format!(
                     "duplicate schema identifier {:?}",
                     binding.id
@@ -261,7 +228,7 @@ impl Schemas {
             }
         }
         for (uri, schema) in &resources {
-            if identifiers.contains_key(uri) {
+            if identifiers.contains(uri) {
                 return Err(duplicate(format!("duplicate schema identifier {uri:?}")));
             }
             check_schema_shape(schema)?;
@@ -286,7 +253,7 @@ impl Schemas {
         let mut added_reference_bytes = 0;
         for binding in contracts.values_mut() {
             expand_contracts(
-                Arc::make_mut(&mut binding.value),
+                &mut binding.value,
                 &contract_ids,
                 &mut added_reference_bytes,
             )?;
@@ -294,13 +261,8 @@ impl Schemas {
         for schema in resources.values_mut() {
             expand_contracts(schema, &contract_ids, &mut added_reference_bytes)?;
         }
-        let mut expanded = HashMap::<String, Arc<Value>>::new();
         for binding in types.values_mut() {
-            if let Some(value) = expanded.get(&binding.id) {
-                binding.value = Arc::clone(value);
-                continue;
-            }
-            let root_value = Arc::make_mut(&mut binding.value);
+            let root_value = &mut binding.value;
             expand_contracts(root_value, &contract_ids, &mut added_reference_bytes)?;
             for name in &binding.implements {
                 let uri = contract_ids
@@ -321,19 +283,18 @@ impl Schemas {
                     .ok_or_else(|| invalid("allOf must be an array"))?
                     .push(serde_json::json!({"$ref": uri}));
             }
-            expanded.insert(binding.id.clone(), Arc::clone(&binding.value));
         }
         let mut registry_contents = resources.clone();
         for binding in types.values().chain(contracts.values()) {
             registry_contents
                 .entry(binding.id.clone())
-                .or_insert_with(|| binding.value.as_ref().clone());
+                .or_insert_with(|| binding.value.clone());
         }
         validate_nested_identifiers(&registry_contents)?;
         for schema in types
             .values()
-            .map(|b| b.value.as_ref())
-            .chain(contracts.values().map(|b| b.value.as_ref()))
+            .map(|b| &b.value)
+            .chain(contracts.values().map(|b| &b.value))
             .chain(resources.values())
         {
             validate_exact_numbers(schema)?;
@@ -389,37 +350,28 @@ impl Schemas {
         let mut entries = Vec::new();
         let mut by_type = HashMap::new();
         let mut total = 0usize;
-        let mut compiled_ids = HashMap::<String, usize>::new();
         for (name, binding) in types {
-            let index = if let Some(index) = compiled_ids.get(&binding.id) {
-                *index
-            } else {
-                let index = entries.len();
-                append_schema_entries(
-                    binding.value.as_ref().clone(),
-                    &binding.id,
-                    binding.legacy_defaults,
-                    &options,
-                    &mut entries,
-                    &mut total,
-                )?;
-                compiled_ids.insert(binding.id.clone(), index);
-                index
-            };
+            let index = entries.len();
+            append_schema_entries(
+                binding.value,
+                &binding.id,
+                &options,
+                &mut entries,
+                &mut total,
+            )?;
             by_type.insert(name, index);
         }
         for (_, binding) in contracts {
             append_schema_entries(
-                binding.value.as_ref().clone(),
+                binding.value,
                 &binding.id,
-                false,
                 &options,
                 &mut entries,
                 &mut total,
             )?;
         }
         for (uri, value) in resources {
-            append_schema_entries(value, &uri, false, &options, &mut entries, &mut total)?;
+            append_schema_entries(value, &uri, &options, &mut entries, &mut total)?;
         }
         let lookup = entries
             .iter()
@@ -438,6 +390,27 @@ impl Schemas {
             entry.work = info.work;
             entry.has_defaults = info.defaults;
             entry.uses_uniqueness = info.uniqueness;
+            if let Some(annotations) = entry
+                .value
+                .get("x-daml-default-tags")
+                .and_then(Value::as_array)
+            {
+                let default = entry
+                    .value
+                    .get("default")
+                    .expect("tagged defaults are validated during admission");
+                for (index, annotation) in annotations.iter().enumerate() {
+                    let path = annotation["path"]
+                        .as_str()
+                        .expect("annotation paths are validated");
+                    let target = default
+                        .pointer(path)
+                        .expect("annotation paths target a default value");
+                    entry
+                        .default_tags
+                        .insert(target as *const Value as usize, index);
+                }
+            }
         }
         let mut by_address = HashMap::new();
         for (id, entry) in entries.iter().enumerate() {
@@ -521,7 +494,7 @@ impl Schemas {
             value: &e.value,
             location: &e.location,
             default_origin: e.default_origin.as_ref(),
-            legacy_defaults: e.legacy_defaults,
+            default_tags: &e.default_tags,
         }
     }
     pub(crate) fn locate(&self, value: &Value) -> Option<SchemaView<'_>> {
@@ -641,7 +614,6 @@ fn index_nested_addresses(
 fn append_schema_entries(
     value: Value,
     resource: &str,
-    legacy: bool,
     options: &jsonschema::ValidationOptions<'_, std::sync::Arc<dyn jsonschema::Retrieve>, DamlJson>,
     entries: &mut Vec<SchemaEntry>,
     total: &mut usize,
@@ -650,7 +622,6 @@ fn append_schema_entries(
         value: &Value,
         resource: &str,
         pointer: &str,
-        legacy: bool,
         options: &jsonschema::ValidationOptions<
             '_,
             std::sync::Arc<dyn jsonschema::Retrieve>,
@@ -680,7 +651,7 @@ fn append_schema_entries(
             value: value.clone(),
             location,
             default_origin,
-            legacy_defaults: legacy,
+            default_tags: HashMap::new(),
             validator,
             work: 0,
             has_defaults: false,
@@ -693,7 +664,6 @@ fn append_schema_entries(
                         schema,
                         resource,
                         &pointer_join(&pointer_join(pointer, key), name),
-                        legacy,
                         options,
                         entries,
                         total,
@@ -705,7 +675,6 @@ fn append_schema_entries(
                         schema,
                         resource,
                         &pointer_join(&pointer_join(pointer, key), &n.to_string()),
-                        legacy,
                         options,
                         entries,
                         total,
@@ -716,7 +685,6 @@ fn append_schema_entries(
                     child,
                     resource,
                     &pointer_join(pointer, key),
-                    legacy,
                     options,
                     entries,
                     total,
@@ -727,7 +695,7 @@ fn append_schema_entries(
     }
     let mut nodes = 0;
     walk_schema(&value, 0, &mut nodes, &mut |_, _| Ok(()))?;
-    visit(&value, resource, "", legacy, options, entries, total)
+    visit(&value, resource, "", options, entries, total)
 }
 fn schema_map_key(k: &str) -> bool {
     matches!(
@@ -794,97 +762,6 @@ fn percent_decode(source: &str) -> Option<String> {
         }
     }
     String::from_utf8(decoded).ok()
-}
-fn normalize_olaf_resources(
-    types: &mut HashMap<String, Binding>,
-    resources: &mut HashMap<String, Value>,
-) -> Result<(), SchemaError> {
-    let aliases = resources
-        .keys()
-        .filter(|uri| uri.starts_with("@/"))
-        .map(|uri| (uri.clone(), olaf_resource_uri(uri)))
-        .collect::<HashMap<_, _>>();
-    let shared_aliases = types
-        .iter()
-        .filter(|(_, binding)| binding.legacy_defaults)
-        .fold(
-            HashMap::<usize, Vec<String>>::new(),
-            |mut groups, (name, binding)| {
-                groups
-                    .entry(Arc::as_ptr(&binding.value) as usize)
-                    .or_default()
-                    .push(name.clone());
-                groups
-            },
-        );
-    for names in shared_aliases.values() {
-        let first = &names[0];
-        let binding = types.get_mut(first).expect("grouped type binding exists");
-        rewrite_olaf_references(Arc::make_mut(&mut binding.value), &aliases);
-        let value = Arc::clone(&binding.value);
-        for name in &names[1..] {
-            types
-                .get_mut(name)
-                .expect("grouped type binding exists")
-                .value = Arc::clone(&value);
-        }
-    }
-    let mut normalized = HashMap::with_capacity(resources.len());
-    for (uri, mut schema) in std::mem::take(resources) {
-        let target = aliases.get(&uri).cloned().unwrap_or(uri.clone());
-        if let Some(map) = schema.as_object_mut()
-            && map.get("$id").and_then(Value::as_str) == Some(uri.as_str())
-        {
-            map.insert("$id".into(), Value::String(target.clone()));
-        }
-        rewrite_olaf_references(&mut schema, &aliases);
-        if normalized.insert(target.clone(), schema).is_some() {
-            return Err(duplicate(format!(
-                "duplicate normalized Olaf resource URI {target:?}"
-            )));
-        }
-    }
-    *resources = normalized;
-    Ok(())
-}
-fn olaf_resource_uri(uri: &str) -> String {
-    let hex = uri
-        .as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("urn:daml:olaf:{hex}")
-}
-fn rewrite_olaf_references(schema: &mut Value, aliases: &HashMap<String, String>) {
-    let Some(map) = schema.as_object_mut() else {
-        return;
-    };
-    if let Some(reference) = map.get("$ref").and_then(Value::as_str).map(str::to_owned) {
-        let (resource, fragment) = reference.split_once('#').unwrap_or((&reference, ""));
-        if let Some(normalized) = aliases.get(resource) {
-            map.insert(
-                "$ref".into(),
-                Value::String(format!("{normalized}#{fragment}")),
-            );
-        }
-    }
-    for (key, child) in map.iter_mut() {
-        if schema_map_key(key) {
-            if let Some(children) = child.as_object_mut() {
-                for value in children.values_mut() {
-                    rewrite_olaf_references(value, aliases)
-                }
-            }
-        } else if schema_array_key(key) {
-            if let Some(children) = child.as_array_mut() {
-                for value in children {
-                    rewrite_olaf_references(value, aliases)
-                }
-            }
-        } else if schema_single_key(key) {
-            rewrite_olaf_references(child, aliases)
-        }
-    }
 }
 fn check_daml_limits(document: &crate::Document, root: &crate::Node) -> Result<(), SchemaError> {
     fn visit(
@@ -1456,6 +1333,53 @@ fn prepare_schema_graph(
         .map(|(id, node)| (node.location, memo[id].expect("every view was evaluated")))
         .collect())
 }
+fn validate_default_tags(schema: &Map<String, Value>) -> Result<(), SchemaError> {
+    let Some(annotations) = schema.get("x-daml-default-tags") else {
+        return Ok(());
+    };
+    let default = schema
+        .get("default")
+        .ok_or_else(|| invalid("x-daml-default-tags requires a default on the same schema"))?;
+    let annotations = annotations
+        .as_array()
+        .filter(|entries| !entries.is_empty())
+        .ok_or_else(|| invalid("x-daml-default-tags must be a nonempty array"))?;
+    let mut targets = HashSet::new();
+    for annotation in annotations {
+        let annotation = object(annotation, "default tag annotation")?;
+        reject_unknown(annotation, &["path", "tag"], "default tag annotation")?;
+        let path = annotation
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("default tag annotation requires a string path"))?;
+        let tag = annotation
+            .get("tag")
+            .and_then(Value::as_str)
+            .ok_or_else(|| invalid("default tag annotation requires a string tag"))?;
+        valid_name(tag)?;
+        if !path.is_empty() && !path.starts_with('/') {
+            return Err(invalid("default tag paths must be RFC 6901 JSON Pointers"));
+        }
+        let mut bytes = path.bytes();
+        while let Some(byte) = bytes.next() {
+            if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
+                return Err(invalid(
+                    "default tag paths contain an invalid JSON Pointer escape",
+                ));
+            }
+        }
+        let target = default.pointer(path).ok_or_else(|| {
+            invalid(format!(
+                "default tag path {path:?} does not identify a value"
+            ))
+        })?;
+        if !targets.insert(target as *const Value as usize) {
+            return Err(invalid(format!("duplicate default tag target {path:?}")));
+        }
+    }
+    Ok(())
+}
+
 fn check_schema_shape(v: &Value) -> Result<(), SchemaError> {
     if !v.is_object() && !v.is_boolean() {
         return Err(invalid("schema must be an object or boolean"));
@@ -1474,6 +1398,7 @@ fn walk_schema(
         return Err(limit("schema exceeds node/depth bound"));
     }
     if let Some(m) = v.as_object() {
+        validate_default_tags(m)?;
         if let Some(dialect) = m.get("$schema")
             && !matches!(
                 dialect.as_str(),
@@ -1560,125 +1485,7 @@ fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError
         }
     })
 }
-fn marker_values(marker: &Value, key: &str) -> Result<Vec<String>, SchemaError> {
-    let values = if let Some(s) = marker.get("const").and_then(Value::as_str) {
-        vec![s.to_owned()]
-    } else if let Some(values) = marker.get("enum").and_then(Value::as_array) {
-        if values.is_empty() || values.iter().any(|value| value.as_str().is_none()) {
-            return Err(invalid(format!(
-                "Olaf {key} enum must contain nonempty strings"
-            )));
-        }
-        values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect()
-    } else {
-        return Err(invalid(format!(
-            "Olaf {key} marker must declare string const or enum"
-        )));
-    };
-    if values.iter().any(String::is_empty) {
-        return Err(invalid("Olaf discriminator values must be nonempty"));
-    }
-    let mut unique = HashSet::new();
-    if values.iter().any(|value| !unique.insert(value)) {
-        return Err(invalid(
-            "Olaf discriminator marker contains duplicate values",
-        ));
-    }
-    Ok(values)
-}
-fn olaf_root_identities(schema: &Value) -> Result<Vec<String>, SchemaError> {
-    let mut current = schema;
-    let mut seen = HashSet::new();
-    while let Some(reference) = current.get("$ref").and_then(Value::as_str) {
-        let Some(fragment) = reference.strip_prefix('#') else {
-            return Ok(Vec::new());
-        };
-        if !seen.insert(reference) {
-            return Err(SchemaError::new(
-                SchemaErrorKind::ReferenceCycle,
-                "cyclic Olaf root reference",
-            ));
-        }
-        let pointer =
-            percent_decode(fragment).ok_or_else(|| invalid("invalid Olaf root reference"))?;
-        current = schema
-            .pointer(&pointer)
-            .ok_or_else(|| unknown("unresolved Olaf root reference"))?;
-    }
-    let Some(properties) = current.get("properties").and_then(Value::as_object) else {
-        return Ok(Vec::new());
-    };
-    let markers = ["__type__", "__fn__"]
-        .into_iter()
-        .filter_map(|key| properties.get(key).map(|value| (key, value)))
-        .collect::<Vec<_>>();
-    if markers.len() > 1 {
-        return Err(invalid(
-            "Olaf root has ambiguous __type__ and __fn__ identities",
-        ));
-    }
-    markers
-        .into_iter()
-        .try_fold(Vec::new(), |mut names, (key, marker)| {
-            names.extend(marker_values(marker, key)?);
-            Ok(names)
-        })
-}
 
-fn lower_olaf_discriminators(value: &mut Value) -> Result<(), SchemaError> {
-    let Some(map) = value.as_object_mut() else {
-        return Ok(());
-    };
-    let mut allowed = Vec::new();
-    let mut removed = Vec::new();
-    if let Some(properties) = map.get_mut("properties").and_then(Value::as_object_mut) {
-        for key in ["__type__", "__fn__"] {
-            if let Some(marker) = properties.remove(key) {
-                if !removed.is_empty() {
-                    return Err(invalid("Olaf schema declares conflicting identity fields"));
-                }
-                allowed.extend(marker_values(&marker, key)?);
-                removed.push(key);
-            }
-        }
-    }
-    if let Some(required) = map.get_mut("required").and_then(Value::as_array_mut) {
-        required.retain(|name| !name.as_str().is_some_and(|name| removed.contains(&name)));
-    }
-    if !allowed.is_empty() {
-        if map.contains_key("x-daml-tag") {
-            return Err(invalid(
-                "Olaf identity and x-daml-tag cannot both declare a discriminator",
-            ));
-        }
-        map.insert(
-            "x-daml-tag".into(),
-            Value::Array(allowed.into_iter().map(Value::String).collect()),
-        );
-    }
-    for (key, children) in map.iter_mut() {
-        if schema_map_key(key) {
-            if let Some(children) = children.as_object_mut() {
-                for child in children.values_mut() {
-                    lower_olaf_discriminators(child)?;
-                }
-            }
-        } else if schema_array_key(key) {
-            if let Some(children) = children.as_array_mut() {
-                for child in children {
-                    lower_olaf_discriminators(child)?;
-                }
-            }
-        } else if schema_single_key(key) {
-            lower_olaf_discriminators(children)?;
-        }
-    }
-    Ok(())
-}
 fn expand_contracts(
     value: &mut Value,
     contracts: &HashMap<String, String>,

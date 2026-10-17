@@ -126,7 +126,7 @@ fn unresolved_offline_resources_and_reference_cycles_are_rejected() {
 }
 
 #[test]
-fn tag_keywords_import_aliases_and_unsupported_defaults_are_enforced() {
+fn native_tag_keywords_and_default_tag_annotations_are_enforced() {
     let native = SchemaModule::from_json(r#"{"types":{"app.Config":{"schema":{"type":"object","x-daml-tag":"app.Config","properties":{"name":{"type":"string"}}}}}}"#).expect("native module");
     let schemas = Schemas::compose([native]).expect("compose native");
     assert!(
@@ -145,24 +145,33 @@ fn tag_keywords_import_aliases_and_unsupported_defaults_are_enforced() {
             .is_err()
     );
 
-    let imported = SchemaModule::from_olaf_json("old.Type", r#"{"type":"object","properties":{"__type__":{"enum":["old.Type"]},"value":{"type":"integer"}},"required":["__type__","value"]}"#).expect("explicit Olaf adapter");
-    let imported = Schemas::compose([imported]).expect("compose imported");
-    assert!(
-        imported
-            .resolve(&parse("!old.Type { value: 2 }").expect("input"))
-            .is_ok()
-    );
-    let imported_default = SchemaModule::from_olaf_json(
-        "old.Defaulted",
-        r#"{"type":"object","default":{"__type__":"old.Defaulted","value":2},"properties":{"__type__":{"const":"old.Defaulted"},"value":{"type":"integer"}},"required":["__type__","value"]}"#,
-    ).expect("Olaf default module");
-    let imported_default = Schemas::compose([imported_default]).expect("compose default importer");
+    let annotated = SchemaModule::from_value(json!({
+        "types": {"app.Config": {"schema": {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "type": "object",
+                    "default": {"value": 1},
+                    "x-daml-tag": "app.Payload",
+                    "x-daml-default-tags": [{"path": "", "tag": "app.Payload"}],
+                    "properties": {"value": {"type": "integer"}},
+                    "required": ["value"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["payload"]
+        }}, "app.Payload": {"schema": {"type": "object"}}}
+    }))
+    .expect("native default annotation");
+    let annotated = Schemas::compose([annotated]).expect("compose annotated schema");
     let empty = parse("{}").expect("empty object");
-    let resolved = imported_default
-        .resolve_as(&empty, "old.Defaulted")
-        .expect("legacy default identity");
-    assert_eq!(resolved.root().tag(), Some("old.Defaulted"));
-    assert!(resolved.root().get("__type__").is_none());
+    let resolved = annotated
+        .resolve_as(&empty, "app.Config")
+        .expect("default completion");
+    assert_eq!(
+        resolved.root().get("payload").unwrap().tag(),
+        Some("app.Payload")
+    );
 
     let unsupported = SchemaModule::from_json(
         r#"{"types":{"app.Bad":{"schema":{"not":{"properties":{"x":{"default":1}}}}}}}"#,
@@ -174,6 +183,31 @@ fn tag_keywords_import_aliases_and_unsupported_defaults_are_enforced() {
             .expect("unsupported default position")
             .kind,
         SchemaErrorKind::UnsupportedDefaults
+    );
+}
+
+#[test]
+fn discriminator_named_fields_remain_native_instance_data() {
+    let module = SchemaModule::from_value(json!({
+        "types": {"app.Record": {"schema": {
+            "type": "object",
+            "x-daml-tag": "app.Record",
+            "properties": {
+                "__type__": {"type": "string"},
+                "__fn__": {"type": "string"}
+            },
+            "required": ["__type__", "__fn__"]
+        }}}
+    }))
+    .expect("native module");
+    let schemas = Schemas::compose([module]).expect("compose");
+    let input =
+        parse("!app.Record { __type__: \"ordinary data\"\n __fn__: \"also ordinary data\" }")
+            .expect("tagged data");
+    let resolved = schemas.resolve(&input).expect("resolve native data");
+    assert_eq!(
+        resolved.to_json(),
+        json!({"__type__":"ordinary data","__fn__":"also ordinary data"})
     );
 }
 
@@ -283,21 +317,54 @@ fn unsupported_defaults_are_found_through_references_and_dag_work_is_bounded() {
 }
 
 #[test]
-fn explicit_olaf_references_resolve_only_supplied_resources() {
-    let imported =
-        SchemaModule::from_olaf_json("app.Imported", r#"{"$ref":"@/shared/value.json"}"#)
-            .expect("Olaf import");
-    let resource = SchemaModule::from_value(json!({
-        "resources":[{"uri":"@/shared/value.json","schema":{"type":"string"}}]
+fn ordinary_type_bindings_resolve_only_explicit_resources() {
+    let imported = SchemaModule::from_value(json!({
+        "types": {"app.Imported": {"schema": {"$ref": "https://schemas.example.invalid/shared/value"}}},
+        "resources": [{
+            "uri": "https://schemas.example.invalid/shared/value",
+            "schema": {"type": "string"}
+        }]
     }))
-    .expect("explicit resource");
-    let schemas =
-        Schemas::compose([imported, resource]).expect("provided Olaf resource resolves offline");
+    .expect("native resource binding");
+    let schemas = Schemas::compose([imported]).expect("provided resource resolves offline");
     assert!(
         schemas
             .resolve(&parse("!app.Imported \"ok\"").expect("input"))
             .is_ok()
     );
+    assert!(
+        schemas
+            .resolve(&parse("!app.Imported 2").expect("input"))
+            .is_err()
+    );
+}
+
+#[test]
+fn ordinary_bindings_can_reference_one_canonical_schema_resource() {
+    let module = SchemaModule::from_value(json!({
+        "types": {
+            "app.Short": {"schema": {"$ref": "https://schemas.example.invalid/canonical"}},
+            "app.Canonical": {"schema": {"$ref": "https://schemas.example.invalid/canonical"}}
+        },
+        "resources": [{
+            "uri": "https://schemas.example.invalid/canonical",
+            "schema": {
+                "type": "object",
+                "x-daml-tag": ["app.Short", "app.Canonical"],
+                "properties": {"value": {"type": "string"}},
+                "required": ["value"],
+                "additionalProperties": false
+            }
+        }]
+    }))
+    .expect("canonical resource module");
+    let schemas = Schemas::compose([module]).expect("compose canonical resource");
+    for tag in ["app.Short", "app.Canonical"] {
+        let valid = parse(format!("!{tag} {{ value: \"ok\" }}")).expect("valid input");
+        assert!(schemas.resolve(&valid).is_ok());
+        let invalid = parse(format!("!{tag} {{ value: 3 }}")).expect("invalid input");
+        assert!(schemas.resolve(&invalid).is_err());
+    }
 }
 
 #[test]
@@ -335,12 +402,6 @@ fn duplicate_json_members_are_rejected_at_every_depth() {
         r#"{"types":{"app.Config":{"schema":{"$defs":{"a/b":{"type":"string"},"a\u002fb":{"type":"number"}}}}}}"#,
     ).err().expect("equivalent decoded nested keys");
     assert_eq!(escaped_duplicate.kind, SchemaErrorKind::Parse);
-
-    let duplicate_olaf =
-        SchemaModule::from_olaf_json("app.Imported", r#"{"type":"string","type":"number"}"#)
-            .err()
-            .expect("duplicate Olaf keyword");
-    assert_eq!(duplicate_olaf.kind, SchemaErrorKind::Parse);
 }
 
 #[test]
@@ -486,16 +547,6 @@ fn legacy_keywords_and_non_2020_dialects_are_rejected_at_schema_nodes() {
         .kind,
         SchemaErrorKind::InvalidSchema
     );
-    assert_eq!(
-        SchemaModule::from_olaf_json(
-            "legacy.Bad",
-            r#"{"properties":{"nested":{"$schema":"http://json-schema.org/draft-07/schema#"}}}"#,
-        )
-        .err()
-        .expect("Olaf loader checks nested dialects")
-        .kind,
-        SchemaErrorKind::InvalidSchema
-    );
 }
 
 #[test]
@@ -531,77 +582,45 @@ fn modern_dependency_keywords_remain_supported_and_data_is_not_walked_as_schema(
 }
 
 #[test]
-fn olaf_aliases_share_normalized_schema_identity() {
-    let module = SchemaModule::from_olaf_json(
-        "legacy.Short",
-        r#"{
-            "type":"object",
-            "properties":{
-                "__fn__":{"enum":["legacy.Short","legacy.Canonical"]},
-                "value":{"$ref":"@/shared/value.json"}
-            },
-            "required":["value"]
-        }"#,
-    )
-    .expect("Olaf aliases");
-    let resource = SchemaModule::from_value(json!({
-        "resources":[{"uri":"@/shared/value.json","schema":{"type":"string"}}]
+fn nested_native_tag_assertions_remain_independent_type_bindings() {
+    let module = SchemaModule::from_value(json!({
+        "types": {
+            "app.Root": {"schema": {
+                "type": "object",
+                "x-daml-tag": "app.Root",
+                "properties": {
+                    "child": {
+                        "type": "object",
+                        "x-daml-tag": "app.Child",
+                        "properties": {"value": {"type": "integer"}},
+                        "required": ["value"]
+                    }
+                },
+                "required": ["child"]
+            }},
+            "app.Child": {"schema": {
+                "type": "object",
+                "x-daml-tag": "app.Child",
+                "properties": {"value": {"type": "integer"}},
+                "required": ["value"]
+            }}
+        }
     }))
-    .expect("resource");
-    let schemas = Schemas::compose([module, resource]).expect("aliased schemas keep identity");
-    for tag in ["legacy.Short", "legacy.Canonical"] {
-        let good = parse(format!("!{tag} {{ value: \"ok\" }}")).unwrap();
-        assert!(schemas.resolve(&good).is_ok());
-        let bad = parse(format!("!{tag} {{ value: 3 }}")).unwrap();
-        assert!(schemas.resolve(&bad).is_err());
-    }
-    assert!(
-        SchemaModule::from_olaf_json(
-            "legacy.Wrong",
-            r#"{"type":"object","properties":{"__fn__":{"const":"legacy.Actual"}}}"#
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn nested_olaf_identities_do_not_create_outer_aliases() {
-    let module = SchemaModule::from_olaf_json(
-        "legacy.Root",
-        r#"{
-            "type":"object",
-            "properties":{
-                "child":{
-                    "type":"object",
-                    "properties":{"__fn__":{"const":"legacy.Nested"}}
-                }
-            }
-        }"#,
-    )
-    .expect("nested discriminator does not rename the imported root");
+    .expect("native nested types");
     let schemas = Schemas::compose([module]).expect("compose");
-    let untagged_child = parse("!legacy.Root { child: { } }").unwrap();
+    let untagged_child = parse("!app.Root { child: { value: 1 } }").unwrap();
     assert_eq!(
         schemas.resolve(&untagged_child).unwrap_err().kind,
         ResolveErrorKind::TagMismatch
     );
-    let unbound_nested = parse("{ child: { } }").unwrap();
-    assert_eq!(
-        schemas
-            .resolve_as(&unbound_nested, "legacy.Nested")
-            .unwrap_err()
-            .kind,
-        ResolveErrorKind::UnknownExpectedType
-    );
+    let tagged_child = parse("!app.Root { child: !app.Child { value: 1 } }").unwrap();
+    assert!(schemas.resolve(&tagged_child).is_ok());
 
-    let aliases_without_resources = SchemaModule::from_olaf_json(
-        "legacy.Short",
-        r#"{"type":"object","properties":{"__fn__":{"enum":["legacy.Short","legacy.Canonical"]}}}"#,
-    )
-    .expect("root aliases without resources");
-    let schemas = Schemas::compose([aliases_without_resources]).expect("compose aliases");
-    for tag in ["legacy.Short", "legacy.Canonical"] {
-        let document = parse(format!("!{tag}")).unwrap();
-        assert!(schemas.resolve(&document).is_ok());
-    }
+    let child_root = parse("!app.Child { value: 1 }").unwrap();
+    assert!(schemas.resolve(&child_root).is_ok());
+    let child_as_root = parse("!app.Child { child: { value: 1 } }").unwrap();
+    assert_eq!(
+        schemas.resolve(&child_as_root).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
+    );
 }

@@ -314,19 +314,20 @@ fn completion_accounts_for_default_bytes_and_validation_work() {
     assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
 
     let long_tag = "provider.with.a.generated.identity.longer.than.the.byte.limit";
-    let legacy = SchemaModule::from_olaf_json(
-        "Host",
-        &format!(r#"{{"type":"object","default":{{"__type__":"{long_tag}"}}}}"#),
-    )
+    let native = SchemaModule::from_value(json!({"types": {"Host": {"schema": {
+        "type": "object",
+        "default": {},
+        "x-daml-default-tags": [{"path": "", "tag": long_tag}]
+    }}}}))
     .unwrap();
-    let legacy_schemas = Schemas::compose([legacy]).unwrap();
+    let native_schemas = Schemas::compose([native]).unwrap();
     let input = parse("{}").unwrap();
     let limits = daml::ResolutionLimits {
         max_bytes: 8,
         ..Default::default()
     };
     assert_eq!(
-        legacy_schemas
+        native_schemas
             .resolve_with_limits(&input, Some("Host"), limits)
             .unwrap_err()
             .kind,

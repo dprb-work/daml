@@ -464,10 +464,13 @@ fn unions_without_defaults_are_validated_without_candidate_explosion() {
 
 #[test]
 fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
-    let host = SchemaModule::from_olaf_json(
-        "Host",
-        r#"{"type":"object","default":{"__type__":"Provider","value":1}}"#,
-    )
+    let host = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {
+            "type": "object",
+            "default": {"value": 1},
+            "x-daml-default-tags": [{"path": "", "tag": "Provider"}]
+        }}
+    }}))
     .unwrap();
     let provider = SchemaModule::from_value(json!({"types": {
         "Provider": {"schema": {"type": "object", "default": {"value": 2}}}
@@ -495,10 +498,14 @@ fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
 
 #[test]
 fn a_missing_tagged_property_keeps_default_conflicts_visible() {
-    let host = SchemaModule::from_olaf_json(
-        "Host",
-        r#"{"$id":"urn:host","type":"object","default":{"__type__":"Provider","value":1}}"#,
-    )
+    let host = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {
+            "$id": "urn:host",
+            "type": "object",
+            "default": {"value": 1},
+            "x-daml-default-tags": [{"path": "", "tag": "Provider"}]
+        }}
+    }}))
     .unwrap();
     let module = SchemaModule::from_value(json!({
         "types": {
@@ -521,13 +528,21 @@ fn a_missing_tagged_property_keeps_default_conflicts_visible() {
 
 #[test]
 fn different_generated_tags_make_equal_json_completions_ambiguous() {
-    let host = SchemaModule::from_olaf_json(
-        "Host",
-        r#"{"type":"object","anyOf":[
-            {"default":{"__type__":"A","value":1}},
-            {"default":{"__type__":"B","value":1}}
-        ]}"#,
-    )
+    let host = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {
+            "type": "object",
+            "anyOf": [
+                {
+                    "default": {"value": 1},
+                    "x-daml-default-tags": [{"path": "", "tag": "A"}]
+                },
+                {
+                    "default": {"value": 1},
+                    "x-daml-default-tags": [{"path": "", "tag": "B"}]
+                }
+            ]
+        }}
+    }}))
     .unwrap();
     let providers = SchemaModule::from_value(json!({"types": {
         "A": {"schema": {"type": "object"}},

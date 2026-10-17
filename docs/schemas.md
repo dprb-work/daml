@@ -70,13 +70,13 @@ The module envelope has three optional sections:
 `implements` is optional. A type may implement several contracts, but its data
 must satisfy each contract's constraints; it is not an unchecked membership
 label. Duplicate/conflicting names or resource identifiers fail composition,
-including aliases imported from another format. Module order is not precedence.
+including bindings supplied by an external adapter. Module order is not precedence.
 
 Use `$id`, `$ref`, and `$defs` for schema references. They identify explicitly
 registered in-memory resources; an HTTP-looking identifier is not permission to
 fetch anything. [JSON Schema identifiers and references](https://json-schema.org/understanding-json-schema/structuring)
 
-Two DAML keywords connect schemas to tag metadata:
+Two DAML validation keywords connect schemas to tag metadata:
 
 - `x-daml-tag`: a literal tag string or nonempty array of allowed literal tags.
 - `x-daml-slot`: a declared contract name, requiring an explicit tag whose binding
@@ -154,41 +154,81 @@ When `$schema` is present, it must select Draft 2020-12. The legacy
 of `items`, are rejected rather than delegated to engine compatibility behavior.
 Use `dependentSchemas`, `dependentRequired`, and `prefixItems`.
 
-## Olaf schema inspiration and explicit import
+## Consumer-owned schema adapters
 
-Olaf emits Draft 2020-12 schemas with properties, required fields, definitions,
-references, and static defaults. Its metadata reader also materializes defaults
-before validation. DAML uses those useful schema conventions, but implements the
-user-requested recursive object-default merge rather than copying Olaf's
-missing-property-only object-default behavior.
+A consumer that uses another schema format converts it before calling DAML.
+The dependency direction is:
 
-`SchemaModule::from_olaf_json(tag, source)` is an explicit schema import adapter,
-not an Olaf runtime. It lowers `__type__`/`__fn__` discriminator declarations to
-DAML tag constraints and removes those identity properties from the data schema.
-Imported default identity objects become tag metadata during completion, without
-executing the named callable. Native schemas do not reinterpret arbitrary fields
-with those names. Any external reference still needs an explicitly supplied
-resource; there is no bundle/filesystem auto-discovery.
-
-The selected import name must match a declared root identity when present.
-Callable short/canonical aliases may share that root binding; nested definitions
-do not become aliases of the outer record. Compose their type bindings separately.
-Explicitly supplied Olaf `@/...json` resource names are mapped to deterministic
-in-memory URIs; missing resources still fail offline.
-
-Run the authored Olaf-shaped `BriefingItem` example:
-
-```sh
-cargo run --locked --example olaf
+```mermaid
+flowchart LR
+    Consumer["Consumer schema format"] --> Adapter["Consumer-owned adapter"]
+    Adapter --> Module["Native SchemaModule"]
+    Module --> Registry["DAML Schemas"]
 ```
 
-Its `!olaf.llm.briefing.BriefingItem` supplies `name` and wrapped `goal`; the
-imported schema supplies `active: true`. The JSON output has no `__type__` field.
+The adapter owns vendor wire fields, discriminator rules, aliases, and foreign
+reference syntax. DAML receives native JSON Schema plus its declared keywords.
+The schema loader and resolver do not inspect consumer fields, callables, or
+foreign reference schemes. They do not fetch resources. The consumer supplies
+each canonical resource and each type binding explicitly.
 
-The inspected Olaf checkout was at `b798d3a278409be1f6b17ec423582ece94d9eadd`.
-Sources: `src/olaf/metadata/{symbol_to_schema,type_to_json,reader,generation}.py`
-and `src/olaf/core/dict_like.py`. No matching root license file was established,
-so tests use independently authored analogous schemas, not copied Olaf fixtures.
+Use `SchemaModule::from_value` when the adapter has built the native module
+envelope. The consumer can translate a record marker into native keywords,
+then register two type names against one canonical resource:
+
+```json
+{
+  "types": {
+    "vendor.Short": {"schema": {"$ref": "https://schemas.example.invalid/item"}},
+    "vendor.Canonical": {"schema": {"$ref": "https://schemas.example.invalid/item"}}
+  },
+  "resources": [{
+    "uri": "https://schemas.example.invalid/item",
+    "schema": {
+      "type": "object",
+      "x-daml-tag": ["vendor.Short", "vendor.Canonical"],
+      "properties": {"name": {"type": "string"}}
+    }
+  }]
+}
+```
+
+These are ordinary JSON Schema references and independent DAML type bindings.
+The adapter decides which consumer names map to the resource and emits the
+native `x-daml-tag` assertion. DAML does not derive aliases from schema fields
+or rewrite the reference URI.
+
+### Annotate tags on defaults
+
+The native `x-daml-default-tags` keyword assigns tags to values inside the
+schema's `default`. Its value is an array of records with exactly two fields:
+`path`, an RFC 6901 pointer relative to the default root, and `tag`, a nonempty
+literal tag string. Use the empty path `""` for the default root. Each path must
+identify a value in the default, and paths must be unique.
+The schema must contain `default`.
+
+```json
+{
+  "type": "object",
+  "default": {"payload": {"value": 1}},
+  "x-daml-default-tags": [
+    {"path": "/payload", "tag": "vendor.Payload"}
+  ]
+}
+```
+
+The annotation preserves the default as ordinary JSON data. It does not add a
+field to that data or reinterpret names such as `__type__` and `__fn__`.
+Malformed records, unknown fields, invalid or duplicate paths, missing targets,
+and an empty annotation array are rejected during schema admission. The declared
+tag must satisfy DAML's existing provisional tag-name rules.
+
+`examples/schema_adapter.rs` contains a complete consumer-side conversion from a
+made-up vendor format. It maps that format's record marker and default-tag
+metadata to native keywords, registers a canonical resource, and binds both root
+names and the nested settings type with regular `$ref`s. It then composes the
+module and resolves a tagged input. No consumer-specific adapter or callback
+framework belongs in DAML.
 
 ## Diagnostics and bounds
 

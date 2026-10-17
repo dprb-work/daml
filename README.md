@@ -20,7 +20,7 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
 - [Syntax contract](docs/syntax.md): implemented structure, string decoding,
   provisional key/tag token policy, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
-  independent extension contracts, Olaf imports, partial values, and diagnostics.
+  consumer-owned adapters, partial values, and diagnostics.
 
 The syntax contract owns parsing behavior; the schema guide owns completion and
 validation. The plan records the remaining hardening, formatter, and LSP work.
@@ -72,11 +72,12 @@ replace defaults. Missing required fields still fail after completion. The
 original source stays unchanged, and generated values identify their schema
 default rather than a fabricated source span.
 
-`examples/olaf.rs` imports an independently authored Olaf-shaped schema, replacing
-its `__type__` declaration with a tag assertion without running Olaf:
+`examples/schema_adapter.rs` converts a made-up vendor record format into a
+native schema module. The adapter maps its record marker and default annotation,
+registers a canonical resource, and binds root aliases and a nested type with ordinary `$ref`s:
 
 ```sh
-cargo run --locked --example olaf
+cargo run --locked --example schema_adapter
 ```
 
 See the [schema guide](docs/schemas.md) for the module format and completion rules.
