@@ -55,6 +55,7 @@ mod resolve;
 mod resolved;
 mod schema;
 mod schema_error;
+mod source;
 mod strict_json;
 mod strings;
 mod tag_keywords;
@@ -70,8 +71,8 @@ pub use schema_error::{SchemaError, SchemaErrorKind};
 
 /// Parses one complete DAML value with default resource bounds.
 ///
-/// Passing a `String` transfers its ownership; passing `&str` copies the source
-/// once. Unchanged string contents, keys, tags, and numbers retain source spans.
+/// Passing a `String` transfers its ownership; passing `&str` copies validated
+/// source once. Unchanged string contents, keys, tags, and numbers retain spans.
 /// The document owns its source so it may outlive the caller's input variable.
 ///
 /// # Errors
@@ -93,8 +94,7 @@ pub fn parse_with_limits<'a>(
     limits: Limits,
 ) -> Result<Document, ParseError> {
     let source = source.into();
-    parser::check_input(source.as_ref(), limits)?;
+    let root = parser::parse(source.as_ref(), limits)?;
     let source = source.into_owned();
-    let root = parser::parse(&source, limits)?;
     Ok(Document { source, root })
 }

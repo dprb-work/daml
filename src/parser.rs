@@ -1,9 +1,10 @@
+use crate::source::line_end;
 use crate::{Entry, ErrorKind, Limits, Node, ParseError, Span, Value};
 use std::collections::HashSet;
 
 const HARD_MAX_DEPTH: usize = 128;
 
-pub(crate) fn check_input(source: &str, limits: Limits) -> Result<(), ParseError> {
+fn check_input(source: &str, limits: Limits) -> Result<(), ParseError> {
     if limits.max_depth > HARD_MAX_DEPTH {
         return Err(ParseError::new(ErrorKind::InvalidLimits, 0, 0));
     }
@@ -33,15 +34,8 @@ pub(crate) fn scan_trivia(
     while let Some(ch) = source[pos..].chars().next() {
         match ch {
             ' ' | '\t' => pos += 1,
-            '\r' => {
-                pos += 1;
-                if source.as_bytes().get(pos) == Some(&b'\n') {
-                    pos += 1;
-                }
-                newline = true;
-            }
-            '\n' => {
-                pos += 1;
+            '\r' | '\n' => {
+                pos = line_end(source.as_bytes(), pos).expect("matched physical line ending");
                 newline = true;
             }
             '#' => {
@@ -75,6 +69,7 @@ pub(crate) fn scan_trivia(
 }
 
 pub(crate) fn parse(source: &str, limits: Limits) -> Result<Node, ParseError> {
+    check_input(source, limits)?;
     let mut parser = Parser {
         source,
         pos: usize::from(source.starts_with('\u{feff}')) * '\u{feff}'.len_utf8(),

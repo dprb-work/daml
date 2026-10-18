@@ -1,3 +1,4 @@
+use crate::source::{line_end, newline_start};
 use crate::{Document, Entry, Node, Span, Value, parser};
 use pretty::{Arena, DocAllocator, DocBuilder};
 use std::{error::Error, fmt};
@@ -252,18 +253,11 @@ impl<'a> Printer<'a> {
 
     fn block_string(&self, raw: &'a str) -> Printed<'a> {
         let opening_end = raw.find(['\r', '\n']).expect("block opener has a newline");
-        let body_start = after_line_end(raw, opening_end);
+        let body_start = line_end(raw.as_bytes(), opening_end).expect("block opener has a newline");
         let closing_break = raw
             .rfind(['\r', '\n'])
             .expect("block close has a preceding newline");
-        let body_end = if raw.as_bytes()[closing_break] == b'\n'
-            && closing_break > 0
-            && raw.as_bytes()[closing_break - 1] == b'\r'
-        {
-            closing_break - 1
-        } else {
-            closing_break
-        };
+        let body_end = newline_start(raw.as_bytes(), closing_break + 1);
         let opening = self.arena.text(&raw[..opening_end]);
         let closing = self.arena.text(&raw[raw.len() - 3..]);
         if body_start >= body_end {
@@ -299,16 +293,8 @@ impl<'a> Printer<'a> {
             printed = printed
                 .append(self.arena.text(&raw[start..end]))
                 .append(self.arena.hardline());
-            start = after_line_end(raw, end);
+            start = line_end(raw.as_bytes(), end).expect("matched literal line ending");
         }
         printed.append(self.arena.text(&raw[start..]))
-    }
-}
-
-fn after_line_end(source: &str, at: usize) -> usize {
-    at + if source.as_bytes()[at] == b'\r' && source.as_bytes().get(at + 1) == Some(&b'\n') {
-        2
-    } else {
-        1
     }
 }
