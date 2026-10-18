@@ -174,6 +174,52 @@ impl<'a> SchemaView<'a> {
             .copied()
             .map(|id| self.registry.view(id))
     }
+    pub(crate) fn property(self, key: &str) -> Option<Self> {
+        if let Some(value) = self
+            .value()
+            .get("properties")
+            .and_then(|properties| properties.get(key))
+        {
+            self.registry.locate(value)
+        } else if self.value().get("patternProperties").is_none() {
+            self.value()
+                .get("additionalProperties")
+                .and_then(|value| self.registry.locate(value))
+        } else {
+            None
+        }
+    }
+    pub(crate) fn property_names(self) -> impl Iterator<Item = &'a str> {
+        self.value()
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|properties| properties.keys().map(String::as_str))
+    }
+    pub(crate) fn item(self, index: usize) -> Option<Self> {
+        self.value()
+            .get("prefixItems")
+            .and_then(Value::as_array)
+            .and_then(|items| items.get(index))
+            .or_else(|| self.value().get("items"))
+            .and_then(|value| self.registry.locate(value))
+    }
+    pub(crate) fn array_children(
+        self,
+        keyword: &str,
+    ) -> impl ExactSizeIterator<Item = Self> + use<'a> {
+        self.value()
+            .get(keyword)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(move |value| {
+                self.registry
+                    .locate(value)
+                    .expect("preflight indexed every child schema")
+            })
+    }
     pub(crate) fn has_defaults(self) -> bool {
         self.entry().has_defaults
     }
@@ -551,7 +597,7 @@ impl Schemas {
     fn view(&self, id: SchemaId) -> SchemaView<'_> {
         SchemaView { registry: self, id }
     }
-    pub(crate) fn locate(&self, value: &Value) -> Option<SchemaView<'_>> {
+    fn locate(&self, value: &Value) -> Option<SchemaView<'_>> {
         self.by_address
             .get(&(value as *const Value as usize))
             .copied()

@@ -23,6 +23,48 @@ fn object_schema(properties: serde_json::Value, required: &[&str]) -> serde_json
 }
 
 #[test]
+fn declared_properties_take_precedence_over_additional_property_defaults() {
+    let schemas = schemas(json!({
+        "type": "object",
+        "properties": {
+            "named": {"type": "object", "properties": {"label": {"default": "named"}}}
+        },
+        "additionalProperties": {
+            "type": "object", "properties": {"label": {"default": "fallback"}}
+        }
+    }));
+    let input = parse("!app.Config { named: {}\n extra: {} }").unwrap();
+    assert_eq!(
+        schemas.resolve(&input).unwrap().to_json(),
+        json!({"named": {"label": "named"}, "extra": {"label": "fallback"}})
+    );
+}
+
+#[test]
+fn tuple_prefixes_do_not_receive_tail_defaults_or_create_missing_items() {
+    let schemas = schemas(json!({
+        "type": "array",
+        "prefixItems": [
+            {"type": "object", "properties": {"label": {"default": "prefix"}}},
+            true
+        ],
+        "items": {"type": "object", "properties": {"label": {"default": "tail"}}}
+    }));
+    let input = parse("!app.Config [{}\n{}\n{}]").unwrap();
+    assert_eq!(
+        schemas.resolve(&input).unwrap().to_json(),
+        json!([{"label": "prefix"}, {}, {"label": "tail"}])
+    );
+    let short = parse("!app.Config []").unwrap();
+    assert_eq!(schemas.resolve(&short).unwrap().to_json(), json!([]));
+
+    let invalid = parse("!app.Config [{}\nnull\n1]").unwrap();
+    let error = schemas.resolve(&invalid).unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+    assert_eq!(error.path, "/2");
+}
+
+#[test]
 fn required_is_checked_after_explicit_default_merge() {
     let schemas = schemas(object_schema(
         json!({
