@@ -191,7 +191,7 @@ fn native_fixture() -> &'static NativeFixture {
                     "count": {"type": "integer", "minimum": 0, "default": 7, "x-daml-default-tags": [{"path": "", "tag": "fuzz.Count"}]},
                     "items": {"type": "array", "items": {"type": "integer"}, "uniqueItems": true, "default": [1, 2]},
                     "nullable": {"default": null},
-                    "adapter": {"x-daml-slot": "fuzz.Provider"},
+                    "adapter": {"type": "object"},
                     "choice": {"anyOf": [{"type": "string", "default": "left"}, {"type": "string", "default": "right"}]}
                 },
                 "required": ["name", "count", "items"], "additionalProperties": true
@@ -207,13 +207,12 @@ fn native_fixture() -> &'static NativeFixture {
             "fuzz.Text": {"schema": {"type": "string"}},
             "fuzz.Flag": {"schema": {"type": "boolean"}},
             "fuzz.List": {"schema": {"type": "array", "items": {}, "uniqueItems": true}}
-        }, "contracts": {"fuzz.Provider": {"type": "object"}}});
+        }});
         let provider = json!({"types": {"fuzz.NativeProvider": {
             "schema": {"type": "object", "properties": {"enabled": {
                 "type": "boolean", "default": true,
                 "x-daml-default-tags": [{"path": "", "tag": "fuzz.Flag"}]
-            }}, "additionalProperties": true},
-            "implements": ["fuzz.Provider"]
+            }}, "additionalProperties": true}
         }}});
         let known_tags = [&config, &provider]
             .into_iter()

@@ -1,8 +1,8 @@
-//! Adapt one consumer-owned schema format to DAML's native schema module.
+//! Adapt a consumer-owned schema format to DAML's schema interchange.
 //!
 //! This fixture uses a made-up vendor format. Its `kind` and `default_tag`
-//! fields belong to the consumer; DAML receives only native JSON Schema
-//! constraints, tag keywords, resources, and ordinary `$ref` bindings.
+//! fields belong to the consumer; DAML receives JSON Schema constraints,
+//! resources, and explicit assertions on default-generated values.
 
 use daml::{SchemaModule, Schemas};
 use serde_json::{Value, json};
@@ -27,18 +27,16 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    // The vendor's `kind` marker, tag aliases, and default annotation are
-    // translated here, outside DAML's schema loader and resolver.
+    // Record markers and default assertions are translated here, outside
+    // DAML's schema loader and resolver. Names are bound separately below.
     let vendor_schema: Value = serde_json::from_str(
         r#"{
           "kind":"record",
-          "tags":["vendor.briefing.Item","vendor.briefing.BriefingItem"],
           "properties":{
             "name":{"type":"string","minLength":1},
             "goal":{"type":"string","minLength":1},
             "settings":{
               "kind":"record",
-              "tag":"vendor.briefing.Settings",
               "default":{"active":true,"retries":2},
               "default_tag":"vendor.briefing.Settings",
               "properties":{"active":{"type":"boolean"},"retries":{"type":"integer"}},
@@ -95,12 +93,6 @@ fn adapt_vendor_schema(mut schema: Value) -> Result<Value, &'static str> {
         None => {}
     }
 
-    if let Some(tags) = object.remove("tags") {
-        object.insert("x-daml-tag".into(), tags);
-    }
-    if let Some(tag) = object.remove("tag") {
-        object.insert("x-daml-tag".into(), tag);
-    }
     if let Some(tag) = object.remove("default_tag") {
         object.insert(
             "x-daml-default-tags".into(),

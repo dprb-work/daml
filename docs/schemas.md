@@ -1,13 +1,12 @@
-# Schema modules, defaults, and partial values
+# Schema modules, defaults, and structural validation
 
-DAML uses JSON Schema 2020-12 constraints rather than a second general-purpose
-schema language. A module can be written as JSON or as a JSON-compatible DAML
-mapping. DAML adds explicit tag/extension contracts and deterministic default
-completion; it does not execute application constructors.
+DAML uses JSON Schema 2020-12 for structural constraints. The current
+`SchemaModule` interchange format is JSON-compatible data written as JSON or
+DAML; it is not the final native bundle-authoring format.
 
 JSON Schema's standard `default` is an annotation, not a command to mutate an
-instance. DAML deliberately defines a separate completion step, followed by full
-validation. [Standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default)
+instance. DAML defines a separate completion step, followed by full validation.
+See [standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default).
 
 ## Write a module in DAML
 
@@ -53,44 +52,43 @@ object can be partial, but the completed request cannot lack required values.
 The JSON representation has the same module keys and JSON Schema content;
 only the serialization changes. Use `SchemaModule::from_daml`, `from_json`, or
 `from_value`, then `Schemas::compose`. Unknown module-envelope fields are errors.
-Native schema documents are JSON-compatible values: tags in a schema document
-are rejected rather than silently discarded. Data documents remain fully tagged.
+Interchange schema documents are JSON-compatible values: tags in a schema
+document are rejected rather than silently discarded. Data documents remain
+fully tagged.
 Duplicate JSON object members are rejected, including escaped spellings of the
 same key. `from_value` receives an already constructed map, so duplicate-key
 admission belongs to its caller.
 
 ## Compose independently owned definitions
 
-The module envelope has three optional sections:
-
-- `types`: literal tag name to `{ schema: <JSON Schema>, implements: [...] }`.
-- `contracts`: literal extension-contract name to its structural JSON Schema.
-- `resources`: explicit `{ uri: "...", schema: ... }` entries for references.
-
-`implements` is optional. A type may implement several contracts, but its data
-must satisfy each contract's constraints; it is not an unchecked membership
-label. Duplicate/conflicting names or resource identifiers fail composition,
-including bindings supplied by an external adapter. Module order is not precedence.
+The module envelope accepts `types`, mapping literal names to `{ schema: ... }`,
+and `resources`, a list of explicit `{ uri, schema }` entries. Types and
+resources are the complete interchange shape; modules do not declare contracts
+or `implements` membership. Duplicate/conflicting names or resource identifiers
+fail composition. Module order is not precedence.
 
 Use `$id`, `$ref`, and `$defs` for schema references. They identify explicitly
 registered in-memory resources; an HTTP-looking identifier is not permission to
-fetch anything. [JSON Schema identifiers and references](https://json-schema.org/understanding-json-schema/structuring)
+fetch anything. See [JSON Schema identifiers and references](https://json-schema.org/understanding-json-schema/structuring).
 
-Two DAML validation keywords connect schemas to tag metadata:
+Compatibility is structural. The containing schema's constraints apply to the
+value, and an explicitly tagged value must also satisfy its selected type schema.
+An untagged value can satisfy the same structural requirements. An unknown
+explicit tag remains an error, and tagged descendants are checked under open
+containers. DAML does not compare tag names as protocol identities or require
+declared membership.
 
-- `x-daml-tag`: a literal tag string or nonempty array of allowed literal tags.
-- `x-daml-slot`: a declared contract name, requiring an explicit tag whose binding
-  implements that contract, plus the contract's structural constraints.
+Former `x-daml-tag` and `x-daml-slot` keywords are rejected at actual schema
+positions, including nested schemas and `$defs`. Their spellings inside literal
+values, examples, or property names remain ordinary data. These keywords do not
+participate in interchange.
 
-For example, a host field can declare `{ x-daml-slot: "app.Adapter" }`. A separate
-provider exports a type implementing `app.Adapter`; adding that module requires
-no edit to a central `oneOf` discriminator union. Both the host's field constraint
-and the node's own tag assertion apply. An open field does not suppress assertions
-on tagged descendants.
+Validation uses ordinary JSON Schema constraints, including `anyOf` and
+`oneOf`. DAML does not inject a fake tag property into application objects.
 
-These checks operate on an immutable tag-aware JSON representation, including
-inside `anyOf`/`oneOf`. There is no fake tag property injected into application
-objects and no thread-local "current document" registry.
+The native `x-daml-default-tags` keyword remains available to attach explicit
+tag assertions to values generated from defaults. It does not declare type
+membership; its full format is described below.
 
 ## Resolve, then inspect the completed result
 
@@ -157,46 +155,36 @@ Use `dependentSchemas`, `dependentRequired`, and `prefixItems`.
 ## Consumer-owned schema adapters
 
 A consumer that uses another schema format converts it before calling DAML.
-The dependency direction is:
+The adapter owns vendor fields, discriminator rules, aliases, and foreign
+reference syntax. DAML receives JSON Schema and the retained
+`x-daml-default-tags` annotation; it does not inspect consumer fields or fetch
+resources.
 
-```mermaid
-flowchart LR
-    Consumer["Consumer schema format"] --> Adapter["Consumer-owned adapter"]
-    Adapter --> Module["Native SchemaModule"]
-    Module --> Registry["DAML Schemas"]
-```
-
-The adapter owns vendor wire fields, discriminator rules, aliases, and foreign
-reference syntax. DAML receives native JSON Schema plus its declared keywords.
-The schema loader and resolver do not inspect consumer fields, callables, or
-foreign reference schemes. They do not fetch resources. The consumer supplies
-each canonical resource and each type binding explicitly.
-
-Use `SchemaModule::from_value` when the adapter has built the native module
-envelope. The consumer can translate a record marker into native keywords,
-then register two type names against one canonical resource:
+The interchange shape stays limited to types and registered resources. For
+example, a consumer may register a reusable resource and refer to it from a
+type:
 
 ```json
 {
   "types": {
-    "vendor.Short": {"schema": {"$ref": "https://schemas.example.invalid/item"}},
-    "vendor.Canonical": {"schema": {"$ref": "https://schemas.example.invalid/item"}}
+    "app.Request": {"schema": {"$ref": "urn:example:Request"}}
   },
   "resources": [{
-    "uri": "https://schemas.example.invalid/item",
+    "uri": "urn:example:Request",
     "schema": {
+      "$id": "urn:example:Request",
       "type": "object",
-      "x-daml-tag": ["vendor.Short", "vendor.Canonical"],
-      "properties": {"name": {"type": "string"}}
+      "properties": {"name": {"type": "string"}},
+      "required": ["name"]
     }
   }]
 }
 ```
 
-These are ordinary JSON Schema references and independent DAML type bindings.
-The adapter decides which consumer names map to the resource and emits the
-native `x-daml-tag` assertion. DAML does not derive aliases from schema fields
-or rewrite the reference URI.
+These are standard JSON Schema references. Structural constraints, rather than
+declared tag membership, determine whether a value is compatible. A consumer
+adapter converts its own format into this representation; it does not emit
+removed tag/slot keywords.
 
 ### Annotate tags on defaults
 

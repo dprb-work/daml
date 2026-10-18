@@ -9,8 +9,7 @@
         },
         "required": ["timeout"],
         "additionalProperties": false
-      },
-      "implements": ["app.Adapter"]
+      }
     },
     "network.Port": {
       "schema": {

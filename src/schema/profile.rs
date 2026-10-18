@@ -155,36 +155,3 @@ pub(super) fn children(value: &Value) -> Children<'_> {
         pattern_properties: value.get("patternProperties").is_some(),
     }
 }
-
-pub(super) fn try_for_each_child_mut<E>(
-    value: &mut Value,
-    mut visit: impl FnMut(&mut Value) -> Result<(), E>,
-) -> Result<(), E> {
-    let Some(map) = value.as_object_mut() else {
-        return Ok(());
-    };
-    let patterns = map.contains_key("patternProperties");
-    for (keyword, value) in map {
-        let Some(kind) = classify(keyword, value, patterns) else {
-            continue;
-        };
-        match kind.shape {
-            Shape::Map => {
-                for child in value
-                    .as_object_mut()
-                    .expect("classified object")
-                    .values_mut()
-                {
-                    visit(child)?;
-                }
-            }
-            Shape::Array => {
-                for child in value.as_array_mut().expect("classified array") {
-                    visit(child)?;
-                }
-            }
-            Shape::Single => visit(value)?,
-        }
-    }
-    Ok(())
-}

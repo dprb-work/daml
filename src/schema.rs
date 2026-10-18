@@ -2,14 +2,10 @@ use crate::{
     json_backend::{DamlJson, NodeRef},
     resolved::{ResolvedNode, SchemaLocation},
     schema_error::{SchemaError, SchemaErrorKind},
-    tag_keywords::{SlotKeyword, TagKeyword, TagRules},
 };
 use jsonschema::{Draft, PatternOptions, Registry, Resource, Validator};
 use serde_json::{Map, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 pub(crate) mod profile;
 use profile::{MAX_COMPILE_NODES, MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, MAX_SOURCE_BYTES};
@@ -18,14 +14,12 @@ use profile::{MAX_COMPILE_NODES, MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, MAX_SOURCE_
 struct Binding {
     value: Value,
     id: String,
-    implements: Vec<String>,
 }
 
 /// A parsed schema module. Compose modules explicitly to create a registry.
 #[derive(Clone, Default)]
 pub struct SchemaModule {
     types: HashMap<String, Binding>,
-    contracts: HashMap<String, Binding>,
     resources: HashMap<String, Value>,
 }
 
@@ -63,13 +57,13 @@ impl SchemaModule {
     pub fn from_value(value: Value) -> Result<Self, SchemaError> {
         check_value_limits(&value)?;
         let root = object(&value, "module")?;
-        reject_unknown(root, &["types", "contracts", "resources"], "module")?;
+        reject_unknown(root, &["types", "resources"], "module")?;
         let mut module = Self::default();
         if let Some(types) = root.get("types") {
             for (name, item) in object(types, "types")? {
                 valid_name(name)?;
                 let item = object(item, "type binding")?;
-                reject_unknown(item, &["schema", "implements"], "type binding")?;
+                reject_unknown(item, &["schema"], "type binding")?;
                 let schema = item
                     .get("schema")
                     .ok_or_else(|| invalid("type binding requires schema"))?;
@@ -77,32 +71,7 @@ impl SchemaModule {
                 let id = schema_id(schema).unwrap_or_else(|| generated_id("type", name));
                 let mut value = schema.clone();
                 assign_id(&mut value, &id)?;
-                let implements = string_list(item.get("implements"), "implements")?;
-                module.types.insert(
-                    name.clone(),
-                    Binding {
-                        value,
-                        id,
-                        implements,
-                    },
-                );
-            }
-        }
-        if let Some(contracts) = root.get("contracts") {
-            for (name, schema) in object(contracts, "contracts")? {
-                valid_name(name)?;
-                check_schema_shape(schema)?;
-                let id = schema_id(schema).unwrap_or_else(|| generated_id("contract", name));
-                let mut value = schema.clone();
-                assign_id(&mut value, &id)?;
-                module.contracts.insert(
-                    name.clone(),
-                    Binding {
-                        value,
-                        id,
-                        implements: Vec::new(),
-                    },
-                );
+                module.types.insert(name.clone(), Binding { value, id });
             }
         }
         if let Some(resources) = root.get("resources") {
@@ -241,7 +210,6 @@ impl<'a> SchemaView<'a> {
             .validate(NodeRef::new(node))
             .map_err(|error| {
                 let keyword = error.schema_path().to_string();
-                let tag = keyword.ends_with("/x-daml-tag") || keyword.ends_with("/x-daml-slot");
                 let schema_location = if let Some(uri) = error.absolute_keyword_location() {
                     let (resource, fragment) =
                         uri.as_str().split_once('#').unwrap_or((uri.as_str(), ""));
@@ -260,7 +228,6 @@ impl<'a> SchemaView<'a> {
                     path: error.instance_path().to_string(),
                     schema: schema_location,
                     message: error.masked().to_string(),
-                    tag,
                 }
             })
     }
@@ -288,19 +255,14 @@ impl Schemas {
     /// Composes modules without last-writer-wins behavior.
     pub fn compose(modules: impl IntoIterator<Item = SchemaModule>) -> Result<Self, SchemaError> {
         let mut types = HashMap::<String, Binding>::new();
-        let mut contracts = HashMap::<String, Binding>::new();
         let mut resources = HashMap::<String, Value>::new();
         let (mut input_nodes, mut input_bytes) = (0usize, 0usize);
         for module in modules {
-            for (name, binding) in module.types.iter().chain(module.contracts.iter()) {
+            for (name, binding) in &module.types {
                 input_nodes = input_nodes.saturating_add(1);
                 input_bytes = input_bytes
                     .saturating_add(name.len())
                     .saturating_add(binding.id.len());
-                for name in &binding.implements {
-                    input_nodes = input_nodes.saturating_add(1);
-                    input_bytes = input_bytes.saturating_add(name.len());
-                }
                 let (nodes, bytes) = check_value_limits(&binding.value)?;
                 input_nodes = input_nodes.saturating_add(nodes);
                 input_bytes = input_bytes.saturating_add(bytes);
@@ -318,11 +280,6 @@ impl Schemas {
                     return Err(duplicate(format!("duplicate type {name:?}")));
                 }
             }
-            for (name, value) in module.contracts {
-                if contracts.insert(name.clone(), value).is_some() {
-                    return Err(duplicate(format!("duplicate contract {name:?}")));
-                }
-            }
             for (uri, value) in module.resources {
                 if resources.insert(uri.clone(), value).is_some() {
                     return Err(duplicate(format!("duplicate resource URI {uri:?}")));
@@ -330,7 +287,7 @@ impl Schemas {
             }
         }
         let mut identifiers = HashSet::new();
-        for binding in types.values().chain(contracts.values()) {
+        for binding in types.values() {
             if !identifiers.insert(binding.id.clone()) {
                 return Err(duplicate(format!(
                     "duplicate schema identifier {:?}",
@@ -344,70 +301,15 @@ impl Schemas {
             }
             check_schema_shape(schema)?;
         }
-        let mut memberships = HashMap::new();
-        for (tag, binding) in &types {
-            let mut contracts_for_tag = HashSet::new();
-            for name in &binding.implements {
-                if !contracts.contains_key(name) {
-                    return Err(unknown(format!("unknown implemented contract {name:?}")));
-                }
-                contracts_for_tag.insert(name.clone());
-            }
-            memberships.insert(tag.clone(), contracts_for_tag);
-        }
-        let rules = Arc::new(TagRules { memberships });
         drop(identifiers);
-        let contract_ids = contracts
-            .iter()
-            .map(|(name, binding)| (name.clone(), binding.id.clone()))
-            .collect::<HashMap<_, _>>();
-        let mut added_reference_bytes = 0;
-        for binding in contracts.values_mut() {
-            expand_contracts(
-                &mut binding.value,
-                &contract_ids,
-                &mut added_reference_bytes,
-            )?;
-        }
-        for schema in resources.values_mut() {
-            expand_contracts(schema, &contract_ids, &mut added_reference_bytes)?;
-        }
-        for binding in types.values_mut() {
-            let root_value = &mut binding.value;
-            expand_contracts(root_value, &contract_ids, &mut added_reference_bytes)?;
-            for name in &binding.implements {
-                let uri = contract_ids
-                    .get(name)
-                    .ok_or_else(|| unknown(format!("unknown implemented contract {name:?}")))?;
-                added_reference_bytes = added_reference_bytes.saturating_add(uri.len());
-                if added_reference_bytes > MAX_SOURCE_BYTES {
-                    return Err(limit(
-                        "expanded contract references exceed schema byte bound",
-                    ));
-                }
-                let root = root_value
-                    .as_object_mut()
-                    .ok_or_else(|| invalid("type schemas with implements must be objects"))?;
-                root.entry("allOf")
-                    .or_insert_with(|| Value::Array(Vec::new()))
-                    .as_array_mut()
-                    .ok_or_else(|| invalid("allOf must be an array"))?
-                    .push(serde_json::json!({"$ref": uri}));
-            }
-        }
         let mut registry_contents = resources.clone();
-        for binding in types.values().chain(contracts.values()) {
+        for binding in types.values() {
             registry_contents
                 .entry(binding.id.clone())
                 .or_insert_with(|| binding.value.clone());
         }
         validate_nested_identifiers(&registry_contents)?;
-        for schema in types
-            .values()
-            .map(|b| &b.value)
-            .chain(contracts.values().map(|b| &b.value))
-            .chain(resources.values())
-        {
+        for schema in types.values().map(|b| &b.value).chain(resources.values()) {
             validate_exact_numbers(schema)?;
         }
         let mut registry = Registry::new();
@@ -444,20 +346,7 @@ impl Schemas {
                 PatternOptions::regex()
                     .size_limit(1 << 20)
                     .dfa_size_limit(1 << 20),
-            )
-            .with_keyword("x-daml-tag", |_, value, _| {
-                TagKeyword::new(value)
-                    .map(|k| Box::new(k) as _)
-                    .map_err(jsonschema::ValidationError::custom)
-            })
-            .with_keyword("x-daml-slot", {
-                let rules = Arc::clone(&rules);
-                move |_, value, _| {
-                    SlotKeyword::new(value, Arc::clone(&rules))
-                        .map(|k| Box::new(k) as _)
-                        .map_err(jsonschema::ValidationError::custom)
-                }
-            });
+            );
         let mut entries = Vec::new();
         let mut by_type = HashMap::new();
         let mut total = 0usize;
@@ -471,15 +360,6 @@ impl Schemas {
                 &mut total,
             )?;
             by_type.insert(name, SchemaId(index));
-        }
-        for (_, binding) in contracts {
-            append_schema_entries(
-                binding.value,
-                &binding.id,
-                &options,
-                &mut entries,
-                &mut total,
-            )?;
         }
         for (uri, value) in resources {
             append_schema_entries(value, &uri, &options, &mut entries, &mut total)?;
@@ -614,7 +494,6 @@ pub(crate) struct SchemaFailure {
     pub path: String,
     pub schema: SchemaLocation,
     pub message: String,
-    pub tag: bool,
 }
 fn index_nested_addresses(
     value: &Value,
@@ -869,25 +748,6 @@ fn valid_name(s: &str) -> Result<(), SchemaError> {
     } else {
         Ok(())
     }
-}
-fn string_list(v: Option<&Value>, label: &str) -> Result<Vec<String>, SchemaError> {
-    let Some(v) = v else { return Ok(Vec::new()) };
-    let a = v
-        .as_array()
-        .ok_or_else(|| invalid(format!("{label} must be an array")))?;
-    let mut set = HashSet::new();
-    a.iter()
-        .map(|v| {
-            let s = v
-                .as_str()
-                .ok_or_else(|| invalid(format!("{label} entries must be strings")))?;
-            valid_name(s)?;
-            if !set.insert(s) {
-                return Err(duplicate(format!("duplicate {label} entry {s:?}")));
-            }
-            Ok(s.to_owned())
-        })
-        .collect()
 }
 fn generated_id(kind: &str, name: &str) -> String {
     format!(
@@ -1276,6 +1136,11 @@ fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError
         return Err(limit("schema exceeds node/depth bound"));
     }
     if let Some(m) = v.as_object() {
+        if m.contains_key("x-daml-tag") || m.contains_key("x-daml-slot") {
+            return Err(invalid(
+                "x-daml-tag and x-daml-slot are unsupported schema keywords",
+            ));
+        }
         validate_default_tags(m)?;
         if let Some(dialect) = m.get("$schema")
             && !matches!(
@@ -1350,37 +1215,5 @@ fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError
             }
             Value::Object(m)
         }
-    })
-}
-
-fn expand_contracts(
-    value: &mut Value,
-    contracts: &HashMap<String, String>,
-    added_bytes: &mut usize,
-) -> Result<(), SchemaError> {
-    let Some(map) = value.as_object_mut() else {
-        return Ok(());
-    };
-    if let Some(slot) = map.get("x-daml-slot") {
-        let name = slot
-            .as_str()
-            .ok_or_else(|| invalid("x-daml-slot must be a contract-name string"))?;
-        let uri = contracts
-            .get(name)
-            .ok_or_else(|| unknown(format!("unknown contract slot {name:?}")))?;
-        *added_bytes = added_bytes.saturating_add(uri.len());
-        if *added_bytes > MAX_SOURCE_BYTES {
-            return Err(limit(
-                "expanded contract references exceed schema byte bound",
-            ));
-        }
-        map.entry("allOf")
-            .or_insert_with(|| Value::Array(Vec::new()))
-            .as_array_mut()
-            .ok_or_else(|| invalid("allOf must be an array"))?
-            .push(serde_json::json!({"$ref": uri}));
-    }
-    profile::try_for_each_child_mut(value, |child| {
-        expand_contracts(child, contracts, added_bytes)
     })
 }

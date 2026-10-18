@@ -11,18 +11,18 @@ values from declared defaults before validation. Schemas can be written in JSON
 or DAML. Reflow formatting and an optional stdio LSP are implemented; Python
 bindings remain separately scoped.
 
-Binary distribution proof is the current objective. See the
-[language walkthrough](docs/language-walkthrough.md) for the language's confirmed
-choices, current observations, and open questions. The
+Binary distribution proof is complete. See the
+[language walkthrough](docs/language-walkthrough.md) for confirmed choices,
+current behavior, and open questions. The
 [distribution guide](docs/distribution.md) owns archive and installation details.
 
-Editor integrations are deferred. Python bindings are next after language
-sharpening and consolidation.
+Editor integrations remain deferred. Python bindings follow structural
+consolidation and native schema-authoring decisions.
 
 ## Design
 
-- [Implementation plan](PLAN.md): unquoted key rules, mandatory multiline dedent,
-  grammar proposals, completed library/tooling gates, and final-sharpening questions.
+- [Implementation plan](PLAN.md): completed work, structural cutover, accepted
+  future authoring direction, deferred choices, and next-session starting point.
 - [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
   references, pinned candidates, test-corpus reuse, and license obligations.
 - [Formatter reuse assessment](docs/formatter-reuse.md): reused Rust layout
@@ -44,9 +44,10 @@ sharpening and consolidation.
 - [Sources and distribution boundaries](SOURCES.md): pinned YAML fixtures and
   development-runtime notices.
 
-The syntax contract owns parsing behavior; the schema guide owns completion and
-validation. The plan records completed gates and unresolved language/schema-root
-choices; the formatter and LSP guides own their tool contracts.
+The syntax contract owns parsing behavior; the schema guide owns structural
+validation and completion. The plan distinguishes implemented behavior from
+accepted future design and unresolved choices; the formatter and LSP guides own
+their tool contracts.
 
 ## Parse a document
 

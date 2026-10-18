@@ -396,12 +396,14 @@ fn materialization_and_numeric_limits_are_enforced() {
 fn tags_validate_scalar_array_and_empty_object_nodes() {
     let schemas = Schemas::compose([SchemaModule::from_value(json!({
         "types": {
-            "app.Config": { "schema": { "type": "object", "x-daml-tag": "app.Config" } },
-            "app.Text": { "schema": { "type": "string", "x-daml-tag": "app.Text" } },
-            "app.List": { "schema": { "type": "array", "items": { "type": "integer" }, "x-daml-tag": "app.List" } },
-            "app.Empty": { "schema": { "type": "object", "maxProperties": 0, "x-daml-tag": "app.Empty" } }
+            "app.Config": { "schema": { "type": "object" } },
+            "app.Text": { "schema": { "type": "string" } },
+            "app.List": { "schema": { "type": "array", "items": { "type": "integer" } } },
+            "app.Empty": { "schema": { "type": "object", "maxProperties": 0 } }
         }
-    })).unwrap()]).unwrap();
+    }))
+    .unwrap()])
+    .unwrap();
     let input = parse(
         "!app.Config { text: !app.Text \"ok\"\n list: !app.List [1\n2]\n empty: !app.Empty {}\n}",
     )

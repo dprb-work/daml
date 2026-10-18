@@ -60,7 +60,6 @@ mod schema_error;
 mod source;
 mod strict_json;
 mod strings;
-mod tag_keywords;
 
 pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};

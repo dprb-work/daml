@@ -1,6 +1,6 @@
 //! Declarative modules, reference resolution, and composition failures.
 
-use daml::{ResolveErrorKind, SchemaErrorKind, SchemaModule, Schemas, parse};
+use daml::{SchemaErrorKind, SchemaModule, Schemas, parse};
 use serde_json::json;
 
 fn config_schema() -> serde_json::Value {
@@ -163,72 +163,10 @@ fn reference_cycles_through_schema_child_positions_are_rejected_during_compositi
 }
 
 #[test]
-fn native_tag_keywords_and_default_tag_annotations_are_enforced() {
-    let native = SchemaModule::from_json(r#"{"types":{"app.Config":{"schema":{"type":"object","x-daml-tag":"app.Config","properties":{"name":{"type":"string"}}}}}}"#).expect("native module");
-    let schemas = Schemas::compose([native]).expect("compose native");
-    assert!(
-        schemas
-            .resolve(&parse("!app.Config { name: \"ok\" }").expect("input"))
-            .is_ok()
-    );
-    assert!(
-        schemas
-            .resolve_as(&parse("{ name: \"ok\" }").expect("input"), "app.Config")
-            .is_err()
-    );
-    assert!(
-        schemas
-            .resolve(&parse("!app.Config { name: 7 }").expect("input"))
-            .is_err()
-    );
-
-    let annotated = SchemaModule::from_value(json!({
-        "types": {"app.Config": {"schema": {
-            "type": "object",
-            "properties": {
-                "payload": {
-                    "type": "object",
-                    "default": {"value": 1},
-                    "x-daml-tag": "app.Payload",
-                    "x-daml-default-tags": [{"path": "", "tag": "app.Payload"}],
-                    "properties": {"value": {"type": "integer"}},
-                    "required": ["value"],
-                    "additionalProperties": false
-                }
-            },
-            "required": ["payload"]
-        }}, "app.Payload": {"schema": {"type": "object"}}}
-    }))
-    .expect("native default annotation");
-    let annotated = Schemas::compose([annotated]).expect("compose annotated schema");
-    let empty = parse("{}").expect("empty object");
-    let resolved = annotated
-        .resolve_as(&empty, "app.Config")
-        .expect("default completion");
-    assert_eq!(
-        resolved.root().get("payload").unwrap().tag(),
-        Some("app.Payload")
-    );
-
-    let unsupported = SchemaModule::from_json(
-        r#"{"types":{"app.Bad":{"schema":{"not":{"properties":{"x":{"default":1}}}}}}}"#,
-    )
-    .expect("module parses");
-    assert_eq!(
-        Schemas::compose([unsupported])
-            .err()
-            .expect("unsupported default position")
-            .kind,
-        SchemaErrorKind::UnsupportedDefaults
-    );
-}
-
-#[test]
 fn discriminator_named_fields_remain_native_instance_data() {
     let module = SchemaModule::from_value(json!({
         "types": {"app.Record": {"schema": {
             "type": "object",
-            "x-daml-tag": "app.Record",
             "properties": {
                 "__type__": {"type": "string"},
                 "__fn__": {"type": "string"}
@@ -387,7 +325,6 @@ fn ordinary_bindings_can_reference_one_canonical_schema_resource() {
             "uri": "https://schemas.example.invalid/canonical",
             "schema": {
                 "type": "object",
-                "x-daml-tag": ["app.Short", "app.Canonical"],
                 "properties": {"value": {"type": "string"}},
                 "required": ["value"],
                 "additionalProperties": false
@@ -568,17 +505,13 @@ fn legacy_keywords_and_non_2020_dialects_are_rejected_at_schema_nodes() {
         assert_eq!(module.kind, SchemaErrorKind::InvalidSchema);
     }
 
-    for module_value in [
-        json!({"contracts":{"app.Bad":{"$schema":"http://json-schema.org/draft-07/schema#"}}}),
-        json!({"resources":[{"uri":"https://example.invalid/schema","schema":{
-            "$defs":{"nested":{"dependencies":{"x":["y"]}}}
-        }}]}),
-    ] {
-        let error = SchemaModule::from_value(module_value)
-            .err()
-            .expect("profile checked in all declarations");
-        assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
-    }
+    let resource = json!({"resources":[{"uri":"https://example.invalid/schema","schema":{
+        "$defs":{"nested":{"dependencies":{"x":["y"]}}}
+    }}]});
+    let error = SchemaModule::from_value(resource)
+        .err()
+        .expect("profile checked in resources");
+    assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
     assert_eq!(
         SchemaModule::from_json(
             r#"{"types":{"Bad":{"schema":{"properties":{"nested":{"dependencies":{"x":["y"]}}}}}}}"#,
@@ -626,7 +559,8 @@ fn modern_dependency_keywords_remain_supported_and_data_is_not_walked_as_schema(
 fn schema_looking_default_const_enum_and_example_data_remain_inert() {
     let payload = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "dependencies": {"legacy": ["data"]}
+        "dependencies": {"legacy": ["data"]},
+        "x-daml-tag": "ordinary data"
     });
     let module = SchemaModule::from_value(json!({
         "types": {"app.Data": {"schema": {
@@ -645,7 +579,8 @@ fn schema_looking_default_const_enum_and_example_data_remain_inert() {
     let schemas = Schemas::compose([module]).expect("annotations are not schemas");
     let input = parse(
         r##"!app.Data { payload: { $schema: "http://json-schema.org/draft-07/schema#"
-            dependencies: { legacy: ["data"] } } }"##,
+            dependencies: { legacy: ["data"] }
+            x-daml-tag: "ordinary data" } }"##,
     )
     .expect("input");
     let completed = schemas.resolve(&input).expect("literal data resolves");
@@ -658,45 +593,45 @@ fn schema_looking_default_const_enum_and_example_data_remain_inert() {
 }
 
 #[test]
-fn nested_native_tag_assertions_remain_independent_type_bindings() {
-    let module = SchemaModule::from_value(json!({
-        "types": {
-            "app.Root": {"schema": {
-                "type": "object",
-                "x-daml-tag": "app.Root",
-                "properties": {
-                    "child": {
-                        "type": "object",
-                        "x-daml-tag": "app.Child",
-                        "properties": {"value": {"type": "integer"}},
-                        "required": ["value"]
-                    }
-                },
-                "required": ["child"]
-            }},
-            "app.Child": {"schema": {
-                "type": "object",
-                "x-daml-tag": "app.Child",
-                "properties": {"value": {"type": "integer"}},
-                "required": ["value"]
-            }}
-        }
-    }))
-    .expect("native nested types");
-    let schemas = Schemas::compose([module]).expect("compose");
-    let untagged_child = parse("!app.Root { child: { value: 1 } }").unwrap();
-    assert_eq!(
-        schemas.resolve(&untagged_child).unwrap_err().kind,
-        ResolveErrorKind::TagMismatch
-    );
-    let tagged_child = parse("!app.Root { child: !app.Child { value: 1 } }").unwrap();
-    assert!(schemas.resolve(&tagged_child).is_ok());
+fn obsolete_schema_keywords_and_declarations_reject_at_admission() {
+    for schema in [
+        json!({"x-daml-tag": "app.Value"}),
+        json!({"$defs": {"nested": {"x-daml-slot": "app.Shape"}}}),
+        json!({"properties": {"value": {"x-daml-tag": "app.Value"}}}),
+    ] {
+        let error = SchemaModule::from_value(json!({
+            "types": {"app.Bad": {"schema": schema}}
+        }))
+        .err()
+        .expect("obsolete keyword is rejected while loading");
+        assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+    }
+    for value in [
+        json!({"contracts": {"app.Shape": {"type": "object"}}}),
+        json!({"types": {"app.Value": {
+            "schema": {"type": "string"}, "implements": ["app.Shape"]
+        }}}),
+    ] {
+        assert!(SchemaModule::from_value(value).is_err());
+    }
 
-    let child_root = parse("!app.Child { value: 1 }").unwrap();
-    assert!(schemas.resolve(&child_root).is_ok());
-    let child_as_root = parse("!app.Child { child: { value: 1 } }").unwrap();
-    assert_eq!(
-        schemas.resolve(&child_as_root).unwrap_err().kind,
-        ResolveErrorKind::SchemaViolation
-    );
+    let error = SchemaModule::from_value(json!({
+        "resources": [{
+            "uri": "https://example.invalid/schema",
+            "schema": {"$defs": {"nested": {"x-daml-slot": "app.Shape"}}}
+        }]
+    }))
+    .err()
+    .expect("resources reject obsolete keywords too");
+    assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+
+    let literal = SchemaModule::from_value(json!({
+        "types": {"app.Data": {"schema": {
+            "type": "object",
+            "properties": {"x-daml-slot": {"const": "literal"}},
+            "default": {"x-daml-tag": "ordinary data"}
+        }}}
+    }))
+    .expect("literal field names and default data are not schema keywords");
+    Schemas::compose([literal]).expect("literal data is admitted");
 }
