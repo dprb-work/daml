@@ -1,0 +1,19 @@
+Third-party software included in this DAML distribution
+
+The following notices and license texts apply to bundled third-party dependencies.
+
+{{#each crates}}
+===============================================================================
+{{package.name}} {{package.version}}
+License: {{{license}}}
+{{#if package.repository}}Source: {{package.repository}}{{else}}Source: https://crates.io/crates/{{package.name}}{{/if}}
+{{/each}}
+
+===============================================================================
+License texts
+{{#each overview}}
+===============================================================================
+{{name}}
+
+{{{text}}}
+{{/each}}

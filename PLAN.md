@@ -341,10 +341,9 @@ Serde integration, Python bindings/wheels, and a full command-line product remai
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
 The standalone library now has a retained hardening baseline, reflow formatter,
-and minimal stdio language server. The next useful slice is final sharpening:
-define the schema-folder root and relative-path ownership, then settle the
-remaining key/tag alphabet choices. Schema resolution remains independent of
-application construction and execution.
+and minimal stdio language server. The sequence below puts binary-distribution
+proof before final sharpening and consolidation. Schema resolution remains
+independent of application construction and execution.
 
 The [edge-case record](docs/edge-cases.md) retains 45 exact runtime probes.
 Triple-double opening/closing newline framing and mandatory dedent are confirmed.
@@ -354,3 +353,15 @@ alphabet/edge-case choices; formatter work does not silently settle them.
 The [formatter reuse assessment](docs/formatter-reuse.md) records the selection
 of `pretty` after proving source-sensitive literal and comment fixtures. Host
 integration remains separate; no formatter platform or style framework is added.
+
+## Next sequence
+
+The current objective is binary distribution with proof that a downloaded
+archive installs and runs from an isolated OMP installation, without shipping
+editor or host integrations. The [distribution guide](docs/distribution.md) owns
+package and platform details.
+
+After that proof, sharpen the remaining language and schema choices, then
+consolidate the implementation before starting Python bindings. Python bindings
+are the next major objective, not part of the current distribution work.
+Editor integrations remain deferred until later and only proceed if wanted.

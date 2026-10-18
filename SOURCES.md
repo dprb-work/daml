@@ -62,6 +62,17 @@ cover the all-feature graph used by the stdio executable. See their published
 manifests: [lsp-server](https://docs.rs/crate/lsp-server/0.10.0/source/Cargo.toml)
 and [lsp-types](https://docs.rs/crate/lsp-types/0.97.0/source/Cargo.toml).
 
+Binary packaging uses the build-time tool `cargo-about` 0.9.2 (MIT OR Apache-2.0)
+to generate dependency notices and license texts. Its accepted license list is
+derived from `deny.toml`; it does not introduce another license policy or enter
+the DAML runtime dependency graph. The owned plaintext template uses the tool's
+documented output schema; no generator source is copied. See the
+[tool documentation](https://embarkstudios.github.io/cargo-about/) and
+[published manifest](https://docs.rs/crate/cargo-about/0.9.2/source/Cargo.toml).
+CI archives are private trial artifacts, not a selection of DAML's project terms
+or a public release. The [distribution guide](docs/distribution.md) owns the build,
+archive, and installed-binary verification contract.
+
 These notices do not select DAML's own distribution license. The library and
 fuzz package remain unpublished; choosing project terms and packaging for
 redistribution requires an explicit decision.
