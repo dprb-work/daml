@@ -1,16 +1,16 @@
 # Formatter reuse assessment
 
-Evidence reviewed on 2026-10-18 against DAML `79241ba`. This is a source-based
-recommendation, not an implemented formatter, dependency approval, grammar
-change, performance comparison, or project-license decision. No upstream code
-or fixtures were copied.
+Evidence reviewed on 2026-10-18, initially against DAML `79241ba`. After reflow
+was requested, the implementation selected pinned MIT `pretty` 0.12.5 and proved
+it against the source-sensitive fixtures below. No upstream code or fixtures
+were copied. This is not a performance comparison or project-license decision.
 
 ## Keep language decisions separate from presentation
 
-A later language edge-case pass will reconsider triple-string framing, blank
-lines, dedent, continuations, and the deferred key/tag alphabets. Formatter work
-must preserve the implemented meanings until those contracts are explicitly
-revised; formatting preferences must not become accidental parser rules.
+The user confirmed the triple-string framing below. The
+[edge-case record](edge-cases.md) distinguishes that decision from 45 executable
+observations and the remaining provisional key/tag alphabet. Formatter work
+preserves existing meanings rather than introducing parser rules.
 
 The current [syntax contract](syntax.md#triple-string-boundaries) requires a line
 ending after either triple opener, allowing only spaces/tabs before it. The
@@ -34,16 +34,16 @@ The decoded value is `"hello"`, without a leading or trailing newline. A rebuilt
 | CRLF delimiter/content line endings | `"hello"` |
 | Empty block, opener immediately followed by its closing line | `""` |
 
-These are current observations, not resolutions of the later design review.
-That review should use explicit input/decoded-value/rejection examples rather
-than settle each case indirectly while implementing a formatter.
+The user confirmed these framing rules. Other observations and unresolved
+language choices remain explicit in the edge-case record rather than being
+settled indirectly by formatter presentation.
 
 ## What can actually be reused
 
 | Candidate | Primary-source facts | DAML recommendation |
 |---|---|---|
-| **`tiny_pretty` 0.4.5** | Rust Wadler-style document printer with nesting, groups, hard lines, and width-dependent breaks. MIT; its published manifest has an optional `unicode-width` dependency and no required normal dependency. `Doc::text` must not contain line breaks. [API][tiny-api], [document primitives][tiny-doc], [manifest][tiny-manifest] | First layout-engine candidate if DAML needs line fitting or structural reflow. Do not write our own general document algebra or width solver. It still needs DAML-specific rules and deliberate handling of verbatim multiline strings. |
-| **`pretty` 0.12.5** | Rust Wadler-style printer with boxed, reference-counted, and arena allocation APIs. MIT; required dependencies include `arrayvec`, `typed-arena`, and `unicode-width`. [API][pretty-api], [manifest][pretty-manifest] | Viable alternative when its allocator/builder API better fits a demonstrated requirement. No executed performance evidence favors it or `tiny_pretty`. |
+| **`tiny_pretty` 0.4.5** | Rust Wadler-style document printer with nesting, groups, hard lines, and width-dependent breaks. MIT; its published manifest has an optional `unicode-width` dependency and no required normal dependency. `Doc::text` must not contain line breaks. [API][tiny-api], [document primitives][tiny-doc], [manifest][tiny-manifest] | Compact native alternative. Its public document API does not provide signed/dynamic nesting; preserving blank-only literal bodies under structural indentation would need additional handling. Not selected for this implementation. |
+| **`pretty` 0.12.5** | Rust Wadler-style printer with boxed, reference-counted, and arena allocation APIs. MIT; required dependencies include `arrayvec`, `typed-arena`, and `unicode-width`. [API][pretty-api], [manifest][pretty-manifest] | Selected. Dynamic nesting and signed indentation offsets keep literal bodies outside structural indentation without a custom renderer. No executed performance evidence favors it or `tiny_pretty`. |
 | **Pretty YAML 0.6.0**, revision `c4068f4` | Rust YAML formatter. Its formatter package uses `yaml_parser`, Rowan, and `tiny_pretty`; its dprint integration lives in a separate package. MIT. [formatter manifest][yaml-manifest], [plugin manifest][yaml-plugin], [README][yaml-readme] | Closest concrete Rust implementation reference, especially the separation of formatter library and host integration. Not a drop-in DAML formatter: its parser and rules target YAML. |
 | **dprint / `dprint-core` 0.71.0** | Host supports Wasm and process plugins; plugins need not use its printer. Native Rust `dprint-core::formatting` provides print items and rendering. Its MIT manifest keeps formatting, Wasm, process communication, and async runtime features distinct. Host CLI already provides file selection, ignore handling, stdin, `check`, and incremental formatting. [plugins][dprint-plugin], [core API][dprint-api], [manifest][dprint-manifest], [CLI][dprint-cli] | Candidate for reusing surrounding tooling rather than writing our own formatting platform. A thin plugin should call the same Rust formatting library. Adopting dprint as host does not require adopting its printer, or vice versa; Wasm is not required for native core use. |
 | **Topiary**, revision `7c61712` | Generic formatter driven by Tree-sitter queries, producing leaf-content/formatting atoms and indentation directives. Its CLI checks idempotence by default. [design][topiary-design], [pipeline][topiary-pipeline] | Strongest inspiration for token-preserving indentation. Direct adoption requires a DAML Tree-sitter grammar rather than consuming the existing native parser's tree. Avoid introducing a second syntax authority solely to obtain its engine. |
@@ -51,20 +51,20 @@ than settle each case indirectly while implementing a formatter.
 
 ## Smallest approach for the current scope
 
-**Recommendation:** begin with parser-guided, source-preserving indentation
-edits, borrowing Topiary's leaf-preservation principle. Do not introduce a
-second parser or a generic layout engine just to change leading whitespace.
-Keep string token contents, comments, names, tags, and numeric spellings intact.
-Any required trivia classification belongs with the existing parser/source
-model, not a parallel regex-based grammar. The current model retains the full
-source and node spans; comments are not yet structured trivia nodes.
-[Source contract](syntax.md#source-model-and-errors), [parser trivia handling](../src/parser.rs)
+**Selected approach:** reuse `pretty`'s layout solver and arena for structural
+reflow, building documents from the existing AST and source spans. No second
+parser or formatting engine is introduced. The parser and formatter share one
+whitespace/comment scanner; comments are read from AST-delimited source gaps.
 
-If the accepted formatter scope includes width-dependent layout, select an
-existing Rust printer instead of implementing that machinery. `tiny_pretty` is
-the first candidate to try, with `pretty` and `dprint-core` as concrete
-alternatives. This is an engineering preference based on the APIs and dependency
-boundaries above, not a measured claim about speed or total implementation size.
+The decisive fixture is a blank-only triple-double body. Such a body has zero
+dedent margin, so adding structural spaces to every body line changes its value.
+`pretty` provides [dynamic nesting][pretty-nesting] and
+[signed nesting offsets][pretty-builder], allowing the formatter to preserve
+body indentation and independently align the closing delimiter. `tiny_pretty`
+was the initial source-only preference, but this demonstrated requirement favors
+the existing capability in `pretty`. This is not a speed or code-size claim.
+
+The [formatter guide](formatting.md) owns the public API and presentation rules.
 
 Two DAML constraints must survive any engine adapter:
 
@@ -83,12 +83,12 @@ configuration system ourselves. Keep that adapter outside the portable Rust
 formatter. A small standalone file/stdin command is still possible; this note
 has not compared its implementation cost with a dprint adapter.
 
-Before adding a printer dependency, prove the chosen approach on one nested
-commented document containing bare tags, a literal block with significant blank
-lines/relative indentation, and wrapped text. Require idempotence and unchanged
-parsed values/tags. Do not retain two formatter implementations after that
-choice. No candidate printer or plugin was compiled or benchmarked for this
-assessment; only the current DAML string-boundary cases were executed.
+The implemented approach passed nested commented, bare-tag, relative-indent,
+blank-only literal, escaped-delimiter, continuation, and wrapped-string fixtures.
+These checks require idempotence and unchanged values/tags/number spelling.
+All 45 recorded edge observations were replayed; the 29 accepted cases also
+passed actual formatter/check/inspection comparisons at widths 20 and 80.
+No alternative engine or host plugin was benchmarked or implemented.
 
 [tiny-api]: https://docs.rs/tiny_pretty/0.4.5/tiny_pretty/
 [tiny-doc]: https://docs.rs/tiny_pretty/0.4.5/tiny_pretty/enum.Doc.html
@@ -106,3 +106,5 @@ assessment; only the current DAML string-boundary cases were executed.
 [topiary-pipeline]: https://github.com/topiary/topiary/blob/7c6171250504e00e78f26fd4408ae0e193a61954/docs/book/src/reference/formatting-pipeline.md
 [prettier-design]: https://prettier.io/docs/technical-details
 [prettier-plugin]: https://prettier.io/docs/plugins
+[pretty-nesting]: https://docs.rs/pretty/0.12.5/pretty/trait.DocAllocator.html#method.nesting
+[pretty-builder]: https://docs.rs/pretty/0.12.5/pretty/struct.DocBuilder.html#method.nest

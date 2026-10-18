@@ -46,6 +46,7 @@
 
 use std::borrow::Cow;
 
+mod format;
 mod json_backend;
 mod model;
 mod parser;
@@ -58,6 +59,7 @@ mod strict_json;
 mod strings;
 mod tag_keywords;
 
+pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
 pub use resolved::{
     ErrorOrigin, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,

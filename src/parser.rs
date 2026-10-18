@@ -20,6 +20,59 @@ pub(crate) fn check_input(source: &str, limits: Limits) -> Result<(), ParseError
     }
     Ok(())
 }
+/// Scan the shared whitespace/comment grammar without allocating trivia for parsing.
+pub(crate) fn scan_trivia(
+    source: &str,
+    start: usize,
+    end: usize,
+    mut comment: impl FnMut(Span),
+) -> Result<(usize, bool), ParseError> {
+    let source = &source[..end];
+    let mut pos = start;
+    let mut newline = false;
+    while let Some(ch) = source[pos..].chars().next() {
+        match ch {
+            ' ' | '\t' => pos += 1,
+            '\r' => {
+                pos += 1;
+                if source.as_bytes().get(pos) == Some(&b'\n') {
+                    pos += 1;
+                }
+                newline = true;
+            }
+            '\n' => {
+                pos += 1;
+                newline = true;
+            }
+            '#' => {
+                let start = pos;
+                while let Some(ch) = source[pos..].chars().next() {
+                    if matches!(ch, '\r' | '\n') {
+                        break;
+                    }
+                    if ch == '\u{feff}' || (ch.is_ascii_control() && ch != '\t') {
+                        return Err(ParseError::new(
+                            ErrorKind::InvalidCharacter,
+                            pos,
+                            pos + ch.len_utf8(),
+                        ));
+                    }
+                    pos += ch.len_utf8();
+                }
+                comment(Span { start, end: pos });
+            }
+            '\u{feff}' => {
+                return Err(ParseError::new(
+                    ErrorKind::InvalidCharacter,
+                    pos,
+                    pos + ch.len_utf8(),
+                ));
+            }
+            _ => break,
+        }
+    }
+    Ok((pos, newline))
+}
 
 pub(crate) fn parse(source: &str, limits: Limits) -> Result<Node, ParseError> {
     let mut parser = Parser {
@@ -69,46 +122,9 @@ impl Parser<'_> {
     }
 
     fn trivia(&mut self) -> Result<bool, ParseError> {
-        let mut newline = false;
-        loop {
-            match self.peek() {
-                Some(' ' | '\t') => self.pos += 1,
-                Some('\r') => {
-                    self.pos += 1;
-                    if self.peek() == Some('\n') {
-                        self.pos += 1;
-                    }
-                    newline = true;
-                }
-                Some('\n') => {
-                    self.pos += 1;
-                    newline = true;
-                }
-                Some('#') => {
-                    while let Some(ch) = self.peek() {
-                        if ch == '\r' || ch == '\n' {
-                            break;
-                        }
-                        if ch == '\u{feff}' || (ch.is_ascii_control() && ch != '\t') {
-                            return Err(self.error(
-                                ErrorKind::InvalidCharacter,
-                                self.pos,
-                                self.char_end(self.pos),
-                            ));
-                        }
-                        self.pos += ch.len_utf8();
-                    }
-                }
-                Some('\u{feff}') => {
-                    return Err(self.error(
-                        ErrorKind::InvalidCharacter,
-                        self.pos,
-                        self.char_end(self.pos),
-                    ));
-                }
-                _ => return Ok(newline),
-            }
-        }
+        let (end, newline) = scan_trivia(self.source, self.pos, self.source.len(), |_| {})?;
+        self.pos = end;
+        Ok(newline)
     }
 
     fn count_node(&mut self, start: usize) -> Result<(), ParseError> {

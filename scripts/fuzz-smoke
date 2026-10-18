@@ -12,6 +12,6 @@ if [ "${#runs}" -gt 10 ] || [ "$runs" -gt 2147483647 ]; then
     echo 'runs must be an integer in 1..2147483647 without leading zeroes' >&2
     exit 2
 fi
-for target in parse schema resolve; do
+for target in parse schema resolve format; do
     "$root/scripts/fuzz" "$target" "-runs=$runs"
 done

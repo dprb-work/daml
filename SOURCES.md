@@ -47,6 +47,13 @@ the policy exception is scoped to that crate, not a blanket new license allowanc
 The sources remain Cargo dependencies rather than copied DAML source files.
 `cargo-fuzz` 0.13.2 is a development tool under MIT OR Apache-2.0.
 
+The formatter uses the Cargo dependency `pretty` 0.12.5 (MIT), pinned in both
+lockfiles, with default features disabled. Its normal dependencies are
+`arrayvec` 0.5.2, `typed-arena` 2.0.2, and `unicode-width` 0.2.2. No printer
+source was copied into DAML; the formatter uses the library's document API.
+See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.toml)
+and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
+
 These notices do not select DAML's own distribution license. The library and
 fuzz package remain unpublished; choosing project terms and packaging for
 redistribution requires an explicit decision.
