@@ -164,8 +164,10 @@ warnings for review. DAML remains unpublished until its own license is selected.
   that budget rather than resetting it.
 - `src/pointer.rs` owns RFC 6901 path construction and segment decoding.
   URI-fragment percent encoding remains part of schema reference resolution.
-- `src/parser.rs` owns whitespace/comment scanning for parsing and formatting.
-  `src/format.rs` builds source-preserving layout documents; the `daml-fmt`
+- `src/source.rs` owns LF/CRLF/CR boundary mechanics shared by parsing and
+  formatting. `src/parser.rs` owns checked input admission, syntax, and the
+  whitespace/comment scanner; borrowed source becomes owned only after parsing.
+- `src/format.rs` builds source-preserving layout documents; the `daml-fmt`
   binary only handles arguments and bounded input/output.
 
 ## Implementation defaults

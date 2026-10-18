@@ -307,6 +307,9 @@ from the same library used by ordinary consumers.
 - Associate results with document versions so stale work does not replace newer
   diagnostics or format a different revision. Keep workspace schema discovery
   separate from executing application code.
+- Schema-folder root selection and the base for relative schema paths remain
+  unresolved. Discuss them after the minimal LSP, during final sharpening;
+  this slice must not infer discovery rules from cwd, workspace, or document paths.
 
 **Gate:** a real LSP client session opens a document, introduces and fixes an
 error, and requests formatting. Diagnostics clear on the correct revision,
