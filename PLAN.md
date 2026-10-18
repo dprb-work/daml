@@ -331,3 +331,14 @@ The standalone library has a retained hardening baseline. The next planned
 implementation milestone is the formatter; final key/tag alphabets remain a
 separate language decision. Schema resolution enforces independently supplied
 assertions and completes explicit defaults without constructing application objects.
+
+A later language edge-case pass will revisit triple-string opening/closing
+newlines, empty/blank content, line-ending normalization, and dedent/continuation
+interactions alongside the deferred key/tag alphabets. Current parsing contracts
+remain in force until explicitly revised; formatter work must not silently
+settle those language decisions.
+
+The [formatter reuse assessment](docs/formatter-reuse.md) compares existing
+engines and hosts. It recommends source-preserving indentation first, with an
+existing Rust printer if layout/reflow is needed; no dependency or host is
+selected merely by recording that assessment.

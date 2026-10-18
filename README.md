@@ -17,6 +17,8 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   grammar proposals, library acceptance gates, and planned formatter/LSP milestones.
 - [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
   references, pinned candidates, test-corpus reuse, and license obligations.
+- [Formatter reuse assessment](docs/formatter-reuse.md): Rust layout libraries,
+  existing formatter/host designs, and the separate later string edge-case pass.
 - [Syntax contract](docs/syntax.md): implemented structure, string decoding,
   provisional key/tag token policy, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
