@@ -1,4 +1,4 @@
-use crate::{Document, Span};
+use crate::{Document, Span, pointer};
 use serde_json::Number;
 use std::{borrow::Cow, collections::BTreeMap, error::Error, fmt};
 
@@ -119,7 +119,7 @@ impl<'a> ResolvedNode<'a> {
         }
         let mut node = self;
         for part in pointer.strip_prefix('/')?.split('/') {
-            let key = pointer_key(part)?;
+            let key = pointer::decode_segment(part)?;
             node = match &node.value {
                 ResolvedValue::Mapping(fields) => fields.get(key.as_ref())?,
                 ResolvedValue::Sequence(items) => items.get(part.parse::<usize>().ok()?)?,
@@ -128,26 +128,6 @@ impl<'a> ResolvedNode<'a> {
         }
         Some(node)
     }
-}
-
-fn pointer_key(part: &str) -> Option<Cow<'_, str>> {
-    if !part.contains('~') {
-        return Some(Cow::Borrowed(part));
-    }
-    let mut decoded = String::with_capacity(part.len());
-    let mut chars = part.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '~' {
-            decoded.push(ch);
-        } else {
-            decoded.push(match chars.next()? {
-                '0' => '~',
-                '1' => '/',
-                _ => return None,
-            });
-        }
-    }
-    Some(Cow::Owned(decoded))
 }
 
 /// Completed and schema-checked data, borrowing its input and schema registry.

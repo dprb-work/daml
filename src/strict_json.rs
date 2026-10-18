@@ -1,12 +1,11 @@
-use crate::schema_error::{SchemaError, SchemaErrorKind};
+use crate::{
+    schema::profile::{MAX_RAW_WORK_BYTES, MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, MAX_SOURCE_BYTES},
+    schema_error::{SchemaError, SchemaErrorKind},
+};
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, value::RawValue};
 use std::fmt;
 
-const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
-const MAX_NODES: usize = 10_000;
-const MAX_DEPTH: usize = 128;
-const MAX_RAW_WORK_BYTES: usize = 64 * 1024 * 1024;
 const INTERNAL_ERROR: &str = "strict JSON parser stopped";
 
 pub(crate) fn parse(source: &str) -> Result<Value, SchemaError> {
@@ -37,12 +36,12 @@ struct Budget {
 
 impl Budget {
     fn charge(&mut self, raw: &RawValue, depth: usize) -> Result<(), serde_json::Error> {
-        if depth > MAX_DEPTH {
+        if depth > MAX_SCHEMA_DEPTH {
             return self.fail(limit_error(
                 "JSON nesting exceeds the 128-level admission limit",
             ));
         }
-        if self.nodes == MAX_NODES {
+        if self.nodes == MAX_SCHEMA_NODES {
             return self.fail(limit_error(
                 "JSON value exceeds the 10,000-node admission limit",
             ));
@@ -88,7 +87,7 @@ fn check_container_depth(source: &str) -> Result<(), SchemaError> {
             quoted = true;
         } else if matches!(byte, b'{' | b'[') {
             depth = depth.saturating_add(1);
-            if depth >= MAX_DEPTH {
+            if depth >= MAX_SCHEMA_DEPTH {
                 return Err(limit_error(
                     "JSON nesting exceeds the 128-level admission limit",
                 ));

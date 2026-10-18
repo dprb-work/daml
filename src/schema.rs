@@ -1,6 +1,6 @@
 use crate::{
     json_backend::{DamlJson, NodeRef},
-    resolved::SchemaLocation,
+    resolved::{ResolvedNode, SchemaLocation},
     schema_error::{SchemaError, SchemaErrorKind},
     tag_keywords::{SlotKeyword, TagKeyword, TagRules},
 };
@@ -11,10 +11,8 @@ use std::{
     sync::Arc,
 };
 
-const MAX_SOURCE_BYTES: usize = 8 * 1024 * 1024;
-const MAX_SCHEMA_NODES: usize = 10_000;
-const MAX_SCHEMA_DEPTH: usize = 128;
-const MAX_COMPILE_NODES: usize = 100_000;
+pub(crate) mod profile;
+use profile::{MAX_COMPILE_NODES, MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, MAX_SOURCE_BYTES};
 
 #[derive(Clone)]
 struct Binding {
@@ -135,23 +133,85 @@ impl SchemaModule {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct SchemaId(usize);
+
 #[derive(Clone, Copy)]
 pub(crate) struct SchemaView<'a> {
-    pub id: usize,
-    pub value: &'a Value,
-    pub location: &'a SchemaLocation,
-    pub default_origin: Option<&'a SchemaLocation>,
-    pub default_tags: &'a HashMap<usize, usize>,
+    registry: &'a Schemas,
+    id: SchemaId,
 }
 
 impl<'a> SchemaView<'a> {
+    fn entry(self) -> &'a SchemaEntry {
+        &self.registry.entries[self.id.0]
+    }
+    pub(crate) fn id(self) -> SchemaId {
+        self.id
+    }
+    pub(crate) fn value(self) -> &'a Value {
+        &self.entry().value
+    }
+    pub(crate) fn location(self) -> &'a SchemaLocation {
+        &self.entry().location
+    }
+    pub(crate) fn default_origin(self) -> Option<&'a SchemaLocation> {
+        self.entry().default_origin.as_ref()
+    }
     pub(crate) fn default_tag(self, value: &Value) -> Option<&'a str> {
-        let index = self.default_tags.get(&(value as *const Value as usize))?;
+        let entry = self.entry();
+        let index = entry.default_tags.get(&(value as *const Value as usize))?;
         Some(
-            self.value["x-daml-default-tags"][*index]["tag"]
+            entry.value["x-daml-default-tags"][*index]["tag"]
                 .as_str()
                 .expect("default tag annotations are validated during admission"),
         )
+    }
+    pub(crate) fn referenced(self) -> Option<Self> {
+        self.registry
+            .references
+            .get(&self.id)
+            .copied()
+            .map(|id| self.registry.view(id))
+    }
+    pub(crate) fn has_defaults(self) -> bool {
+        self.entry().has_defaults
+    }
+    pub(crate) fn uses_uniqueness(self) -> bool {
+        self.entry().uses_uniqueness
+    }
+    pub(crate) fn evaluation_cost(self, units: usize) -> usize {
+        self.entry().work.saturating_mul(units)
+    }
+    pub(crate) fn validate(self, node: &ResolvedNode<'_>) -> Result<(), SchemaFailure> {
+        let entry = self.entry();
+        entry
+            .validator
+            .validate(NodeRef::new(node))
+            .map_err(|error| {
+                let keyword = error.schema_path().to_string();
+                let tag = keyword.ends_with("/x-daml-tag") || keyword.ends_with("/x-daml-slot");
+                let schema_location = if let Some(uri) = error.absolute_keyword_location() {
+                    let (resource, fragment) =
+                        uri.as_str().split_once('#').unwrap_or((uri.as_str(), ""));
+                    SchemaLocation {
+                        resource: resource.to_owned(),
+                        pointer: percent_decode(fragment)
+                            .expect("keyword fragments encode UTF-8 schema paths"),
+                    }
+                } else {
+                    SchemaLocation {
+                        resource: entry.location.resource.clone(),
+                        pointer: keyword,
+                    }
+                };
+                SchemaFailure {
+                    path: error.instance_path().to_string(),
+                    schema: schema_location,
+                    message: error.masked().to_string(),
+                    tag,
+                }
+            })
     }
 }
 struct SchemaEntry {
@@ -168,9 +228,9 @@ struct SchemaEntry {
 /// Immutable, explicitly composed schema registry and its compiled validators.
 pub struct Schemas {
     entries: Vec<SchemaEntry>,
-    by_type: HashMap<String, usize>,
-    by_address: HashMap<usize, usize>,
-    references: HashMap<usize, usize>,
+    by_type: HashMap<String, SchemaId>,
+    by_address: HashMap<usize, SchemaId>,
+    references: HashMap<SchemaId, SchemaId>,
 }
 
 impl Schemas {
@@ -359,7 +419,7 @@ impl Schemas {
                 &mut entries,
                 &mut total,
             )?;
-            by_type.insert(name, index);
+            by_type.insert(name, SchemaId(index));
         }
         for (_, binding) in contracts {
             append_schema_entries(
@@ -379,7 +439,7 @@ impl Schemas {
             .map(|(id, e)| {
                 (
                     (e.location.resource.clone(), e.location.pointer.clone()),
-                    id,
+                    SchemaId(id),
                 )
             })
             .collect::<HashMap<_, _>>();
@@ -412,7 +472,7 @@ impl Schemas {
                 }
             }
         }
-        let mut by_address = HashMap::new();
+        let mut prepared_addresses = HashMap::new();
         for (id, entry) in entries.iter().enumerate() {
             let uri = jsonschema::uri::from_str(&entry.location.resource).map_err(|error| {
                 invalid(format!(
@@ -431,14 +491,15 @@ impl Schemas {
                         entry.location.resource, entry.location.pointer
                     ))
                 })?;
-            by_address.insert(target.contents() as *const Value as usize, id);
+            prepared_addresses.insert(target.contents() as *const Value as usize, SchemaId(id));
         }
+        let mut by_address = HashMap::new();
         for (id, entry) in entries.iter().enumerate() {
             index_nested_addresses(
                 &entry.value,
                 &entry.location.resource,
                 &entry.location.pointer,
-                id,
+                SchemaId(id),
                 &lookup,
                 &mut by_address,
             );
@@ -470,11 +531,11 @@ impl Schemas {
                     "unresolved schema reference {reference:?}: {error}"
                 ))
             })?;
-            let target_id = by_address
+            let target_id = prepared_addresses
                 .get(&(target.contents() as *const Value as usize))
                 .copied()
                 .expect("preflight admitted only references to indexed schema nodes");
-            references.insert(id, target_id);
+            references.insert(SchemaId(id), target_id);
         }
         Ok(Self {
             entries,
@@ -487,80 +548,14 @@ impl Schemas {
     pub(crate) fn type_schema(&self, tag: &str) -> Option<SchemaView<'_>> {
         self.by_type.get(tag).copied().map(|id| self.view(id))
     }
-    pub(crate) fn view(&self, id: usize) -> SchemaView<'_> {
-        let e = &self.entries[id];
-        SchemaView {
-            id,
-            value: &e.value,
-            location: &e.location,
-            default_origin: e.default_origin.as_ref(),
-            default_tags: &e.default_tags,
-        }
+    fn view(&self, id: SchemaId) -> SchemaView<'_> {
+        SchemaView { registry: self, id }
     }
     pub(crate) fn locate(&self, value: &Value) -> Option<SchemaView<'_>> {
         self.by_address
             .get(&(value as *const Value as usize))
             .copied()
             .map(|id| self.view(id))
-    }
-    pub(crate) fn referenced(&self, view: SchemaView<'_>) -> Option<SchemaView<'_>> {
-        self.references
-            .get(&view.id)
-            .copied()
-            .map(|target| self.view(target))
-    }
-    pub(crate) fn check(
-        &self,
-        node: NodeRef<'_>,
-        schema: SchemaView<'_>,
-    ) -> Result<(), SchemaFailure> {
-        let Some(entry) = self.entries.get(schema.id) else {
-            return Err(SchemaFailure {
-                path: String::new(),
-                schema: schema.location.clone(),
-                message: "schema view does not belong to this registry".into(),
-                tag: false,
-            });
-        };
-        entry.validator.validate(node).map_err(|error| {
-            let keyword = error.schema_path().to_string();
-            let tag = keyword.ends_with("/x-daml-tag") || keyword.ends_with("/x-daml-slot");
-            let schema_location = if let Some(uri) = error.absolute_keyword_location() {
-                let (resource, fragment) =
-                    uri.as_str().split_once('#').unwrap_or((uri.as_str(), ""));
-                SchemaLocation {
-                    resource: resource.to_owned(),
-                    pointer: percent_decode(fragment)
-                        .expect("keyword fragments encode UTF-8 schema paths"),
-                }
-            } else {
-                SchemaLocation {
-                    resource: schema.location.resource.clone(),
-                    pointer: keyword,
-                }
-            };
-            SchemaFailure {
-                path: error.instance_path().to_string(),
-                schema: schema_location,
-                message: error.masked().to_string(),
-                tag,
-            }
-        })
-    }
-    /// Conservative schema-work estimate for charging repeated runtime checks.
-    pub(crate) fn check_work(&self, view: SchemaView<'_>) -> usize {
-        self.entries
-            .get(view.id)
-            .map_or(usize::MAX, |entry| entry.work)
-    }
-    pub(crate) fn evaluation_cost(&self, view: SchemaView<'_>, nodes: usize) -> usize {
-        self.check_work(view).saturating_mul(nodes)
-    }
-    pub(crate) fn has_defaults(&self, view: SchemaView<'_>) -> bool {
-        self.entries[view.id].has_defaults
-    }
-    pub(crate) fn uses_uniqueness(&self, view: SchemaView<'_>) -> bool {
-        self.entries[view.id].uses_uniqueness
     }
 }
 
@@ -574,40 +569,18 @@ fn index_nested_addresses(
     value: &Value,
     resource: &str,
     pointer: &str,
-    id: usize,
-    lookup: &HashMap<(String, String), usize>,
-    addresses: &mut HashMap<usize, usize>,
+    id: SchemaId,
+    lookup: &HashMap<(String, String), SchemaId>,
+    addresses: &mut HashMap<usize, SchemaId>,
 ) {
     addresses.insert(value as *const Value as usize, id);
-    if let Some(map) = value.as_object() {
-        for (key, child) in map {
-            if schema_map_key(key) {
-                for (name, schema) in child.as_object().into_iter().flat_map(|m| m.iter()) {
-                    let path = pointer_join(&pointer_join(pointer, key), name);
-                    let child_id = lookup
-                        .get(&(resource.to_owned(), path.clone()))
-                        .copied()
-                        .unwrap_or(id);
-                    index_nested_addresses(schema, resource, &path, child_id, lookup, addresses);
-                }
-            } else if schema_array_key(key) {
-                for (index, schema) in child.as_array().into_iter().flatten().enumerate() {
-                    let path = pointer_join(&pointer_join(pointer, key), &index.to_string());
-                    let child_id = lookup
-                        .get(&(resource.to_owned(), path.clone()))
-                        .copied()
-                        .unwrap_or(id);
-                    index_nested_addresses(schema, resource, &path, child_id, lookup, addresses);
-                }
-            } else if schema_single_key(key) && (child.is_object() || child.is_boolean()) {
-                let path = pointer_join(pointer, key);
-                let child_id = lookup
-                    .get(&(resource.to_owned(), path.clone()))
-                    .copied()
-                    .unwrap_or(id);
-                index_nested_addresses(child, resource, &path, child_id, lookup, addresses);
-            }
-        }
+    for child in profile::children(value) {
+        let path = child.pointer(pointer);
+        let child_id = lookup
+            .get(&(resource.to_owned(), path.clone()))
+            .copied()
+            .expect("all schema children have compiled entries");
+        index_nested_addresses(child.value, resource, &path, child_id, lookup, addresses);
     }
 }
 
@@ -645,7 +618,7 @@ fn append_schema_entries(
             .map_err(|error| compile_error(error, location.clone()))?;
         let default_origin = value.get("default").map(|_| SchemaLocation {
             resource: resource.into(),
-            pointer: pointer_join(pointer, "default"),
+            pointer: crate::pointer::join(pointer, "default"),
         });
         entries.push(SchemaEntry {
             value: value.clone(),
@@ -657,75 +630,21 @@ fn append_schema_entries(
             has_defaults: false,
             uses_uniqueness: false,
         });
-        for (key, child) in value.as_object().into_iter().flat_map(|m| m.iter()) {
-            if schema_map_key(key) {
-                for (name, schema) in child.as_object().into_iter().flat_map(|m| m.iter()) {
-                    visit(
-                        schema,
-                        resource,
-                        &pointer_join(&pointer_join(pointer, key), name),
-                        options,
-                        entries,
-                        total,
-                    )?;
-                }
-            } else if schema_array_key(key) {
-                for (n, schema) in child.as_array().into_iter().flatten().enumerate() {
-                    visit(
-                        schema,
-                        resource,
-                        &pointer_join(&pointer_join(pointer, key), &n.to_string()),
-                        options,
-                        entries,
-                        total,
-                    )?;
-                }
-            } else if schema_single_key(key) && (child.is_object() || child.is_boolean()) {
-                visit(
-                    child,
-                    resource,
-                    &pointer_join(pointer, key),
-                    options,
-                    entries,
-                    total,
-                )?;
-            }
+        for child in profile::children(value) {
+            visit(
+                child.value,
+                resource,
+                &child.pointer(pointer),
+                options,
+                entries,
+                total,
+            )?;
         }
         Ok(())
     }
     let mut nodes = 0;
-    walk_schema(&value, 0, &mut nodes, &mut |_, _| Ok(()))?;
+    walk_schema(&value, 0, &mut nodes)?;
     visit(&value, resource, "", options, entries, total)
-}
-fn schema_map_key(k: &str) -> bool {
-    matches!(
-        k,
-        "properties" | "patternProperties" | "$defs" | "definitions" | "dependentSchemas"
-    )
-}
-fn schema_array_key(k: &str) -> bool {
-    matches!(k, "allOf" | "anyOf" | "oneOf" | "prefixItems")
-}
-fn schema_single_key(k: &str) -> bool {
-    matches!(
-        k,
-        "items"
-            | "additionalProperties"
-            | "additionalItems"
-            | "not"
-            | "if"
-            | "then"
-            | "else"
-            | "contains"
-            | "propertyNames"
-            | "unevaluatedProperties"
-            | "unevaluatedItems"
-            | "contentSchema"
-    )
-}
-fn pointer_join(base: &str, token: &str) -> String {
-    let token = token.replace('~', "~0").replace('/', "~1");
-    format!("{base}/{token}")
 }
 fn canonical_reference(resource: &str, pointer: &str) -> String {
     let mut fragment = String::with_capacity(pointer.len());
@@ -741,7 +660,7 @@ fn canonical_reference(resource: &str, pointer: &str) -> String {
 }
 fn count_nodes(value: &Value) -> usize {
     let mut count = 0;
-    let _ = walk_schema(value, 0, &mut count, &mut |_, _| Ok(()));
+    let _ = walk_schema(value, 0, &mut count);
     count
 }
 fn percent_decode(source: &str) -> Option<String> {
@@ -985,48 +904,17 @@ fn validate_nested_identifiers(resources: &HashMap<String, Value>) -> Result<(),
                 "duplicate schema anchor {anchor:?} in {scope}"
             )));
         }
-        for (key, child) in map {
-            if schema_map_key(key) {
-                for (name, child) in child.as_object().into_iter().flat_map(|map| map.iter()) {
-                    visit(
-                        child,
-                        &scope,
-                        &SchemaLocation {
-                            resource: location.resource.clone(),
-                            pointer: pointer_join(&pointer_join(&location.pointer, key), name),
-                        },
-                        ids,
-                        anchors,
-                    )?;
-                }
-            } else if schema_array_key(key) {
-                for (index, child) in child.as_array().into_iter().flatten().enumerate() {
-                    visit(
-                        child,
-                        &scope,
-                        &SchemaLocation {
-                            resource: location.resource.clone(),
-                            pointer: pointer_join(
-                                &pointer_join(&location.pointer, key),
-                                &index.to_string(),
-                            ),
-                        },
-                        ids,
-                        anchors,
-                    )?;
-                }
-            } else if schema_single_key(key) && (child.is_object() || child.is_boolean()) {
-                visit(
-                    child,
-                    &scope,
-                    &SchemaLocation {
-                        resource: location.resource.clone(),
-                        pointer: pointer_join(&location.pointer, key),
-                    },
-                    ids,
-                    anchors,
-                )?;
-            }
+        for child in profile::children(schema) {
+            visit(
+                child.value,
+                &scope,
+                &SchemaLocation {
+                    resource: location.resource.clone(),
+                    pointer: child.pointer(&location.pointer),
+                },
+                ids,
+                anchors,
+            )?;
         }
         Ok(())
     }
@@ -1101,28 +989,8 @@ fn prepare_schema_graph(
             resource: resource.into(),
             pointer: pointer.into(),
         });
-        for (key, child) in value.as_object().into_iter().flat_map(|map| map.iter()) {
-            if schema_map_key(key) {
-                for (name, child) in child.as_object().into_iter().flat_map(|map| map.iter()) {
-                    collect(
-                        child,
-                        resource,
-                        &pointer_join(&pointer_join(pointer, key), name),
-                        locations,
-                    );
-                }
-            } else if schema_array_key(key) {
-                for (index, child) in child.as_array().into_iter().flatten().enumerate() {
-                    collect(
-                        child,
-                        resource,
-                        &pointer_join(&pointer_join(pointer, key), &index.to_string()),
-                        locations,
-                    );
-                }
-            } else if schema_single_key(key) && (child.is_object() || child.is_boolean()) {
-                collect(child, resource, &pointer_join(pointer, key), locations);
-            }
+        for child in profile::children(value) {
+            collect(child.value, resource, &child.pointer(pointer), locations);
         }
     }
     struct Prepared<'a> {
@@ -1190,48 +1058,12 @@ fn prepare_schema_graph(
                 .ok_or_else(|| unknown("references into non-schema data are unsupported"))?;
             edges.push((target, false, true));
         }
-        let pattern_properties = node.value.get("patternProperties").is_some();
-        for (key, child) in node
-            .value
-            .as_object()
-            .into_iter()
-            .flat_map(|map| map.iter())
-        {
-            let restricted = matches!(
-                key.as_str(),
-                "patternProperties"
-                    | "dependentSchemas"
-                    | "not"
-                    | "contains"
-                    | "propertyNames"
-                    | "if"
-                    | "then"
-                    | "else"
-                    | "unevaluatedProperties"
-                    | "unevaluatedItems"
-                    | "additionalItems"
-                    | "contentSchema"
-            ) || (key == "additionalProperties" && pattern_properties);
-            let applicable = !matches!(key.as_str(), "$defs" | "definitions");
-            let mut add = |value: &Value| -> Result<(), SchemaError> {
-                let target = addresses
-                    .get(&(value as *const Value as usize))
-                    .copied()
-                    .ok_or_else(|| invalid("schema child is absent from the prepared registry"))?;
-                edges.push((target, restricted, applicable));
-                Ok(())
-            };
-            if schema_map_key(key) {
-                for child in child.as_object().into_iter().flat_map(|map| map.values()) {
-                    add(child)?;
-                }
-            } else if schema_array_key(key) {
-                for child in child.as_array().into_iter().flatten() {
-                    add(child)?;
-                }
-            } else if schema_single_key(key) && (child.is_object() || child.is_boolean()) {
-                add(child)?;
-            }
+        for child in profile::children(node.value) {
+            let target = addresses
+                .get(&(child.value as *const Value as usize))
+                .copied()
+                .ok_or_else(|| invalid("schema child is absent from the prepared registry"))?;
+            edges.push((target, child.unsupported_defaults, child.applies));
         }
         node.edges = edges;
     }
@@ -1385,14 +1217,9 @@ fn check_schema_shape(v: &Value) -> Result<(), SchemaError> {
         return Err(invalid("schema must be an object or boolean"));
     }
     let mut n = 0;
-    walk_schema(v, 0, &mut n, &mut |_, _| Ok(()))
+    walk_schema(v, 0, &mut n)
 }
-fn walk_schema(
-    v: &Value,
-    depth: usize,
-    n: &mut usize,
-    visit: &mut impl FnMut(&Value, &str) -> Result<(), SchemaError>,
-) -> Result<(), SchemaError> {
+fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError> {
     *n += 1;
     if *n > MAX_SCHEMA_NODES || depth > MAX_SCHEMA_DEPTH {
         return Err(limit("schema exceeds node/depth bound"));
@@ -1421,19 +1248,8 @@ fn walk_schema(
                 return Err(invalid(format!("{k} is unsupported")));
             }
         }
-        for (k, c) in m {
-            visit(c, k)?;
-            if schema_map_key(k) {
-                for x in c.as_object().into_iter().flat_map(|x| x.values()) {
-                    walk_schema(x, depth + 1, n, visit)?
-                }
-            } else if schema_array_key(k) {
-                for x in c.as_array().into_iter().flatten() {
-                    walk_schema(x, depth + 1, n, visit)?
-                }
-            } else if schema_single_key(k) && (c.is_object() || c.is_boolean()) {
-                walk_schema(c, depth + 1, n, visit)?
-            }
+        for child in profile::children(v) {
+            walk_schema(child.value, depth + 1, n)?;
         }
     }
     Ok(())
@@ -1513,22 +1329,7 @@ fn expand_contracts(
             .ok_or_else(|| invalid("allOf must be an array"))?
             .push(serde_json::json!({"$ref": uri}));
     }
-    for (key, children) in map.iter_mut() {
-        if schema_map_key(key) {
-            if let Some(children) = children.as_object_mut() {
-                for child in children.values_mut() {
-                    expand_contracts(child, contracts, added_bytes)?;
-                }
-            }
-        } else if schema_array_key(key) {
-            if let Some(children) = children.as_array_mut() {
-                for child in children {
-                    expand_contracts(child, contracts, added_bytes)?;
-                }
-            }
-        } else if schema_single_key(key) {
-            expand_contracts(children, contracts, added_bytes)?;
-        }
-    }
-    Ok(())
+    profile::try_for_each_child_mut(value, |child| {
+        expand_contracts(child, contracts, added_bytes)
+    })
 }
