@@ -116,13 +116,22 @@ Repeated exact mapping keys are errors. A second root value is an error. YAML do
 
 ## Parse first, validate separately
 
-Parsing produces a source-backed document with explicit values, literal tags, numeric spellings, comments, and original byte spans. It does not need a schema. Schema loading, default completion, and validation are separate operations.
+Parsing produces a source-backed document with explicit values, literal tags,
+numeric spellings, comments, and original byte spans. It does not need a schema.
+Schema loading, default completion, and validation are separate operations.
 
-Schema modules can be serialized as JSON or JSON-compatible DAML. Modules are independently owned and composed explicitly. References use registered in-memory resources; the schema resolver does not fetch an HTTP-looking URI. A consumer with another schema format owns the adapter that converts it to DAML's native module contract.
+Modules use the JSON-compatible interchange format described in the
+[schema guide](schemas.md): named type schemas and explicitly registered
+resources. Ordinary JSON Schema constraints and `$ref` define structural
+compatibility. A containing schema and an explicitly tagged value's selected
+schema both apply. Untagged values may satisfy structural requirements, while
+unknown explicit tags remain errors. Consumers adapt foreign schema formats;
+the module format is not final native bundle authoring syntax.
 
-Default completion recursively merges object defaults with supplied partial objects. Supplied values win; supplied arrays and scalars replace defaults rather than merging. A partial default does not waive `required` or other constraints: the completed value is fully validated. The input document is not mutated. Parent constraints and tagged-node assertions are both enforced.
-
-DAML does not yet define a default schema-folder root or the base for relative schema paths. No root search, workspace, current-directory, or document-path default is accepted. Those choices remain open.
+Default completion recursively merges object defaults with supplied partial
+objects. Supplied values win; supplied arrays and scalars replace defaults. A
+partial default does not waive `required` or other constraints. Resolution does
+not mutate the input document.
 
 ## Reformat without changing values
 
@@ -145,6 +154,17 @@ raise the nesting ceiling.
 
 ## Evidence and open choices
 
-The edge-case record contains 45 canonical probe inputs with recorded status, output, errors, and byte spans. It covers selected string boundaries, dedent, continuations, tags, separators, provisional names, numbers, BOM, and Unicode. The sample is compact evidence, not exhaustive coverage and not a final key/tag grammar. Existing `tests/strings.rs`, `tests/structure.rs`, and `tests/validation.rs` exercise selected string, structure, and validation behavior; the recorded probe observations are not a claim that this walkthrough ran those tests.
+The edge-case record contains 45 canonical probe inputs with recorded status,
+output, errors, and byte spans. It is compact evidence, not exhaustive coverage
+or a final key/tag grammar.
 
-Confirmed choices include explicit braces and brackets, newline entry separation without commas, the two triple-string forms and their boundary framing, mandatory space-based dedent, and unknown tags surviving parsing for later validation. Current observations include acceptance of broad name characters and preservation of tabs and all-blank literal content. Open choices are the schema-folder root and relative-path base, the final key/tag alphabets, and whether tab and all-blank string behavior should change. See `docs/syntax.md`, `docs/edge-cases.md`, `docs/schemas.md`, `docs/formatting.md`, and `docs/lsp.md` for the owning contracts and exact limits.
+Confirmed syntax choices include explicit braces and brackets, newline entry
+separation without commas, the two triple-string forms, mandatory space-based
+dedent, and unknown tags surviving parsing for later validation. The current
+schema cutover uses structural compatibility and registered standard-schema
+references; contracts, `implements`, `x-daml-tag`, and `x-daml-slot` are removed.
+The accepted native bundle/import and override direction is not implemented.
+Key/tag alphabets and tab/all-blank string details remain open. Array narrowing
+remains undecided after its question was cancelled. See the owning
+[syntax](syntax.md), [schema](schemas.md), [edge-case](edge-cases.md),
+[formatter](formatting.md), and [LSP](lsp.md) contracts.

@@ -536,11 +536,7 @@ impl<'a> Resolver<'a> {
         schema.validate(node).map_err(|failure_info| {
             let full_path = format!("{path}{}", failure_info.path);
             let failing = node.at_pointer(&failure_info.path).unwrap_or(node);
-            let kind = if failure_info.tag {
-                ResolveErrorKind::TagMismatch
-            } else {
-                ResolveErrorKind::SchemaViolation
-            };
+            let kind = ResolveErrorKind::SchemaViolation;
             failure(
                 kind,
                 failing,
@@ -1092,10 +1088,7 @@ fn failure(
     schema: Option<SchemaLocation>,
     path: &str,
 ) -> ResolveError {
-    let origin = if matches!(
-        kind,
-        ResolveErrorKind::UnknownTag | ResolveErrorKind::TagMismatch
-    ) {
+    let origin = if kind == ResolveErrorKind::UnknownTag {
         node.tag.as_ref().map_or(node.origin, |tag| tag.origin)
     } else {
         node.origin

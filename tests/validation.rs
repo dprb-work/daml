@@ -48,56 +48,6 @@ fn complete_application_checks_deep_tags_and_completes_defaults() {
 }
 
 #[test]
-fn independent_provider_extends_a_slot_without_editing_host_schema() {
-    let provider = SchemaModule::from_value(json!({"types": {
-        "network.ReadOnlyAdapter": {
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "readonly": {"const": true, "default": true},
-                    "timeout": {"type": "integer", "minimum": 1, "default": 10}
-                },
-                "required": ["readonly", "timeout"],
-                "additionalProperties": false
-            },
-            "implements": ["app.Adapter"]
-        }
-    }}))
-    .unwrap();
-    let mut modules = application_modules();
-    modules.push(provider);
-    let schemas = Schemas::compose(modules).unwrap();
-    let source = include_str!("../examples/application.daml")
-        .replace("!network.Adapter", "!network.ReadOnlyAdapter");
-    let document = parse(source).unwrap();
-    let resolved = schemas.resolve(&document).unwrap();
-    let adapter = resolved.root().get("adapter").unwrap();
-    assert_eq!(adapter.tag(), Some("network.ReadOnlyAdapter"));
-    assert_eq!(adapter.to_json(), json!({"readonly": true, "timeout": 10}));
-}
-
-#[test]
-fn known_but_unrelated_tag_cannot_claim_an_extension_slot() {
-    let unrelated = SchemaModule::from_value(json!({"types": {
-        "network.Unrelated": {"schema": {"type": "object"}}
-    }}))
-    .unwrap();
-    let mut modules = application_modules();
-    modules.push(unrelated);
-    let schemas = Schemas::compose(modules).unwrap();
-    let source = include_str!("../examples/application.daml")
-        .replace("!network.Adapter", "!network.Unrelated");
-    let document = parse(source).unwrap();
-    let error = schemas.resolve(&document).unwrap_err();
-    assert_eq!(error.kind, ResolveErrorKind::TagMismatch);
-    assert_eq!(error.path, "/adapter");
-    let ErrorOrigin::Input(span) = error.origin else {
-        panic!("supplied tag must point into input")
-    };
-    assert!(document.slice(span).unwrap().contains("network.Unrelated"));
-}
-
-#[test]
 fn unknown_tag_is_checked_beneath_open_records_and_sequences() {
     let module = SchemaModule::from_value(json!({"types": {
         "Root": {"schema": {"type": "object", "additionalProperties": true}}
@@ -344,40 +294,112 @@ fn completion_accounts_for_default_bytes_and_validation_work() {
 }
 
 #[test]
-fn implemented_contracts_apply_structure_and_defaults_standalone_and_in_slots() {
-    let module = SchemaModule::from_value(json!({
-        "contracts": {"Shape": {
+fn compatible_providers_and_untagged_values_satisfy_the_same_structural_requirement() {
+    let host = SchemaModule::from_value(json!({
+        "types": {"Host": {"schema": {
             "type": "object",
-            "properties": {"enabled": {"const": true, "default": true}},
-            "required": ["enabled"]
-        }},
-        "types": {
-            "Member": {"implements": ["Shape"], "schema": {"type": "object"}},
-            "Host": {"schema": {"type": "object", "properties": {
-                "member": {"x-daml-slot": "Shape"}
-            }, "required": ["member"]}}
-        }
+            "properties": {"adapter": {"$ref": "urn:example:Adapter"}},
+            "required": ["adapter"]
+        }}},
+        "resources": [{"uri": "urn:example:Adapter", "schema": {
+            "type": "object",
+            "properties": {
+                "addr": {"const": "localhost"},
+                "timeout": {"type": "integer", "default": 30}
+            },
+            "required": ["addr", "timeout"]
+        }}]
     }))
     .unwrap();
-    let schemas = Schemas::compose([module]).unwrap();
-    let standalone = parse("!Member").unwrap();
+    let providers = SchemaModule::from_value(json!({"types": {
+        "network.Provider": {"schema": {
+            "type": "object",
+            "properties": {"timeout": {"type": "integer", "maximum": 60}}
+        }},
+        "independent.Name": {"schema": {
+            "type": "object",
+            "additionalProperties": {"type": ["string", "integer"]}
+        }}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([host, providers]).unwrap();
+    for adapter in [
+        "!network.Provider { addr: \"localhost\" }",
+        "!independent.Name { addr: \"localhost\" }",
+        "{ addr: \"localhost\" }",
+    ] {
+        let document = parse(format!("!Host {{ adapter: {adapter} }}")).unwrap();
+        assert_eq!(
+            schemas.resolve(&document).unwrap().to_json(),
+            json!({"adapter": {"addr": "localhost", "timeout": 30}})
+        );
+    }
+    for (adapter, path) in [
+        ("!network.Provider { addr: \"remote\" }", "/adapter/addr"),
+        (
+            "!network.Provider { addr: \"localhost\"\n timeout: 61 }",
+            "/adapter/timeout",
+        ),
+    ] {
+        let document = parse(format!("!Host {{ adapter: {adapter} }}")).unwrap();
+        let error = schemas.resolve(&document).unwrap_err();
+        assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+        assert_eq!(error.path, path);
+    }
+}
+
+#[test]
+fn exact_large_integer_constraints_do_not_round_through_float() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({
+        "types": {"Count": {"schema": {
+            "type": "integer",
+            "minimum": 9007199254740993_i64
+        }}}
+    }))
+    .unwrap()])
+    .unwrap();
+    let minimum = parse("!Count 9007199254740993").unwrap();
+    schemas.resolve(&minimum).unwrap();
+    let below = parse("!Count 9007199254740992").unwrap();
     assert_eq!(
-        schemas.resolve(&standalone).unwrap().to_json(),
-        json!({"enabled": true})
+        schemas.resolve(&below).unwrap_err().kind,
+        ResolveErrorKind::SchemaViolation
     );
-    let nested = parse("!Host { member: !Member }").unwrap();
-    assert_eq!(
-        schemas.resolve(&nested).unwrap().to_json(),
-        json!({"member": {"enabled": true}})
-    );
-    let invalid = parse("!Host { member: !Member { enabled: false } }").unwrap();
+}
+
+#[test]
+fn property_name_constraints_validate_borrowed_keys() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({
+        "types": {"Record": {"schema": {
+            "type": "object",
+            "propertyNames": {"type": "string", "minLength": 3}
+        }}}
+    }))
+    .unwrap()])
+    .unwrap();
+    let valid = parse("!Record { name: 1 }").unwrap();
+    schemas.resolve(&valid).unwrap();
+    let invalid = parse("!Record { x: 1 }").unwrap();
     assert_eq!(
         schemas.resolve(&invalid).unwrap_err().kind,
         ResolveErrorKind::SchemaViolation
     );
-    let standalone_invalid = parse("!Member { enabled: false }").unwrap();
+}
+
+#[test]
+fn constant_equality_preserves_exact_numbers_and_ignores_data_tag_names() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({"types": {
+        "Root": {"schema": {"const": {"values": [1, {"enabled": true}]}}},
+        "List": {"schema": {"type": "array"}},
+        "Flag": {"schema": {"type": "boolean"}}
+    }}))
+    .unwrap()])
+    .unwrap();
+    let equivalent = parse("!Root { values: !List [1.0\n{ enabled: !Flag true }] }").unwrap();
+    schemas.resolve(&equivalent).unwrap();
+    let different = parse("!Root { values: !List [1.01\n{ enabled: !Flag true }] }").unwrap();
     assert_eq!(
-        schemas.resolve(&standalone_invalid).unwrap_err().kind,
+        schemas.resolve(&different).unwrap_err().kind,
         ResolveErrorKind::SchemaViolation
     );
 }

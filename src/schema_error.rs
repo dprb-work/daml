@@ -8,9 +8,9 @@ pub enum SchemaErrorKind {
     Parse,
     /// A module envelope or schema declaration is malformed.
     InvalidSchema,
-    /// Two selected modules declare the same type, alias, contract, or resource.
+    /// Two selected modules declare the same type or resource.
     DuplicateName,
-    /// A referenced resource, type, or contract was not explicitly supplied.
+    /// A referenced resource or type was not explicitly supplied.
     UnknownReference,
     /// A recursive schema graph is not supported by this bounded profile.
     ReferenceCycle,

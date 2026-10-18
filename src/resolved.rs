@@ -184,8 +184,6 @@ pub enum ResolveErrorKind {
     UnknownExpectedType,
     /// Completed data violates a schema constraint.
     SchemaViolation,
-    /// A tag does not satisfy its declared discriminator or extension slot.
-    TagMismatch,
     /// Applicable defaults lead to more than one different completed value.
     AmbiguousDefault,
     /// A resource budget was exhausted.

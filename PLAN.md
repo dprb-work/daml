@@ -1,9 +1,9 @@
 # DAML implementation plan
 
-Status: syntax parsing and deep assertion/default resolution are implemented
-(milestones 1–3). [Syntax](docs/syntax.md) and [schemas](docs/schemas.md) own their
-public contracts. Hardening, reflow formatting, and the minimal stdio LSP are
-implemented. Final key/tag alphabets and schema-folder root policy remain open.
+Status: syntax, structural schema validation, default completion, hardening,
+reflow formatting, the minimal stdio LSP, and binary distribution proof are
+implemented. [Syntax](docs/syntax.md) and [schemas](docs/schemas.md) own current
+behavior. Key/tag alphabets and native schema authoring remain open.
 
 ## Target result
 
@@ -194,45 +194,55 @@ nested tags, and original-source locations.
 invariance and Unicode byte-span tests pass; the consumer example runs; no
 schema registry is required just to parse. `./scripts/check` passes.
 
-## Milestone 3 — deep assertions and independently owned schema modules
+## Milestone 3 — structural validation and schema modules
 
-**Result:** a document's nested assertions are actually enforced without editing
-a central union whenever a new module supplies a type.
+**Implemented:** `SchemaModule` accepts an explicit interchange envelope with
+`types` entries containing `{ schema: ... }` and registered `resources`
+containing `{ uri: ..., schema: ... }`. Ordinary JSON Schema constraints and
+registered references define compatibility structurally. There are no
+contract-membership declarations or DAML-specific tag/slot validator keywords.
+See [the schema guide](docs/schemas.md) for runnable examples and exact limits.
 
-The implemented schema/default contract is in [docs/schemas.md](docs/schemas.md).
-It uses JSON Schema 2020-12 constraints serialized as JSON or DAML, with explicit
-tag/slot keywords and an offline, tag-aware validation engine. Consumers translate
-their own formats into native `SchemaModule` values; DAML has no vendor importer.
+- A containing schema's constraints and a data tag's selected schema both apply.
+- Untagged values may satisfy structural requirements. Unknown explicit tags
+  remain errors, and tagged descendants are checked under open containers.
+- Preserve exact numbers, explicit default completion, source/default origins,
+  offline resource bounds, and existing schema-position classification.
+- Reject removed `x-daml-tag` and `x-daml-slot` keywords at actual schema
+  positions. Literal values and property names with those spellings remain data.
+- Keep `x-daml-default-tags` for attaching explicit assertions to generated
+  defaults; it does not declare membership.
+- Consumers own conversion from foreign schema formats. The interchange module
+  is not final native bundle authoring syntax.
 
-- Add a separate validation pass over the parsed document. Unknown tags survive
-  syntax parsing but fail validation unless explicitly supplied by the caller.
-- Keep tag resolution separate from application-object construction. Validators
-  do not execute callables, import modules from tag strings, resolve templates,
-  read environment variables, or access the network.
-- Let modules export named schemas and supported extension contracts. Compose
-  the selected modules explicitly; duplicate/conflicting tag names are errors,
-  not last-writer-wins overrides.
-- Require both the containing field contract and the tagged node contract to
-  hold. A tag cannot cast away a field restriction. Visit asserted descendants
-  even beneath otherwise open/untyped containers.
-- Start with the record/scalar/sequence and extension-contract capabilities the
-  fixtures require. Do not invent a second general-purpose schema language or
-  require a full JSON Schema implementation without a consumer need.
-- Keep the validation schema model declarative and language-neutral so a later
-  Python adapter can describe types without Python callbacks during every field
-  check. Do not implement PyO3 or Python type inspection in this milestone.
+**Gate:** registered schemas validate compatible differently named values
+without membership declarations; incompatible structure and invalid data tags
+fail at their value paths. Standard schema references and applicable defaults
+remain covered by consumer examples and checks.
 
-**Gate:** two independently defined modules compose; a third module's compatible
-implementation validates without changing the host schema's discriminator union.
-Nested invalid fields, unknown tags, incompatible field/tag contracts, and
-composition collisions produce structured paths plus original source spans.
-Tagged scalars, lists, mappings, and empty mappings are all exercised. A real
-consumer calls parse then resolve, including defaults; syntax, schema-loading,
-and resolution failures stay separate. `./scripts/check` passes.
+## Accepted native-authoring direction, not implemented
 
-An effective name-to-schema lookup is still necessary. The decoupling is in
-schema ownership and extension contracts, not the absence of an index.
+Future bundle authoring uses keyed bundle roots, where each key names a
+namespace and each value gives its bundle root. Each tag walks directly to one
+file containing that definition. Imports have private schema-local scopes:
+transitive imports do not expose names to roots, parents, or siblings, though a
+root may import a dependency under another alias. A tag reference selects a
+definition directly; exact spellings, metadata placement, scope granularity,
+and loading identity remain open. Value-shaped scalar narrowing is distinct
+from schema definitions, and compatibility is structural.
 
+Authoring reuse has one base. Constraint, requiredness, and default are
+independent components: supplying one replaces that component atomically, not
+through recursive keyword merging. Derived definitions may override all three.
+This does not waive structural compatibility at a use site. Array narrowing
+remains **undecided**; the question about positional patterns was cancelled,
+so no array behavior is selected.
+
+These choices must favor the maintenance objectives already established for
+DAML: one grammar and validation path, clear ownership boundaries, compact
+concrete behavior, and no compatibility shims or speculative abstractions.
+The missing native authoring/import syntax blocks frontend work, not the
+structural-validation cutover.
 ## Milestone 4 — harden and ship the standalone library
 
 **Implemented hardening baseline:** retained parse/schema/resolve fuzz targets,
@@ -356,12 +366,8 @@ integration remains separate; no formatter platform or style framework is added.
 
 ## Next sequence
 
-The current objective is binary distribution with proof that a downloaded
-archive installs and runs from an isolated OMP installation, without shipping
-editor or host integrations. The [distribution guide](docs/distribution.md) owns
-package and platform details.
-
-After that proof, sharpen the remaining language and schema choices, then
-consolidate the implementation before starting Python bindings. Python bindings
-are the next major objective, not part of the current distribution work.
-Editor integrations remain deferred until later and only proceed if wanted.
+Binary distribution proof is merged, and structural consolidation and
+simplification are complete. The next session starts by sharpening the deferred
+native authoring and import syntax before starting Python bindings. Array
+narrowing remains undecided after the cancelled question. Editor integrations
+remain deferred.

@@ -22,14 +22,6 @@ impl<'a> NodeRef<'a> {
         Self::Value(node)
     }
 
-    /// Returns the explicit DAML tag on this value, if any.
-    pub(crate) fn tag(self) -> Option<&'a str> {
-        match self {
-            Self::Value(node) => node.tag(),
-            Self::Property(_) => None,
-        }
-    }
-
     fn value(self) -> Option<&'a ResolvedValue<'a>> {
         match self {
             Self::Value(node) => Some(&node.value),

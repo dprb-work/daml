@@ -5,10 +5,10 @@
         $id: "https://daml.invalid/demo/application"
         type: "object"
         properties: {
-          adapter: { x-daml-slot: "app.Adapter" }
+          adapter: { $ref: "https://daml.invalid/app/adapter" }
           tasks: {
             type: "array"
-            items: { x-daml-slot: "app.Stage" }
+            items: { $ref: "https://daml.invalid/app/stage" }
           }
           ports: { $ref: "https://daml.invalid/network/ports" }
           enabled: {
@@ -43,17 +43,22 @@
         required: ["request"]
         additionalProperties: false
       }
-      implements: ["app.Stage"]
     }
   }
-  contracts: {
-    app.Adapter: { type: "object" }
-    app.Stage: {
-      type: "object"
-      properties: {
-        request: { type: "object" }
+  resources: [
+    {
+      uri: "https://daml.invalid/app/adapter"
+      schema: { type: "object" }
+    }
+    {
+      uri: "https://daml.invalid/app/stage"
+      schema: {
+        type: "object"
+        properties: {
+          request: { type: "object" }
+        }
+        required: ["request"]
       }
-      required: ["request"]
     }
-  }
+  ]
 }
