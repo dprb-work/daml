@@ -7,7 +7,8 @@ installed OMP executable, not an OMP source checkout.
 From the verification skill directory, run `python3 scripts/archive.py ARCHIVE
 --omp /absolute/omp --evidence /absolute/new/directory` as one command. The helper
 verifies/extracts the archive, moves its installation, creates an isolated project
-and client registration, and loads the verification-only probe explicitly.
+whose name includes file-URI special characters, supplies client registration,
+and loads the verification-only probe explicitly.
 
 Observable success: UTF-16 capability; syntax error at line 1, column 7 after
 supplementary Unicode; diagnostics clear after replacement; full-document edit
@@ -18,5 +19,7 @@ The retained summary identifies archive/build and installed OMP version.
 Host HOME/config/data/cache and credentials are not inherited. Shared LSP state
 is disabled. The placeholder startup key is not a usable credential, and no
 prompt is sent. This is an RPC/built-in-tool path, not TUI keyboard or GUI proof.
-The driver is currently Unix-specific. Normal shutdown and temporary-directory
-cleanup remove owned state; retained evidence must remain outside that tree.
+The driver is currently Unix-specific. Normal shutdown removes owned state;
+interruption and other exceptional exits stop/reap the owned process group,
+retain logs, and propagate the original failure. Evidence remains outside the
+removed temporary tree.

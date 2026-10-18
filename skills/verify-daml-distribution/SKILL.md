@@ -47,6 +47,12 @@ not inherit host credentials or Cargo/Bun paths. Shared LSP mode is explicitly
 disabled. It selects a catalog model with a non-secret startup key but submits no
 prompt; any observed `agent_start` frame fails verification.
 
+The test project name deliberately contains a space, `#`, `?`, and `%20` so the
+probe also exercises filesystem-to-file-URI encoding. On tested OMP 18.11.3, a
+temp base containing the combined `#?%20` failed in OMP's native-addon loader
+before LSP startup. That external startup failure is not a DAML parser defect;
+the helper does not silently rewrite the temp base or borrow the user's HOME.
+
 ## Drive
 
 The default command extracts the archive to a temporary installation and runs the
@@ -77,10 +83,12 @@ that command output in CI or the owning review.
 
 Helpers own temporary installations and state through temporary-directory
 contexts, including failure paths. OMP is a finite subprocess with a deadline;
-normal RPC stdin closure/session shutdown disposes its owned runtime. Never stop
-an unrelated OMP process or change user configuration. Confirm
-`isolated_state_removed: true` in successful OMP evidence and keep the evidence
-outside the deleted tree. Do not reuse an evidence directory from an earlier run.
+normal RPC stdin closure/session shutdown disposes its owned runtime. On timeout
+or exceptional exit, including Ctrl-C, the helper sends TERM then bounded KILL to
+its owned process group, reaps it, retains logs, and propagates the original
+exception. Never stop an unrelated OMP process or change user configuration.
+Confirm `isolated_state_removed: true` in successful evidence and keep evidence
+outside the deleted tree. Do not reuse an earlier evidence directory.
 
 ## Helpers
 

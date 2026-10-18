@@ -108,7 +108,7 @@ def check_omp(archive: Path, omp: Path, evidence: Path) -> None:
         installed, build = unpack(archive, root / "downloaded")
         prefix = root / "application"
         _ = shutil.move(str(installed), prefix)
-        project = root / "project"
+        project = root / "project #?%20"
         (project / ".omp").mkdir(parents=True)
         (project / "daml-smoke.project").touch()
         _ = (project / "trial.daml").write_text('"😀é" ?', encoding="utf-8")
@@ -129,7 +129,7 @@ def check_omp(archive: Path, omp: Path, evidence: Path) -> None:
             "DAML_PROBE_REPORT": str(root / "probe.json"),
             "DAML_PROBE_FORMATTER": str(prefix / "bin" / "daml-fmt"),
         }
-        version = subprocess.run([str(omp), "--version"], env=env, check=True, capture_output=True, text=True, timeout=15).stdout.strip()
+        version = subprocess.run([str(omp), "--version"], env=env, check=True, capture_output=True, text=True, encoding="utf-8", timeout=15).stdout.strip()
         # A selected catalog model satisfies startup, but no prompt is sent and
         # no real credential is provided or inherited.
         command = [
@@ -138,32 +138,38 @@ def check_omp(archive: Path, omp: Path, evidence: Path) -> None:
             "--cwd", str(project), "--config", str(overlay), "--no-title", "--no-ui",
             "--model", "openai/gpt-4o", "--api-key", "verification-no-model-requests", "--max-time", "90s",
         ]
-        timed_out = False
+        failure: BaseException | None = None
+        stdout = stderr = ""
         with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, env=env, cwd=project, start_new_session=True) as run:
+                              text=True, encoding="utf-8", env=env, cwd=project, start_new_session=True) as run:
             try:
                 stdout, stderr = run.communicate("", timeout=120)
-            except subprocess.TimeoutExpired:
-                timed_out = True
+            except BaseException as error:
+                # Ctrl-C does not reach the child's new session. Settle the same
+                # owned group on every exceptional exit, then preserve the error.
+                failure = error
                 try:
-                    os.killpg(run.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    stdout, stderr = run.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
                     try:
-                        os.killpg(run.pid, signal.SIGKILL)
+                        os.killpg(run.pid, signal.SIGTERM)
                     except ProcessLookupError:
                         pass
-                    stdout, stderr = run.communicate()
+                    try:
+                        stdout, stderr = run.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(run.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        stdout, stderr = run.communicate(timeout=10)
+                except Exception as cleanup_error:
+                    error.add_note(f"OMP cleanup also failed: {cleanup_error}")
         _ = (evidence / "omp.stdout.jsonl").write_text(stdout, encoding="utf-8")
         _ = (evidence / "omp.stderr.txt").write_text(stderr, encoding="utf-8")
         report_path = root / "probe.json"
         if report_path.exists():
             _ = shutil.copyfile(report_path, evidence / "probe.json")
-        if timed_out:
-            raise RuntimeError("isolated OMP exceeded its deadline; owned process group was stopped")
+        if failure is not None:
+            raise failure
         frames = [json.loads(line) for line in stdout.splitlines() if line.strip()]
         if any(frame.get("type") == "agent_start" for frame in frames):
             raise RuntimeError("unexpected model-backed agent turn during the probe")

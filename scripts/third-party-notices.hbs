@@ -11,9 +11,11 @@ License: {{{license}}}
 
 ===============================================================================
 License texts
-{{#each overview}}
+{{!-- Each distinct text may carry different copyright notices, even for one SPDX ID. --}}
+{{#each licenses}}
 ===============================================================================
 {{name}}
+Used by: {{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}
 
 {{{text}}}
 {{/each}}

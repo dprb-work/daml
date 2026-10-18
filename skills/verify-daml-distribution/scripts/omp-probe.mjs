@@ -24,7 +24,7 @@ export default function (pi) {
       const path = `${ctx.cwd}/trial.daml`;
       await Bun.write(path, '{message:"😀é"}');
       check(await call({action: 'diagnostics', file: 'trial.daml'}) === 'OK', 'replacement did not clear diagnostics');
-      const uri = new URL(`file://${path}`).href;
+      const uri = Bun.pathToFileURL(path).href;
       const request = {action: 'request', file: 'trial.daml', query: 'textDocument/formatting', payload: JSON.stringify({textDocument: {uri}, options: {tabSize: 2, insertSpaces: true}})};
       function edits(text) {
         return JSON.parse(text.slice(text.indexOf('\n') + 1));
