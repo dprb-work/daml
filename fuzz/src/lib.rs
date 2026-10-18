@@ -90,6 +90,41 @@ fn check_node(document: &Document, node: &Node) -> usize {
     count
 }
 
+pub fn exercise_format(data: &[u8]) {
+    let Ok(source) = std::str::from_utf8(data) else {
+        return;
+    };
+    let Ok(document) = parse_with_limits(source, PARSE_LIMITS) else {
+        return;
+    };
+    let options = daml::FormatOptions {
+        line_width: 1 + source.len() % 100,
+    };
+    let output = daml::format(&document, options).expect("positive bounded width");
+    let output_bytes = output.len();
+    let formatted = parse_with_limits(
+        output,
+        Limits {
+            // Reflow adds indentation and closing-delimiter whitespace, not nodes.
+            max_input_bytes: output_bytes,
+            max_scalar_bytes: 32 * 1024,
+            ..PARSE_LIMITS
+        },
+    )
+    .expect("formatting preserves syntax");
+    assert!(same_value(
+        &document,
+        document.root(),
+        &formatted,
+        formatted.root()
+    ));
+    assert_eq!(
+        daml::format(&formatted, options).unwrap(),
+        formatted.source(),
+        "formatting is idempotent"
+    );
+}
+
 pub fn exercise_parse(data: &[u8]) {
     let Ok(source) = std::str::from_utf8(data) else {
         return;

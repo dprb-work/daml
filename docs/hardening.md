@@ -30,11 +30,12 @@ Run a bounded campaign for each target:
 ./scripts/fuzz parse -max_total_time=180
 ./scripts/fuzz schema -max_total_time=180
 ./scripts/fuzz resolve -max_total_time=180
+./scripts/fuzz format -max_total_time=180
 ```
 
 The wrapper selects AddressSanitizer, seed 42, a ten-second per-input timeout,
-and a 1 GiB RSS ceiling. Parse/resolve inputs are at most 64 KiB; schema inputs
-are at most 16 KiB plus their mode byte. Later libFuzzer flags override wrapper
+and a 1 GiB RSS ceiling. Parse/resolve/format inputs are at most 64 KiB; schema
+inputs are at most 16 KiB plus their mode byte. Later libFuzzer flags override wrapper
 defaults. Set `CARGO_BUILD_JOBS=1` when building on a constrained machine.
 
 The target contracts differ:
@@ -47,9 +48,18 @@ The target contracts differ:
 - `resolve` parses DAML and applies fixed, independently composed native modules.
   It exercises tags, slots, defaults, branch ambiguity, exact numbers, uniqueness,
   resource bounds, and source/default provenance. Fixture checks run once.
+- `format` checks that width-sensitive reflow reparses to the same values,
+  tags, key/order and numeric spellings, and that a second format is unchanged.
+  Reparse byte limits allow the indentation added by reflow.
 
-Human-authored seeds live in `fuzz/seeds/`. The parse target also reads the
-licensed originals and native adaptations under `tests/fixtures/yaml/`; see
+The formatter target retained two minimized regressions found during its first
+campaign: a comment immediately before a closing delimiter must force that
+delimiter onto a new line, and a literal's final blank line must remain distinct
+from an empty literal. The later bounded campaign completed without a finding.
+
+Human-authored seeds live in `fuzz/seeds/`. Parse and format also read the
+licensed originals and native adaptations under `tests/fixtures/yaml/`; format
+additionally reuses the canonical parse seeds. See
 [provenance and distribution boundaries](../SOURCES.md). Corpus inputs include
 intentional syntax and schema errors: structured rejection is a valid outcome.
 Mutable corpora, artifacts, coverage, and build outputs remain ignored.

@@ -1,0 +1,7 @@
+# head
+{ # opening
+adapter: !bare # suffix
+value: # label
+!inner {leaf: true}
+# closing
+} # tail

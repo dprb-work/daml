@@ -4,15 +4,15 @@ set -eu
 # The nested toolchain file selects nightly without changing the library pin.
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 if [ "$#" -eq 0 ]; then
-    echo 'usage: scripts/fuzz <parse|schema|resolve> [libFuzzer flags...]' >&2
+    echo 'usage: scripts/fuzz <parse|schema|resolve|format> [libFuzzer flags...]' >&2
     exit 2
 fi
 target=$1
 shift
 case "$target" in
-    parse|resolve) max_len=65536 ;;
+    parse|resolve|format) max_len=65536 ;;
     schema) max_len=16385 ;;
-    *) echo 'target must be parse, schema, or resolve' >&2; exit 2 ;;
+    *) echo 'target must be parse, schema, resolve, or format' >&2; exit 2 ;;
 esac
 cd "$root/fuzz"
 # cargo-fuzz does not expose Cargo's --locked switch.
@@ -20,12 +20,15 @@ cd "$root/fuzz"
 cargo fetch --locked
 mkdir -p "corpus/$target" "artifacts/$target"
 set -- "-max_len=$max_len" -timeout=10 -rss_limit_mb=1024 -seed=42 "$@"
-if [ "$target" = parse ]; then
-    exec cargo fuzz run --fuzz-dir . --sanitizer address "$target" \
-        "corpus/$target" "seeds/$target" \
-        "$root/tests/fixtures/yaml/original" "$root/tests/fixtures/yaml/daml" \
-        -- "-artifact_prefix=artifacts/$target/" "$@"
-fi
+case "$target" in
+    parse)
+        set -- "$root/tests/fixtures/yaml/original" "$root/tests/fixtures/yaml/daml" \
+            -- "-artifact_prefix=artifacts/$target/" "$@" ;;
+    format)
+        set -- "seeds/parse" "$root/tests/fixtures/yaml/original" \
+            "$root/tests/fixtures/yaml/daml" -- "-artifact_prefix=artifacts/$target/" "$@" ;;
+    *)
+        set -- -- "-artifact_prefix=artifacts/$target/" "$@" ;;
+esac
 exec cargo fuzz run --fuzz-dir . --sanitizer address "$target" \
-    "corpus/$target" "seeds/$target" \
-    -- "-artifact_prefix=artifacts/$target/" "$@"
+    "corpus/$target" "seeds/$target" "$@"

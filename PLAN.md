@@ -271,10 +271,14 @@ consumer, no known correctness/security defects remain, bounded fuzz findings
 are resolved, and documented commands work. Coverage is assessed by grammar and
 failure behavior, not a decorative percentage or test count.
 
-## Milestone 5 — indentation-focused DAML formatter
+## Milestone 5 — source-preserving reflow formatter
 
 **Result:** a contributor formats a real DAML document without changing its
 meaning, comments, or string content.
+
+**Implemented:** the [formatter API and command](docs/formatting.md) reuse
+`pretty` 0.12.5 for width-sensitive layout. Parsing and formatting share the
+existing source/AST and one trivia scanner; no second grammar is introduced.
 
 - Use the same parsed syntax/source model, not another parser or YAML emitter.
 - Apply one initial canonical indentation/layout policy; retain unquoted keys
@@ -282,6 +286,8 @@ meaning, comments, or string content.
 - Preserve decoded literal/wrapped strings, relative content indentation, tags,
   and comments. Indenting a surrounding collection must not alter a dedented
   string's value. Do not rewrite ordinary string data as structural whitespace.
+- Reflow legal single-entry containers to a target width. Multiple entries keep
+  their required physical newlines, and tags keep same-line payload binding.
 
 **Gate:** formatting is idempotent; parsing before and after formatting produces
 the same values and tags; nested dedent/continuation and comment fixtures retain
@@ -320,14 +326,24 @@ YAML feature, or lose tags by converting immediately to JSON/dictionaries.
 Do not couple the grammar or schema owner to a consumer's wire format, callable
 runtime, parameter templates, foreign references, or execution lifecycle.
 
-The formatter and LSP are planned follow-on milestones after the standalone
-library, not hidden prerequisites for completing that library. Preserve source
-information now so they do not require another grammar or changed string rules.
+The formatter follows the standalone library; the LSP remains a later milestone,
+not a hidden library prerequisite. They share source information rather than
+introducing another grammar or changing string rules.
 
 Serde integration, Python bindings/wheels, and a full command-line product remain
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
-The standalone library has a retained hardening baseline. The next planned
-implementation milestone is the formatter; final key/tag alphabets remain a
-separate language decision. Schema resolution enforces independently supplied
-assertions and completes explicit defaults without constructing application objects.
+The standalone library has a retained hardening baseline and a reflow formatter.
+The next planned implementation milestone is the language server; final key/tag
+alphabets remain a separate language decision. Schema resolution enforces
+independently supplied assertions and completes explicit defaults without
+constructing application objects.
+
+The [edge-case record](docs/edge-cases.md) retains 45 exact runtime probes.
+Triple-double opening/closing newline framing and mandatory dedent are confirmed.
+The record separates those decisions from current observations and unresolved
+alphabet/edge-case choices; formatter work does not silently settle them.
+
+The [formatter reuse assessment](docs/formatter-reuse.md) records the selection
+of `pretty` after proving source-sensitive literal and comment fixtures. Host
+integration remains separate; no formatter platform or style framework is added.

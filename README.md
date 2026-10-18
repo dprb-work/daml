@@ -17,6 +17,12 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   grammar proposals, library acceptance gates, and planned formatter/LSP milestones.
 - [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
   references, pinned candidates, test-corpus reuse, and license obligations.
+- [Formatter reuse assessment](docs/formatter-reuse.md): reused Rust layout
+  machinery, existing formatter/host designs, and the selected printer.
+- [Edge-case record](docs/edge-cases.md): confirmed string framing, replayable
+  observations, and explicitly unresolved language choices.
+- [Reflow formatter](docs/formatting.md): width-sensitive library API and
+  `daml-fmt` file/stdin/check command without schema completion.
 - [Syntax contract](docs/syntax.md): implemented structure, string decoding,
   provisional key/tag token policy, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
@@ -158,6 +164,9 @@ warnings for review. DAML remains unpublished until its own license is selected.
   that budget rather than resetting it.
 - `src/pointer.rs` owns RFC 6901 path construction and segment decoding.
   URI-fragment percent encoding remains part of schema reference resolution.
+- `src/parser.rs` owns whitespace/comment scanning for parsing and formatting.
+  `src/format.rs` builds source-preserving layout documents; the `daml-fmt`
+  binary only handles arguments and bounded input/output.
 
 ## Implementation defaults
 
