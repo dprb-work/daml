@@ -42,8 +42,8 @@ mapping. A subsequent field never becomes its payload by indentation:
 ```
 
 Here `timeout` belongs to the outer mapping. To put it inside the adapter, write
-`adapter: !network.Adapter { timeout: 30 }`. Braces are authoritative; the future
-formatter will present that structure consistently.
+`adapter: !network.Adapter { timeout: 30 }`. Braces are authoritative; the
+formatter presents that structure consistently.
 
 ## Scalars and input
 

@@ -1,5 +1,7 @@
 //! Actual formatter command behavior, including check status and input preservation.
 
+mod support;
+
 use std::fs;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -27,7 +29,7 @@ impl Drop for TempDir {
 }
 
 fn cli(args: &[&str], input: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_daml-fmt"))
+    let mut child = Command::new(support::binary("daml-fmt", env!("CARGO_BIN_EXE_daml-fmt")))
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -70,7 +72,7 @@ fn file_input_is_formatted_without_changing_source() {
     let path = dir.0.join("input.daml");
     let source = b"{alpha: 1}\n";
     fs::write(&path, source).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_daml-fmt"))
+    let output = Command::new(support::binary("daml-fmt", env!("CARGO_BIN_EXE_daml-fmt")))
         .arg(&path)
         .output()
         .unwrap();

@@ -11,6 +11,14 @@ values from declared defaults before validation. Schemas can be written in JSON
 or DAML. Reflow formatting and an optional stdio LSP are implemented; Python
 bindings remain separately scoped.
 
+Binary distribution proof is the current objective. See the
+[language walkthrough](docs/language-walkthrough.md) for the language's confirmed
+choices, current observations, and open questions. The
+[distribution guide](docs/distribution.md) owns archive and installation details.
+
+Editor integrations are deferred. Python bindings are next after language
+sharpening and consolidation.
+
 ## Design
 
 - [Implementation plan](PLAN.md): unquoted key rules, mandatory multiline dedent,

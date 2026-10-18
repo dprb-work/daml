@@ -2,6 +2,8 @@
 
 #![cfg(feature = "lsp")]
 
+mod support;
+
 use std::{
     io::BufReader,
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
@@ -24,7 +26,7 @@ struct LanguageServer {
 
 impl LanguageServer {
     fn start() -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_daml-lsp"))
+        let mut child = Command::new(support::binary("daml-lsp", env!("CARGO_BIN_EXE_daml-lsp")))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
