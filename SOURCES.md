@@ -55,7 +55,7 @@ See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.to
 and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
 
 The optional `lsp` feature uses `lsp-server` 0.10.0 (MIT OR Apache-2.0) and
-`lsp-types` 0.97.0 (MIT), pinned in both lockfiles. Their transport and protocol
+`lsp-types` 0.97.0 (MIT), pinned in the root lockfile. Their transport and protocol
 DTOs remain Cargo dependencies; no upstream code is copied. The default native
 library/fuzz graph does not activate these dependencies. Policy checks also
 cover the all-feature graph used by the stdio executable. See their published

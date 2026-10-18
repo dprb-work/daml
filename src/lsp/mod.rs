@@ -7,17 +7,17 @@
 mod positions;
 
 use crate::{Document, FormatOptions, Limits, Span, format, parser};
-use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response, ResponseError};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeParams, InitializeResult, OneOf,
-    PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Uri,
+    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeError, InitializeParams,
+    InitializeResult, OneOf, PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Uri,
     notification::{
-        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
-        PublishDiagnostics,
+        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
+        Notification as _, PublishDiagnostics,
     },
-    request::{Formatting, Request as _},
+    request::{Formatting, Initialize, Request as _},
 };
 use positions::Encoding;
 use serde::de::DeserializeOwned;
@@ -75,31 +75,59 @@ impl Error for ServerError {
 ///
 /// # Errors
 ///
-/// Returns a [`ServerError`] for failed initialization, premature exit, transport
-/// failure, or a broken shutdown handshake. The stdio executable terminates on
-/// such failures rather than waiting indefinitely on an open input reader.
+/// Invalid initialization parameters return a retryable protocol error and leave
+/// initialization pending for the client. Returns a [`ServerError`] for a broken
+/// initialization handshake, premature exit, transport failure, or a broken
+/// shutdown handshake. The stdio executable terminates on such failures rather
+/// than waiting indefinitely on an open input reader.
 pub fn serve(connection: Connection) -> Result<(), ServerError> {
-    let (id, params) = connection
-        .initialize_start()
-        .map_err(|error| ServerError::caused("LSP initialization did not complete", error))?;
-    let params: InitializeParams = match serde_json::from_value(params) {
-        Ok(params) => params,
-        Err(error) => {
-            send(
-                &connection,
-                Response::new_err(
-                    id,
-                    ErrorCode::InvalidParams as i32,
-                    "invalid initialization parameters".to_owned(),
-                )
-                .into(),
-            )?;
-            return Err(ServerError::caused(
-                "invalid LSP initialization parameters",
-                error,
-            ));
-        }
-    };
+    // Upstream initialization helpers unwrap failed response sends. Keep this
+    // phase fallible, and do not terminate before an InvalidParams reply flushes.
+    let (id, params) =
+        loop {
+            let message = connection.receiver.recv().map_err(|error| {
+                ServerError::caused("LSP initialization did not complete", error)
+            })?;
+            match message {
+                Message::Request(request) if request.method == Initialize::METHOD => {
+                    match serde_json::from_value::<InitializeParams>(request.params) {
+                        Ok(params) => break (request.id, params),
+                        Err(_) => {
+                            let data = serde_json::to_value(InitializeError { retry: true })
+                                .map_err(|error| {
+                                    ServerError::caused(
+                                        "LSP initialization error could not be encoded",
+                                        error,
+                                    )
+                                })?;
+                            send(
+                                &connection,
+                                Response {
+                                    id: request.id,
+                                    response_result: Err(ResponseError {
+                                        code: ErrorCode::InvalidParams as i32,
+                                        message: "invalid initialization parameters".to_owned(),
+                                        data: Some(data),
+                                    }),
+                                }
+                                .into(),
+                            )?;
+                        }
+                    }
+                }
+                Message::Request(request) => send(
+                    &connection,
+                    Response::new_err(
+                        request.id,
+                        ErrorCode::ServerNotInitialized as i32,
+                        "initialize request is required".to_owned(),
+                    )
+                    .into(),
+                )?,
+                Message::Notification(notification) if notification.method != "exit" => {}
+                _ => return Err(ServerError::protocol("LSP initialization did not complete")),
+            }
+        };
     let encoding = Encoding::negotiate(
         params
             .capabilities
@@ -128,9 +156,21 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
     };
     let result = serde_json::to_value(result)
         .map_err(|error| ServerError::caused("LSP capabilities could not be encoded", error))?;
-    connection.initialize_finish(id, result).map_err(|error| {
-        ServerError::caused("LSP initialized notification was not received", error)
-    })?;
+    send(&connection, Response::new_ok(id, result).into())?;
+    match connection.receiver.recv() {
+        Ok(Message::Notification(notification)) if notification.method == Initialized::METHOD => {}
+        Ok(_) => {
+            return Err(ServerError::protocol(
+                "LSP initialized notification was not received",
+            ));
+        }
+        Err(error) => {
+            return Err(ServerError::caused(
+                "LSP initialized notification was not received",
+                error,
+            ));
+        }
+    }
     let mut session = Session {
         encoding,
         documents: HashMap::new(),

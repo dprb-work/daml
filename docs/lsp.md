@@ -25,7 +25,7 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 
 | Capability | Behavior |
 |---|---|
-| Initialization | Standard initialize/initialized handshake and server information. |
+| Initialization | Standard initialize/initialized handshake and server information. Invalid parameters return InvalidParams with `InitializeError.retry: true`; initialization remains pending for client correction or exit. |
 | Position encoding | First supported client offer among UTF-8, UTF-16, UTF-32; mandatory UTF-16 fallback when absent or unsupported. |
 | Document synchronization | Open/close plus full-text changes, not incremental ranges. |
 | Diagnostics | Native parser errors, with accepted document version and correctly encoded byte-span ranges. Valid replacements publish an empty list. |
@@ -92,7 +92,7 @@ admission policy. This check does not mutate the current document.
 | Malformed formatting parameters or unopened URI | InvalidParams (`-32602`). |
 | Current source is invalid, formatting fails, or the proposed output violates native parser admission/limits | RequestFailed (`-32803`). |
 
-A fatal initialization, transport, or shutdown failure terminates the executable
+A fatal initialization-handshake, transport, or shutdown failure terminates the executable
 unsuccessfully. `daml::lsp::ServerError` retains its cause for explicit inspection,
 but its display context does not echo raw incoming document payloads. The binary
 owns transport threads and process termination; the library adapter creates no
@@ -109,7 +109,10 @@ defined and which location owns the base for relative schema paths. No default,
 configuration format, root search, or cwd/workspace/document-path assumption is
 accepted here. The same deferred question is retained in the existing PLAN.
 
-The protocol DTOs and synchronous stdio/handshake implementation come from the
+The protocol DTOs, framing, stdio threads, and shutdown helper come from the
 pinned upstream libraries. The DAML-specific code owns versioned documents,
-byte-span conversion, and parser/formatter integration; it does not introduce a
-second grammar, async runtime, JSON-RPC framer, or filesystem/configuration host.
+byte-span conversion, and parser/formatter integration. Initialization uses
+fallible sends rather than upstream helpers that panic on a disconnected client;
+invalid parameters leave the handshake pending so its error response can flush.
+No second grammar, async runtime, JSON-RPC framer, or filesystem/configuration
+host is introduced.

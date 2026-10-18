@@ -345,3 +345,44 @@ fn formatting_cannot_push_a_valid_literal_past_native_scalar_limits() {
     server.notify("exit", json!({}));
     assert!(wait_for_exit(&mut server.child).success());
 }
+
+#[test]
+fn invalid_initialization_delivers_error_and_allows_client_correction() {
+    let mut server = LanguageServer::start();
+    let before_init = format_request(&mut server, 1, "untitled:not-initialized");
+    assert_eq!(before_init.response_result.unwrap_err().code, -32002);
+    for capabilities in [json!([]), json!("invalid")] {
+        let response = server.request(2, "initialize", json!({"capabilities": capabilities}));
+        let error = response.response_result.unwrap_err();
+        assert_eq!(error.code, -32602);
+        assert_eq!(error.data, Some(json!({"retry": true})));
+    }
+    initialize(&mut server, None, "utf-16");
+    open(
+        &mut server,
+        "untitled:corrected-initialization",
+        1,
+        "{ok:1}",
+    );
+    diagnostics(&server, "untitled:corrected-initialization", 1, 0);
+    server
+        .request(3, "shutdown", Value::Null)
+        .response_result
+        .unwrap();
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+}
+
+#[test]
+fn disconnected_initialization_returns_a_transport_error() {
+    for method in ["initialize", "textDocument/formatting"] {
+        let (server, client) = lsp_server::Connection::memory();
+        client
+            .sender
+            .send(Request::new(1.into(), method.to_owned(), json!({"capabilities": {}})).into())
+            .unwrap();
+        drop(client);
+        let error = daml::lsp::serve(server).unwrap_err();
+        assert!(std::error::Error::source(&error).is_some());
+    }
+}
