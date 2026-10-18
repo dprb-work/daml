@@ -53,7 +53,7 @@ fn single_entry_containers_expand_and_collapse_to_width() {
 #[test]
 fn multiple_entries_keep_required_separators_even_at_large_width() {
     assert_eq!(
-        checked("{a:1\nb:[2\n3]}", 1000),
+        checked("{a:1\nb:[2\n3]}", usize::MAX),
         "{\n  a: 1\n  b: [\n    2\n    3\n  ]\n}\n"
     );
 }
@@ -147,10 +147,8 @@ fn bom_and_comments_are_not_mistaken_for_scalar_content() {
 #[test]
 fn invalid_width_is_a_structured_error() {
     let document = parse("!root { value: 1 }").unwrap();
-    for line_width in [0, usize::MAX] {
-        assert_eq!(
-            format(&document, FormatOptions { line_width }),
-            Err(FormatError::InvalidLineWidth)
-        );
-    }
+    assert_eq!(
+        format(&document, FormatOptions { line_width: 0 }),
+        Err(FormatError::InvalidLineWidth)
+    );
 }

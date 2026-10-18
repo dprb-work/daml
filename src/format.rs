@@ -7,7 +7,7 @@ use std::{error::Error, fmt};
 pub struct FormatOptions {
     /// Target display width. Unbreakable tokens and comments may exceed it.
     ///
-    /// Valid values are `1..=isize::MAX`. The default is 80 columns.
+    /// Any positive width is supported. The default is 80 columns.
     pub line_width: usize,
 }
 
@@ -22,9 +22,9 @@ impl FormatOptions {
     ///
     /// # Errors
     ///
-    /// Returns [`FormatError::InvalidLineWidth`] outside `1..=isize::MAX`.
+    /// Returns [`FormatError::InvalidLineWidth`] for a zero width.
     pub fn validate(self) -> Result<(), FormatError> {
-        if self.line_width == 0 || self.line_width > isize::MAX as usize {
+        if self.line_width == 0 {
             Err(FormatError::InvalidLineWidth)
         } else {
             Ok(())
@@ -35,14 +35,14 @@ impl FormatOptions {
 /// A formatter option error. Input syntax is checked by [`crate::parse`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormatError {
-    /// The requested line width is zero or greater than `isize::MAX`.
+    /// The requested line width is zero.
     InvalidLineWidth,
 }
 
 impl fmt::Display for FormatError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidLineWidth => write!(f, "line width must be in 1..={}", isize::MAX),
+            Self::InvalidLineWidth => f.write_str("line width must be positive"),
         }
     }
 }
@@ -59,7 +59,7 @@ impl Error for FormatError {}
 ///
 /// # Errors
 ///
-/// Returns [`FormatError::InvalidLineWidth`] for a width outside `1..=isize::MAX`.
+/// Returns [`FormatError::InvalidLineWidth`] for a zero width.
 ///
 /// ```
 /// use daml::{FormatOptions, format, parse};

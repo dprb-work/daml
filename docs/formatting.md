@@ -24,8 +24,8 @@ The output is:
 }
 ```
 
-`FormatOptions::default()` targets 80 display columns. Width must be in
-`1..=isize::MAX`; invalid widths return `FormatError::InvalidLineWidth`.
+`FormatOptions::default()` targets 80 display columns. Any positive width is
+supported; zero returns `FormatError::InvalidLineWidth`.
 `FormatOptions::validate()` checks that contract before a caller performs I/O;
 `format` also validates its options. Indentation is always two spaces.
 
