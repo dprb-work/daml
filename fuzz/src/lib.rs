@@ -101,11 +101,12 @@ pub fn exercise_format(data: &[u8]) {
         line_width: 1 + source.len() % 100,
     };
     let output = daml::format(&document, options).expect("positive bounded width");
+    let output_bytes = output.len();
     let formatted = parse_with_limits(
         output,
         Limits {
             // Reflow adds indentation and closing-delimiter whitespace, not nodes.
-            max_input_bytes: 1024 * 1024,
+            max_input_bytes: output_bytes,
             max_scalar_bytes: 32 * 1024,
             ..PARSE_LIMITS
         },
