@@ -211,7 +211,7 @@ impl<'a> Printer<'a> {
         if count == 0 && !has_comments {
             return self.arena.text(delimiters.0).append(delimiters.1);
         }
-        let closing = if count == 0 {
+        let closing = if count == 0 || has_comments {
             self.arena.hardline()
         } else {
             border
@@ -266,7 +266,7 @@ impl<'a> Printer<'a> {
         };
         let opening = self.arena.text(&raw[..opening_end]);
         let closing = self.arena.text(&raw[raw.len() - 3..]);
-        if body_start > body_end {
+        if body_start >= body_end {
             return opening.append(self.arena.hardline()).append(closing);
         }
         let body = self.literal_lines(&raw[body_start..body_end]).into_doc();
@@ -274,9 +274,14 @@ impl<'a> Printer<'a> {
         // Literal blank-only bodies have zero dedent margin. Indenting every body
         // line would change their value; cancel structural indentation for the body.
         let literal = arena.nesting(move |indent| {
+            // `pretty` chooses a hardline's indentation from the next document.
+            // Keep a zero-width command at the body indentation even when the
+            // preserved body is empty, or structural indentation becomes data.
+            let boundary = arena.column(|_| arena.nil().into_doc());
             arena
                 .hardline()
                 .append(body)
+                .append(boundary)
                 .nest(-(indent as isize))
                 .into_doc()
         });

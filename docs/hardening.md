@@ -52,6 +52,11 @@ The target contracts differ:
   tags, key/order and numeric spellings, and that a second format is unchanged.
   Reparse byte limits allow the indentation added by reflow.
 
+The formatter target retained two minimized regressions found during its first
+campaign: a comment immediately before a closing delimiter must force that
+delimiter onto a new line, and a literal's final blank line must remain distinct
+from an empty literal. The later bounded campaign completed without a finding.
+
 Human-authored seeds live in `fuzz/seeds/`. Parse and format also read the
 licensed originals and native adaptations under `tests/fixtures/yaml/`; format
 additionally reuses the canonical parse seeds. See

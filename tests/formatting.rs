@@ -77,6 +77,11 @@ fn comments_keep_text_order_and_inline_or_own_line_attachment() {
 }
 
 #[test]
+fn comment_before_closing_delimiter_cannot_consume_the_delimiter() {
+    assert_eq!(checked("{f: \"\"#\"\n\n}", 10), "{\n  f: \"\" #\"\n}\n");
+}
+
+#[test]
 fn escaped_strings_hash_characters_names_and_number_lexemes_survive() {
     let input = r#"{a.b/c: !λ "hash # quote \" and \u03bb"
 number: -0.0000001E+0009}"#;
@@ -122,6 +127,18 @@ wrapped: '''
 '''
 }"####;
     checked(input, 16);
+}
+
+#[test]
+fn empty_and_trailing_blank_literals_keep_distinct_values() {
+    assert_eq!(
+        checked("{l: \"\"\"\n\n\"\"\"\n}", 80),
+        "{\n  l: \"\"\"\n  \"\"\"\n}\n"
+    );
+    assert_eq!(
+        checked("{l: \"\"\"\n\n\n\"\"\"\n}", 80),
+        "{\n  l: \"\"\"\n\n\n  \"\"\"\n}\n"
+    );
 }
 
 #[test]
