@@ -38,3 +38,27 @@ jobs:
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Check advisories, licenses, bans, and sources
         run: cargo deny --locked check
+
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned stable and fuzz toolchains
+        run: |
+          rustup show
+          (cd fuzz && rustup show)
+      - name: Install pinned fuzz and policy tools
+        run: |
+          cargo install cargo-fuzz --version 0.13.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: Lint fuzz harness
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Check fuzz dependency policy
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
+      - name: Exercise address-sanitized targets and retained seeds
+        run: ./scripts/fuzz-smoke 1000

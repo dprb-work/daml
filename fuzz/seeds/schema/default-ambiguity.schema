@@ -1,0 +1,31 @@
+D{
+  types: {
+    fuzz.Config: {
+      schema: {
+        type: "object"
+        properties: {
+          choice: {
+            anyOf: [
+              {
+                type: "string"
+                default: "left"
+              }
+              {
+                type: "string"
+                default: "right"
+              }
+            ]
+          }
+          name: {
+            default: "fallback"
+          }
+          count: {
+            type: "integer"
+            default: 7
+          }
+        }
+        required: ["choice"]
+      }
+    }
+  }
+}

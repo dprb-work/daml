@@ -21,9 +21,13 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   provisional key/tag token policy, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
   consumer-owned adapters, partial values, and diagnostics.
+- [Hardening tools](docs/hardening.md): retained fuzz targets, bounded campaigns,
+  process-isolated time/RSS measurements, and both dependency graphs.
+- [Sources and distribution boundaries](SOURCES.md): pinned YAML fixtures and
+  development-runtime notices.
 
 The syntax contract owns parsing behavior; the schema guide owns completion and
-validation. The plan records the remaining hardening, formatter, and LSP work.
+validation. The plan records the library gates and planned formatter/LSP work.
 
 ## Parse a document
 
@@ -107,9 +111,10 @@ Run the same aggregate gate locally and in CI:
 ./scripts/check
 ```
 
-The gate checks formatting, runs Clippy across all targets with warnings treated
-as errors, runs unit/integration tests and doctests, and builds documentation
-with rustdoc warnings treated as errors. It stops at the first failure.
+The gate checks formatting for the library and fuzz package, runs Clippy across
+library targets with warnings treated as errors, runs unit/integration tests and
+doctests, and builds documentation with rustdoc warnings treated as errors.
+It stops at the first failure.
 Focused Cargo commands remain available:
 
 ```sh
@@ -163,10 +168,11 @@ before there is a separate crate boundary. Integration tests exercise complete
 documents, ambiguous/unsupported syntax rejection, exact string transformations,
 source spans, and resource bounds.
 
-The library now depends on a pinned JSON Schema validator and JSON/Serde support.
-Dependency policy runs locally and in CI. Fuzz the actual parser and resolver;
-the hardening milestone calls for a retained harness and measurements.
-Add Miri when an unsafe or FFI boundary needs it. Extra test runners,
-coverage thresholds, and platform matrices are not baseline requirements.
+The library depends on a pinned JSON Schema validator and JSON/Serde support.
+The isolated fuzz package exercises the real parser, schema ingestion, and
+resolver with AddressSanitizer. Follow the [hardening guide](docs/hardening.md)
+for campaigns and release time/RSS measurements. Add Miri when an unsafe or
+FFI boundary needs it. Extra test runners, coverage thresholds, and platform
+matrices are not baseline requirements.
 Review the pinned checkout action when maintaining CI dependencies; no automatic
 update service is enabled.

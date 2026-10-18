@@ -1,0 +1,6 @@
+!fuzz.Config {
+  choice: "picked"
+  adapter: !fuzz.NativeProvider {
+    nested: !fuzz.Item { id: 23 }
+  }
+}

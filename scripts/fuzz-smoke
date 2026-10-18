@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+runs=${1:-1000}
+case "$runs" in
+    ''|*[!0-9]*|0) echo 'runs must be a positive integer' >&2; exit 2 ;;
+esac
+for target in parse schema resolve; do
+    "$root/scripts/fuzz" "$target" "-runs=$runs"
+done

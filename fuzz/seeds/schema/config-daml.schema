@@ -1,0 +1,6 @@
+D{ types: { fuzz.Config: { schema: {
+ type: "object"
+ properties: { message: { type: "string"
+ default: "hello" } }
+ required: ["message"]
+} } } }

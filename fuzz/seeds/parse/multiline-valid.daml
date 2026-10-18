@@ -1,0 +1,10 @@
+{ wrapped: '''
+  one logical
+  line with λ
+'''
+ literal: """
+  first
+    indented
+  last
+"""
+}

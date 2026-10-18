@@ -1,0 +1,10 @@
+!demo.Message {
+  title: "東京 — café"
+  body: """
+    first line
+    second line with λ
+  """
+  escaped: "line\nwith\tcontrols"
+  continued: "left\
+    right"
+}

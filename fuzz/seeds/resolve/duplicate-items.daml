@@ -1,0 +1,8 @@
+!fuzz.Config {
+  name: "unique check"
+  count: 922337203685477580812345678901234567890
+  items: [1
+          1]
+  choice: "selected"
+  adapter: !fuzz.NativeProvider
+}

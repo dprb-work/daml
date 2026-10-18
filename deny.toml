@@ -5,6 +5,10 @@
 [licenses]
 allow = ["MIT", "Apache-2.0", "Unicode-3.0", "MIT-0", "Zlib"]
 
+[[licenses.exceptions]]
+name = "libfuzzer-sys"
+allow = ["MIT", "Apache-2.0", "NCSA"]
+
 [licenses.private]
 # DAML remains unpublished pending an explicit project-license decision.
 ignore = true

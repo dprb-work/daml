@@ -1,0 +1,14 @@
+!fuzz.Config {
+  name: null
+  count: 0
+  items: []
+  choice: "null is explicit"
+  adapter: !fuzz.NativeProvider {
+    payload: {
+      __type__: "ordinary data"
+      __fn__: "not executable"
+      values: [null
+               !fuzz.Text "東京"]
+    }
+  }
+}
