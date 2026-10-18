@@ -3,8 +3,7 @@
 Definitively Asserted Markup Language.
 
 DAML is an independent Rust project for a markup language with explicit
-structure, nested type assertions through tags, and long strings. It is not
-part of Olaf; Olaf is a prospective consumer.
+structure, nested type assertions through tags, and long strings.
 
 The Rust library parses source-backed documents, resolves deeply nested type
 assertions against independently composed schema modules, and completes partial
