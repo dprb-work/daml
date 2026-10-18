@@ -2,8 +2,8 @@
 
 Status: syntax parsing and deep assertion/default resolution are implemented
 (milestones 1–3). [Syntax](docs/syntax.md) and [schemas](docs/schemas.md) own their
-public contracts. Retained fuzzing, measurements, formatter, and LSP work remain
-planned. Final key/tag alphabets and whether they align remain deferred.
+public contracts. Hardening, reflow formatting, and the minimal stdio LSP are
+implemented. Final key/tag alphabets and schema-folder root policy remain open.
 
 ## Target result
 
@@ -299,9 +299,13 @@ helper in isolation.
 **Result:** an editor receives current-document syntax diagnostics and formatting
 from the same library used by ordinary consumers.
 
-- Reuse the parser, validator, and formatter. Start with document open/change/
-  close, syntax diagnostics, and document formatting; add schema diagnostics
-  when the client supplies the relevant schema modules.
+**Implemented:** the optional [stdio LSP](docs/lsp.md) reuses synchronous
+`lsp-server` transport and `lsp-types`, with versioned full-document state,
+syntax diagnostics, negotiated Unicode ranges, and native reflow formatting.
+
+- Reuse the checked parser and formatter for document open/change/close,
+  syntax diagnostics, and document formatting. Schema diagnostics and module
+  associations remain later work, subject to final schema-root sharpening.
 - Convert original byte spans to the negotiated LSP position encoding correctly,
   including multibyte characters in values/comments.
 - Associate results with document versions so stale work does not replace newer
@@ -329,18 +333,18 @@ YAML feature, or lose tags by converting immediately to JSON/dictionaries.
 Do not couple the grammar or schema owner to a consumer's wire format, callable
 runtime, parameter templates, foreign references, or execution lifecycle.
 
-The formatter follows the standalone library; the LSP remains a later milestone,
-not a hidden library prerequisite. They share source information rather than
-introducing another grammar or changing string rules.
+The formatter and optional LSP follow the standalone library, not hidden
+prerequisites for it. They share the checked parser/source information rather
+than introducing another grammar or changing string rules.
 
 Serde integration, Python bindings/wheels, and a full command-line product remain
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
-The standalone library has a retained hardening baseline and a reflow formatter.
-The next planned implementation milestone is the language server; final key/tag
-alphabets remain a separate language decision. Schema resolution enforces
-independently supplied assertions and completes explicit defaults without
-constructing application objects.
+The standalone library now has a retained hardening baseline, reflow formatter,
+and minimal stdio language server. The next useful slice is final sharpening:
+define the schema-folder root and relative-path ownership, then settle the
+remaining key/tag alphabet choices. Schema resolution remains independent of
+application construction and execution.
 
 The [edge-case record](docs/edge-cases.md) retains 45 exact runtime probes.
 Triple-double opening/closing newline framing and mandatory dedent are confirmed.
