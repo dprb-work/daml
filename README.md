@@ -150,9 +150,12 @@ warnings for review. DAML remains unpublished until its own license is selected.
 - `src/schema/profile.rs` owns child-schema classification, traversal roles, and
   schema-admission limits. Add schema positions there, not in a second walker.
 - `src/schema.rs` owns compiled schemas and registry-bound, opaque views.
-  Validator access stays behind those views; other modules cannot construct IDs.
+  `SchemaView` resolves property, tuple/item, and branch children in its own
+  registry. Raw address lookup and validator access stay behind that boundary;
+  the resolver cannot construct IDs or pair raw children with another registry.
 - `src/resolve.rs` owns one search and cumulative budget per resolution.
-  Alternative completions reuse that budget rather than resetting it.
+  It aggregates schema views in completion order; alternative completions reuse
+  that budget rather than resetting it.
 - `src/pointer.rs` owns RFC 6901 path construction and segment decoding.
   URI-fragment percent encoding remains part of schema reference resolution.
 

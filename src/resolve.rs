@@ -247,7 +247,7 @@ impl<'a> Resolver<'a> {
 
         if let ResolvedValue::Mapping(fields) = &mut node.value {
             for (key, child) in fields.iter_mut() {
-                let child_schemas = self.property_schemas(&schemas, key);
+                let child_schemas = Self::property_schemas(&schemas, key);
                 let child_path = crate::pointer::join(path, key);
                 let placeholder = ResolvedNode {
                     value: ResolvedValue::Null,
@@ -264,11 +264,11 @@ impl<'a> Resolver<'a> {
             }
         }
         if matches!(node.value, ResolvedValue::Mapping(_)) {
-            for key in self.property_names(&schemas) {
+            for key in Self::property_names(&schemas) {
                 if node.get(key).is_some() {
                     continue;
                 }
-                let child_schemas = self.property_schemas(&schemas, key);
+                let child_schemas = Self::property_schemas(&schemas, key);
                 let child_path = crate::pointer::join(path, key);
                 if let Some(child) =
                     self.complete_missing(&child_schemas, &child_path, depth + 1, node.origin)?
@@ -281,7 +281,10 @@ impl<'a> Resolver<'a> {
             }
         } else if let ResolvedValue::Sequence(items) = &mut node.value {
             for (index, child) in items.iter_mut().enumerate() {
-                let item_schemas = self.items_schemas(&schemas, index);
+                let item_schemas: Vec<_> = schemas
+                    .iter()
+                    .filter_map(|schema| schema.item(index))
+                    .collect();
                 let child_path = crate::pointer::join(path, &index.to_string());
                 let placeholder = ResolvedNode {
                     value: ResolvedValue::Null,
@@ -380,13 +383,9 @@ impl<'a> Resolver<'a> {
             {
                 out.push(reference);
             }
-            if let Some(all) = view.value().get("allOf").and_then(JsonValue::as_array) {
-                for value in all {
-                    if let Some(child) = self.schemas.locate(value)
-                        && seen.insert(child.id())
-                    {
-                        out.push(child);
-                    }
+            for child in view.array_children("allOf") {
+                if seen.insert(child.id()) {
+                    out.push(child);
                 }
             }
         }
@@ -403,24 +402,17 @@ impl<'a> Resolver<'a> {
         let mut skipped = Vec::new();
         loop {
             schemas = self.conjunction(&schemas, node, path)?;
-            let Some(union) = self.next_union(&schemas, &skipped) else {
+            let Some(union) = Self::next_union(&schemas, &skipped) else {
                 return Ok(schemas);
             };
             self.budget.step(node, path)?;
-            let branch = self.search.branch(
-                path,
-                union.schema.id(),
-                union.keyword,
-                union.branches,
-                self.schemas,
-            );
+            let branch = self.search.branch(path, &union);
             skipped.push((union.schema.id(), union.keyword));
             schemas.push(branch);
         }
     }
 
     fn next_union(
-        &self,
         schemas: &[SchemaView<'a>],
         skipped: &[(SchemaId, &'static str)],
     ) -> Option<Union<'a>> {
@@ -429,79 +421,30 @@ impl<'a> Resolver<'a> {
                 if skipped.contains(&(schema.id(), keyword)) {
                     continue;
                 }
-                if let Some(branches) = schema.value().get(keyword).and_then(JsonValue::as_array) {
-                    // The engine evaluates unions with no completion work.
-                    if branches.iter().any(|branch| {
-                        self.schemas
-                            .locate(branch)
-                            .expect("preflight indexed every union branch")
-                            .has_defaults()
-                    }) {
-                        return Some(Union {
-                            branches,
-                            schema: *schema,
-                            keyword,
-                        });
-                    }
+                // The engine evaluates unions with no completion work.
+                if schema.array_children(keyword).any(SchemaView::has_defaults) {
+                    return Some(Union {
+                        schema: *schema,
+                        keyword,
+                    });
                 }
             }
         }
         None
     }
-    fn property_schemas(&self, schemas: &[SchemaView<'a>], key: &str) -> Vec<SchemaView<'a>> {
+    fn property_schemas(schemas: &[SchemaView<'a>], key: &str) -> Vec<SchemaView<'a>> {
         schemas
             .iter()
-            .filter_map(|schema| {
-                if let Some(value) = schema
-                    .value()
-                    .get("properties")
-                    .and_then(|properties| properties.get(key))
-                {
-                    self.schemas.locate(value)
-                } else if schema.value().get("patternProperties").is_none() {
-                    schema
-                        .value()
-                        .get("additionalProperties")
-                        .and_then(|value| self.schemas.locate(value))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|schema| schema.property(key))
             .collect()
     }
 
-    fn property_names(&self, schemas: &[SchemaView<'a>]) -> Vec<&'a str> {
-        let mut names = Vec::new();
+    fn property_names(schemas: &[SchemaView<'a>]) -> impl Iterator<Item = &'a str> {
         let mut seen = HashSet::new();
-        for schema in schemas {
-            if let Some(properties) = schema
-                .value()
-                .get("properties")
-                .and_then(JsonValue::as_object)
-            {
-                for key in properties.keys() {
-                    if seen.insert(key.as_str()) {
-                        names.push(key.as_str());
-                    }
-                }
-            }
-        }
-        names
-    }
-    fn items_schemas(&self, schemas: &[SchemaView<'a>], index: usize) -> Vec<SchemaView<'a>> {
         schemas
             .iter()
-            .filter_map(|schema| {
-                let prefix = schema
-                    .value()
-                    .get("prefixItems")
-                    .and_then(JsonValue::as_array);
-                let value = prefix
-                    .and_then(|items| items.get(index))
-                    .or_else(|| schema.value().get("items"));
-                value.and_then(|value| self.schemas.locate(value))
-            })
-            .collect()
+            .flat_map(|schema| schema.property_names())
+            .filter(move |name| seen.insert(*name))
     }
 
     fn known_tags(&mut self, node: &ResolvedNode<'_>, path: &str) -> Result<(), ResolveError> {
@@ -731,7 +674,6 @@ impl CompletionLevel {
 }
 
 struct Union<'a> {
-    branches: &'a [JsonValue],
     schema: SchemaView<'a>,
     keyword: &'static str,
 }
@@ -799,14 +741,9 @@ impl<'a> CompletionSearch<'a> {
         self.choices[cursor]
     }
 
-    fn branch(
-        &mut self,
-        path: &str,
-        id: SchemaId,
-        keyword: &'static str,
-        branches: &[JsonValue],
-        schemas: &'a Schemas,
-    ) -> SchemaView<'a> {
+    fn branch(&mut self, path: &str, union: &Union<'a>) -> SchemaView<'a> {
+        let id = union.schema.id();
+        let keyword = union.keyword;
         if let Some(view) = self
             .branches
             .get(path)
@@ -814,9 +751,11 @@ impl<'a> CompletionSearch<'a> {
         {
             return *view;
         }
-        let branch = schemas
-            .locate(&branches[self.choose(branches.len())])
-            .expect("preflight indexed every union branch");
+        let selected = self.choose(union.schema.array_children(keyword).len());
+        let branch = union
+            .schema
+            .array_child(keyword, selected)
+            .expect("search selects an existing union branch");
         self.branches
             .entry(path.to_owned())
             .or_default()
