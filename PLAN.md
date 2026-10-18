@@ -232,17 +232,36 @@ and loading identity remain open. Value-shaped scalar narrowing is distinct
 from schema definitions, and compatibility is structural.
 
 Authoring reuse has one base. Constraint, requiredness, and default are
-independent components: supplying one replaces that component atomically, not
-through recursive keyword merging. Derived definitions may override all three.
-This does not waive structural compatibility at a use site. Array narrowing
-remains **undecided**; the question about positional patterns was cancelled,
-so no array behavior is selected.
+independent override components. A replacement constraint expression is atomic,
+not a recursive keyword patch. Derived definitions may change all three without
+waiving structural compatibility at a use site. Existing object-default/data
+merging follows the [schema guide](docs/schemas.md#exact-completion-rules);
+native default-removal syntax remains open. Array narrowing remains
+**undecided**; the question about positional patterns was cancelled, so no array
+behavior is selected.
 
-These choices must favor the maintenance objectives already established for
-DAML: one grammar and validation path, clear ownership boundaries, compact
-concrete behavior, and no compatibility shims or speculative abstractions.
+Changes must satisfy these maintenance criteria:
+
+- Own custom responsibilities only for required behavior that sufficient
+  libraries or platform facilities do not provide.
+- Count adapters, integration, operational assumptions, upgrades, and recovery
+  as maintenance costs. Material scope growth needs an explicit owner decision.
+- Every code delivery includes consolidation followed by simplification across
+  the normal end-to-end ownership and validation flow; justified no-change
+  conclusions are valid.
+- Admission establishes local shape and invariants. Revalidation needs a
+  distinct reason, such as mutation or a new combined-resource boundary.
+- Reject knowable violations before dependent effects, without disguising
+  fallbacks. Preserve independently evolving boundaries and justified safeguards.
+
+The structural cutover removed nominal membership/custom validators in favor of
+the existing JSON Schema engine. Post-merge refinement keeps local shape checks
+at admission, preserves composition's aggregate/reference checks, and removes
+obsolete identifier parameterization and per-byte temporary strings.
+
 The missing native authoring/import syntax blocks frontend work, not the
 structural-validation cutover.
+
 ## Milestone 4 — harden and ship the standalone library
 
 **Implemented hardening baseline:** retained parse/schema/resolve fuzz targets,
