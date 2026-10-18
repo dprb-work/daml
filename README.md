@@ -23,6 +23,8 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   consumer-owned adapters, partial values, and diagnostics.
 - [Hardening tools](docs/hardening.md): retained fuzz targets, bounded campaigns,
   process-isolated time/RSS measurements, and both dependency graphs.
+  The [recorded baseline](docs/hardening-baseline.md) contains actual campaign
+  statistics and all measurement samples.
 - [Sources and distribution boundaries](SOURCES.md): pinned YAML fixtures and
   development-runtime notices.
 

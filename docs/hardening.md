@@ -4,6 +4,9 @@ DAML's hardening tools exercise the portable parser, native schema ingestion,
 and default resolver. They do not execute application constructors, import
 consumer formats, or finalize the provisional key/tag alphabet.
 
+The [recorded baseline](hardening-baseline.md) retains the bounded campaign
+statistics, measurement samples, environment, and interpretation.
+
 ## Run address-sanitized fuzzing
 
 Install the pinned development tool from the repository root:
