@@ -1,0 +1,53 @@
+{
+  "format": "daml-fuzz-campaign-v1",
+  "git_head": "bda8882e73f658448e762fd0d64ca11f811a72d3",
+  "nightly": "nightly-2026-10-18",
+  "rustc": "1.101.0-nightly (8006091eb 2026-10-17)",
+  "cargo_fuzz": "0.13.2",
+  "libfuzzer_sys": "0.4.13",
+  "sanitizer": "address",
+  "seed": 42,
+  "cpu_affinity": "0",
+  "cargo_build_jobs": 1,
+  "timeout_seconds_per_input": 10,
+  "rss_limit_mb": 1024,
+  "max_total_time_seconds_per_target": 180,
+  "extra_flags": [
+    "-verbosity=0",
+    "-print_final_stats=1"
+  ],
+  "initial_corpus": "1000-run smoke-generated mutable corpus plus tracked seeds; parse additionally includes YAML originals/adaptations",
+  "outcome": "all three targets exited successfully; no crash, timeout, or RSS-limit finding",
+  "targets": [
+    {
+      "target": "parse",
+      "executed_units": 3289531,
+      "peak_rss_mb": 469,
+      "initial_files": 120,
+      "initial_bytes": 14190,
+      "new_units_added": 11463,
+      "max_len": 65536,
+      "exit_status": 0
+    },
+    {
+      "target": "schema",
+      "executed_units": 225122,
+      "peak_rss_mb": 515,
+      "initial_files": 111,
+      "initial_bytes": 49528,
+      "new_units_added": 3014,
+      "max_len": 16385,
+      "exit_status": 0
+    },
+    {
+      "target": "resolve",
+      "executed_units": 1191727,
+      "peak_rss_mb": 494,
+      "initial_files": 86,
+      "initial_bytes": 12292,
+      "new_units_added": 6320,
+      "max_len": 65536,
+      "exit_status": 0
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+runs=${1-1000}
+case "$runs" in
+    ''|*[!0-9]*|0*) echo 'runs must be an integer in 1..2147483647 without leading zeroes' >&2; exit 2 ;;
+esac
+# libFuzzer parses -runs as a signed int; overflow can restore its unlimited default.
+# Check length before numeric comparison so arbitrarily large arguments cannot overflow sh.
+if [ "${#runs}" -gt 10 ] || [ "$runs" -gt 2147483647 ]; then
+    echo 'runs must be an integer in 1..2147483647 without leading zeroes' >&2
+    exit 2
+fi
+for target in parse schema resolve; do
+    "$root/scripts/fuzz" "$target" "-runs=$runs"
+done

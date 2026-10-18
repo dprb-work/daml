@@ -235,6 +235,13 @@ schema ownership and extension contracts, not the absence of an index.
 
 ## Milestone 4 — harden and ship the standalone library
 
+**Implemented hardening baseline:** retained parse/schema/resolve fuzz targets,
+bounded AddressSanitizer campaigns, licensed YAML/DAML corpus cases,
+cumulative-budget regressions, and release time/process-RSS measurements.
+See [the measured evidence](docs/hardening-baseline.md) and
+[reproduction commands](docs/hardening.md). Publication remains blocked on
+an explicit project-license and packaging decision; `publish = false` remains.
+
 **Result:** an adversarial document cannot turn routine parsing/validation into
 an uncontrolled panic, hang, unbounded recursion, or unintended execution.
 
@@ -320,6 +327,7 @@ information now so they do not require another grammar or changed string rules.
 Serde integration, Python bindings/wheels, and a full command-line product remain
 separately scoped. Their earlier illustrative APIs are not frozen commitments.
 
-The next library milestone is hardening: retain a fuzz harness and measure real
-workloads. Schema resolution already enforces independently supplied assertions
-and completes explicit defaults without constructing application objects.
+The standalone library has a retained hardening baseline. The next planned
+implementation milestone is the formatter; final key/tag alphabets remain a
+separate language decision. Schema resolution enforces independently supplied
+assertions and completes explicit defaults without constructing application objects.

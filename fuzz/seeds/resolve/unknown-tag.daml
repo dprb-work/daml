@@ -1,0 +1,7 @@
+!fuzz.Config {
+  name: "unknown nested assertion"
+  count: 1
+  items: [1]
+  choice: "known"
+  adapter: !fuzz.NativeProvider { nested: !not.Registered [null] }
+}

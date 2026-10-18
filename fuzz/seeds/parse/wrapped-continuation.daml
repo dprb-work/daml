@@ -1,0 +1,10 @@
+{ text: '''
+  one logical
+  line with no\
+  space and λ
+'''
+ literal: """
+  first
+    indented
+  last
+""" }

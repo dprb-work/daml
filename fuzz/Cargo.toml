@@ -1,0 +1,36 @@
+[package]
+name = "daml-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+daml = { version = "=0.1.0", path = ".." }
+serde_json = { version = "=1.0.154", features = ["arbitrary_precision", "raw_value"] }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "schema"
+path = "fuzz_targets/schema.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resolve"
+path = "fuzz_targets/resolve.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

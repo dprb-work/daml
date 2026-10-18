@@ -5,6 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 cargo fmt --all --check
+cargo fmt --manifest-path fuzz/Cargo.toml --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --no-deps --locked

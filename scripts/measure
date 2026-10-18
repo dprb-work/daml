@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+# Resolve the crate root so this also works from outside the repository.
+cd "$(dirname "$0")/.."
+exec cargo run --release --locked --example measure -- "$@"

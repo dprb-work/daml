@@ -1,0 +1,6 @@
+{
+  repeated: 1
+  other: [true
+          null]
+  repeated: 2
+}
