@@ -103,9 +103,12 @@ or CI thresholds. Inspect all samples rather than comparing a single minimum.
 ./scripts/check
 cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
 cargo deny --locked check
+cargo deny --all-features --locked check
 cargo deny --manifest-path fuzz/Cargo.toml --locked check
 ```
 
-CI runs the stable gate, both policy graphs, and a bounded fuzz smoke. The
-`libfuzzer-sys` NCSA license exception is crate-scoped. Both packages remain
-unpublished until DAML's own distribution terms are selected explicitly.
+CI runs the stable gate, default/all-feature library policies, the isolated fuzz
+policy, and a bounded fuzz smoke. The optional LSP dependencies are absent from
+the default native graph. The `libfuzzer-sys` NCSA license exception is
+crate-scoped. Both packages remain unpublished until DAML's own distribution
+terms are selected explicitly.

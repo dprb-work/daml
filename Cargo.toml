@@ -7,8 +7,19 @@ description = "Definitively Asserted Markup Language"
 repository = "https://github.com/dprb-work/daml"
 publish = false
 
+[features]
+default = []
+lsp = ["dep:lsp-server", "dep:lsp-types"]
+
+[[bin]]
+name = "daml-lsp"
+path = "src/bin/daml-lsp.rs"
+required-features = ["lsp"]
+
 [dependencies]
 jsonschema = { version = "=0.59.0", default-features = false, features = ["arbitrary-precision"] }
+lsp-server = { version = "=0.10.0", optional = true }
+lsp-types = { version = "=0.97.0", optional = true }
 pretty = { version = "=0.12.5", default-features = false }
 serde = { version = "=1.0.228", default-features = false, features = ["std"] }
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision", "raw_value"] }

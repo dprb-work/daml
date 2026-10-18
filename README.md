@@ -3,18 +3,18 @@
 Definitively Asserted Markup Language.
 
 DAML is an independent Rust project for a markup language with explicit
-structure, nested type assertions through tags, and long strings. It is not
-part of Olaf; Olaf is a prospective consumer.
+structure, nested type assertions through tags, and long strings.
 
 The Rust library parses source-backed documents, resolves deeply nested type
 assertions against independently composed schema modules, and completes partial
 values from declared defaults before validation. Schemas can be written in JSON
-or DAML. The DAML formatter/LSP and Python bindings remain planned.
+or DAML. Reflow formatting and an optional stdio LSP are implemented; Python
+bindings remain separately scoped.
 
 ## Design
 
 - [Implementation plan](PLAN.md): unquoted key rules, mandatory multiline dedent,
-  grammar proposals, library acceptance gates, and planned formatter/LSP milestones.
+  grammar proposals, completed library/tooling gates, and final-sharpening questions.
 - [Parser reuse assessment](docs/parser-reuse.md): YAML/KYAML and Rust parser
   references, pinned candidates, test-corpus reuse, and license obligations.
 - [Formatter reuse assessment](docs/formatter-reuse.md): reused Rust layout
@@ -23,6 +23,8 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   observations, and explicitly unresolved language choices.
 - [Reflow formatter](docs/formatting.md): width-sensitive library API and
   `daml-fmt` file/stdin/check command without schema completion.
+- [Language server](docs/lsp.md): optional stdio diagnostics/formatting adapter,
+  negotiated Unicode positions, version ownership, and explicit non-goals.
 - [Syntax contract](docs/syntax.md): implemented structure, string decoding,
   provisional key/tag token policy, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): JSON/DAML schema documents,
@@ -35,7 +37,8 @@ or DAML. The DAML formatter/LSP and Python bindings remain planned.
   development-runtime notices.
 
 The syntax contract owns parsing behavior; the schema guide owns completion and
-validation. The plan records the library gates and planned formatter/LSP work.
+validation. The plan records completed gates and unresolved language/schema-root
+choices; the formatter and LSP guides own their tool contracts.
 
 ## Parse a document
 
@@ -119,18 +122,18 @@ Run the same aggregate gate locally and in CI:
 ./scripts/check
 ```
 
-The gate checks formatting for the library and fuzz package, runs Clippy across
-library targets with warnings treated as errors, runs unit/integration tests and
-doctests, and builds documentation with rustdoc warnings treated as errors.
-It stops at the first failure.
+The gate checks library/fuzz formatting, the default portable-library build, and
+all-feature Clippy, unit/integration tests, doctests, and warning-clean rustdoc.
+It includes the optional LSP and its real stdio process contracts, and stops at
+the first failure.
 Focused Cargo commands remain available:
 
 ```sh
-cargo check --locked
+cargo check --lib --no-default-features --locked
 cargo fmt --all
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-features --locked
+RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps --locked
 ```
 
 The pinned toolchain is also the declared minimum supported Rust version.
@@ -144,6 +147,7 @@ Check dependency advisories, licenses, sources, and forbidden retrieval features
 ```sh
 cargo install cargo-deny --version 0.20.2 --locked
 cargo deny --locked check
+cargo deny --all-features --locked check
 ```
 
 CI runs this separately from the Rust gate. `deny.toml` allows the licenses used
@@ -169,6 +173,10 @@ warnings for review. DAML remains unpublished until its own license is selected.
   whitespace/comment scanner; borrowed source becomes owned only after parsing.
 - `src/format.rs` builds source-preserving layout documents; the `daml-fmt`
   binary only handles arguments and bounded input/output.
+- The optional `src/lsp` adapter owns in-memory URI/version state and protocol
+  coordinate conversion. It reuses the checked parser and formatter; protocol
+  dependencies and the stdio binary are activated only by the `lsp` feature.
+  It does not read source/schema files or select a schema-folder root.
 
 ## Implementation defaults
 

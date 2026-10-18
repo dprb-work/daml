@@ -1,10 +1,10 @@
 # DAML syntax contract
 
 This contract owns syntax-to-document parsing (plan milestones 1–2).
-[Schema completion and validation](schemas.md) are separate passes; formatting
-and LSP integration remain planned. The governing rule is **one parse, no
-guessing**: parsing never infers nesting, string types, or missing values and
-never falls back to YAML.
+[Schema completion and validation](schemas.md) are separate passes. The
+[formatter](formatting.md) and optional [language server](lsp.md) reuse this
+parser. The governing rule is **one parse, no guessing**: parsing never infers
+nesting, string types, or missing values and never falls back to YAML.
 
 ## Structure and names
 

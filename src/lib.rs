@@ -48,6 +48,8 @@ use std::borrow::Cow;
 
 mod format;
 mod json_backend;
+#[cfg(feature = "lsp")]
+pub mod lsp;
 mod model;
 mod parser;
 mod pointer;

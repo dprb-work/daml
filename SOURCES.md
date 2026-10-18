@@ -54,6 +54,14 @@ source was copied into DAML; the formatter uses the library's document API.
 See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.toml)
 and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
 
+The optional `lsp` feature uses `lsp-server` 0.10.0 (MIT OR Apache-2.0) and
+`lsp-types` 0.97.0 (MIT), pinned in the root lockfile. Their transport and protocol
+DTOs remain Cargo dependencies; no upstream code is copied. The default native
+library/fuzz graph does not activate these dependencies. Policy checks also
+cover the all-feature graph used by the stdio executable. See their published
+manifests: [lsp-server](https://docs.rs/crate/lsp-server/0.10.0/source/Cargo.toml)
+and [lsp-types](https://docs.rs/crate/lsp-types/0.97.0/source/Cargo.toml).
+
 These notices do not select DAML's own distribution license. The library and
 fuzz package remain unpublished; choosing project terms and packaging for
 redistribution requires an explicit decision.
