@@ -204,6 +204,11 @@ impl<'a> SchemaView<'a> {
             .or_else(|| self.value().get("items"))
             .and_then(|value| self.registry.locate(value))
     }
+    pub(crate) fn array_child(self, keyword: &str, index: usize) -> Option<Self> {
+        // Index before resolving: mapped Iterator::nth also resolves skipped children.
+        let value = self.value().get(keyword)?.as_array()?.get(index)?;
+        self.registry.locate(value)
+    }
     pub(crate) fn array_children(
         self,
         keyword: &str,

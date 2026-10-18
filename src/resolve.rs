@@ -751,10 +751,10 @@ impl<'a> CompletionSearch<'a> {
         {
             return *view;
         }
-        let mut branches = union.schema.array_children(keyword);
-        let selected = self.choose(branches.len());
-        let branch = branches
-            .nth(selected)
+        let selected = self.choose(union.schema.array_children(keyword).len());
+        let branch = union
+            .schema
+            .array_child(keyword, selected)
             .expect("search selects an existing union branch");
         self.branches
             .entry(path.to_owned())
