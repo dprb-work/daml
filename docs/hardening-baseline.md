@@ -1,9 +1,10 @@
 # Hardening baseline — 2026-10-18
 
 This record covers library and harness sources at
-`bda8882e73f658448e762fd0d64ca11f811a72d3`. Later report-only commits do not
-change the measured code. These are bounded observations, not proof that every
-input is safe or that every grammar/validator branch was reached.
+`bda8882e73f658448e762fd0d64ca11f811a72d3`. Subsequent documentation and
+smoke-count validation changes leave the measured Rust/build inputs unchanged.
+These are bounded observations, not proof that every input is safe or that
+every grammar/validator branch was reached.
 
 ## Fuzz campaigns
 
@@ -105,6 +106,16 @@ Clippy passed. Actual `inspect`, `resolve`, and `schema_adapter` consumers ran;
 resolution produced the default timeout 30 and request ID `local`. All 24
 release worker variants passed their decoded value/tag/default checks before
 the recorded suite. CLI invalid-target/run-count/size paths returned errors.
+
+Review found a developer-wrapper defect: a smoke count above signed `int`
+range can disable libFuzzer's run limit. The pre-fix invocation
+`scripts/fuzz-smoke 2147483648` launched a target and required a three-second
+external timeout. The repaired wrapper rejects that count, arbitrarily large
+counts, zero, leading zeroes, empty input, and nondigits with exit status 2
+before Cargo. Normal bounded target execution remains the real smoke check.
+This is a tooling finding, not a parser campaign finding. The numeric CLI
+boundary was exercised directly; no permanent test launches a potentially
+unlimited campaign if that guard regresses.
 
 Both locked dependency-policy checks passed. Duplicate transitive versions
 remain reviewed warnings (`syn`, plus fuzz-only `getrandom`/`r-efi`); the library

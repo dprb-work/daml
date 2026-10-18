@@ -20,6 +20,9 @@ cargo install cargo-fuzz --version 0.13.2 --locked
 The isolated `fuzz/` package pins `nightly-2026-10-18`; the library keeps its
 stable toolchain. The wrapper fetches the committed fuzz dependency lock before
 cargo-fuzz's internal build because cargo-fuzz has no `--locked` switch.
+The smoke count must be an integer in `1..=2147483647`, without leading zeroes.
+Larger values can overflow libFuzzer's signed `-runs` flag and remove its bound;
+the smoke wrapper rejects them before fetching or launching a target.
 
 Run a bounded campaign for each target:
 
