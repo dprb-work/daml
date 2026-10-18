@@ -403,3 +403,26 @@ fn constant_equality_preserves_exact_numbers_and_ignores_data_tag_names() {
         ResolveErrorKind::SchemaViolation
     );
 }
+
+#[test]
+fn expected_union_does_not_waive_a_known_tags_own_schema() {
+    let schemas = Schemas::compose([SchemaModule::from_value(json!({"types": {
+        "Expected": {"schema": {"anyOf": [
+            {"type": "string"},
+            {"type": "integer"}
+        ]}},
+        "Text": {"schema": {"type": "string"}}
+    }}))
+    .unwrap()])
+    .unwrap();
+    for source in ["!Text \"hello\"", "7"] {
+        let document = parse(source).unwrap();
+        schemas.resolve_as(&document, "Expected").unwrap();
+    }
+    let invalid_assertion = parse("!Text 7").unwrap();
+    let error = schemas
+        .resolve_as(&invalid_assertion, "Expected")
+        .unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+    assert_eq!(error.path, "");
+}
