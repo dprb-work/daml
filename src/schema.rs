@@ -68,7 +68,7 @@ impl SchemaModule {
                     .get("schema")
                     .ok_or_else(|| invalid("type binding requires schema"))?;
                 check_schema_shape(schema)?;
-                let id = schema_id(schema).unwrap_or_else(|| generated_id("type", name));
+                let id = schema_id(schema).unwrap_or_else(|| generated_id(name));
                 let mut value = schema.clone();
                 assign_id(&mut value, &id)?;
                 module.types.insert(name.clone(), Binding { value, id });
@@ -295,11 +295,10 @@ impl Schemas {
                 )));
             }
         }
-        for (uri, schema) in &resources {
+        for uri in resources.keys() {
             if identifiers.contains(uri) {
                 return Err(duplicate(format!("duplicate schema identifier {uri:?}")));
             }
-            check_schema_shape(schema)?;
         }
         drop(identifiers);
         let mut registry_contents = resources.clone();
@@ -749,14 +748,16 @@ fn valid_name(s: &str) -> Result<(), SchemaError> {
         Ok(())
     }
 }
-fn generated_id(kind: &str, name: &str) -> String {
-    format!(
-        "urn:daml:{kind}:{}",
-        name.as_bytes()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    )
+fn generated_id(name: &str) -> String {
+    use std::fmt::Write;
+
+    let prefix = "urn:daml:type:";
+    let mut id = String::with_capacity(prefix.len() + name.len() * 2);
+    id.push_str(prefix);
+    for byte in name.bytes() {
+        write!(&mut id, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    id
 }
 fn schema_id(v: &Value) -> Option<String> {
     v.get("$id")?.as_str().map(str::to_owned)

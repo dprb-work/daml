@@ -168,10 +168,12 @@ warnings for review. DAML remains unpublished until its own license is selected.
 
 - `src/schema/profile.rs` owns child-schema classification, traversal roles, and
   schema-admission limits. Add schema positions there, not in a second walker.
-- `src/schema.rs` owns compiled schemas and registry-bound, opaque views.
-  `SchemaView` resolves property, tuple/item, and branch children in its own
-  registry. Raw address lookup and validator access stay behind that boundary;
-  the resolver cannot construct IDs or pair raw children with another registry.
+- `src/schema.rs` admits local schema shape and declarations in `SchemaModule`.
+  Its private admitted values cannot be mutated by callers. Composition owns
+  aggregate budgets, cross-module collisions/references, and compiled validators,
+  rather than revalidating local shape. Registry-bound `SchemaView` values resolve
+  property, tuple/item, and branch children in their own registry; the resolver
+  cannot construct IDs or pair raw children with another registry.
 - `src/resolve.rs` owns one search and cumulative budget per resolution.
   It aggregates schema views in completion order; alternative completions reuse
   that budget rather than resetting it.
