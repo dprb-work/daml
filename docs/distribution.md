@@ -6,8 +6,8 @@ are build/verification tools, not DAML runtime requirements. Native operating
 system libraries still apply.
 
 Artifacts remain within the private repository. This workflow does not publish
-GitHub releases, push tags, publish a crate, select DAML's license, or install an
-editor integration. DAML's own distribution terms remain undecided.
+GitHub releases, push tags, publish a crate, or install an editor integration.
+DAML's native distributions carry the MIT license and generated dependency notices.
 
 ## Build matrix and downloads
 
@@ -39,6 +39,23 @@ snapshots, not permanent release URLs. Inspect the run revision and `BUILD.json`
 before using a snapshot. A checksum detects corruption, not publisher identity;
 repository access and the selected workflow run establish the source.
 
+## Private releases
+
+Versioned archives and checksum sidecars are published as assets of private
+[GitHub releases](https://github.com/dprb-work/daml/releases). They retain the
+repository's access controls and do not expire with Actions artifacts:
+
+```sh
+gh release download --repo dprb-work/daml \
+  --pattern 'daml-*-x86_64-unknown-linux-gnu.tar.gz*' --dir download
+```
+
+Select the corresponding target for macOS or Windows. Release assets come from
+a successful Binaries run of the release commit. `BUILD.json` must identify that
+commit and a clean source tree. The workflow builds and verifies archives;
+promoting those artifacts to a release is a separate authorized action.
+Crate/PyPI publication and Python wheel/sdist assets are outside this route.
+
 ## Build the same archive locally
 
 Use the pinned Rust toolchain, Python 3.11 or later, and the pinned notice tool:
@@ -59,6 +76,7 @@ Each archive has one `daml-<version>-<target>/` directory containing:
 bin/daml-lsp       # .exe on Windows
 bin/daml-fmt       # .exe on Windows
 BUILD.json
+LICENSE            # canonical root MIT license
 SOURCES.md
 THIRD-PARTY-NOTICES.txt
 ```
@@ -130,6 +148,7 @@ placeholder key only satisfy CLI startup. The probe is not an OMP integration
 package. Retained evidence states the exact scope and OMP version; no interactive
 TUI or GUI-editor claim is implied.
 
-After distribution proof, the [plan](../PLAN.md#next-sequence) calls for remaining
-language/schema decisions, consolidation, then Python bindings. Editor
-integrations stay deferred.
+The [Python extension](python.md) is a separate package and build graph; it does
+not change these native archives or add a Python runtime requirement to them.
+The [plan](../PLAN.md#next-sequence) owns remaining language and conversion work.
+Editor integrations stay deferred.

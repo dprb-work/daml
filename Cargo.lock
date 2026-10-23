@@ -117,8 +117,10 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "pretty",
+ "regex-automata",
  "serde",
  "serde_json",
+ "unicode-general-category",
 ]
 
 [[package]]

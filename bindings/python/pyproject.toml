@@ -1,0 +1,29 @@
+[build-system]
+requires = ["maturin==1.15.0"]
+build-backend = "maturin"
+
+[project]
+name = "daml"
+dynamic = ["version"]
+description = "Native Python bindings for DAML"
+requires-python = ">=3.12"
+license = "MIT"
+[dependency-groups]
+dev = [
+    "maturin==1.15.0",
+    "pytest>=9,<10",
+    "ruff==0.16.4",
+]
+
+[tool.maturin]
+module-name = "daml.daml"
+python-source = "python"
+manifest-path = "Cargo.toml"
+editable-profile = "dev"
+locked = true
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

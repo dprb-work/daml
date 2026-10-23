@@ -1,10 +1,11 @@
 # Format a DAML document
 
-The formatter reflows structure to a target width without changing decoded
-values, tags, mapping order, or numeric spellings. It uses the existing parsed
-document and its source; it does not resolve schemas or materialize defaults.
+The formatter reflows data expressions or native definitions to a target width
+without changing decoded values, tags, mapping order, or numeric spellings. It
+uses a parsed document and its source; it does not resolve schemas, materialize
+defaults, or compile native definitions.
 
-## Library API
+## Data library API
 
 ```rust
 use daml::{FormatOptions, format, parse};
@@ -33,6 +34,27 @@ Width is a layout target, not a token-splitting rule. Long names, strings,
 comments, and key/tag/container-opening headers can exceed it. A larger width
 can collapse the example to `{ long_key: { value: true } }`. Wider layouts do
 not add commas or relax DAML's required entry separators.
+
+## Native definition API
+
+```rust
+use daml::{FormatOptions, format_definition, parse_definition};
+
+let definition = parse_definition("!Int { min: 1 } = 10")?;
+let output = format_definition(&definition, FormatOptions { line_width: 24 })?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Use `format_definition` for native definition expressions. It preserves comments,
+scalar spelling, and block-string contents without resolving referenced
+definitions or validating bundle semantics. See the [native authoring
+contract](native-authoring.md) for the native grammar and bundle behavior.
+
+Positional definitions retain their explicit `!Tuple [ ... ]` constructor,
+including comments around the opening bracket and positions. Whole-tuple
+defaults remain after the closing bracket. Ordinary arrays and tagged arrays
+remain data expressions; the formatter does not infer a tuple definition from
+bare brackets.
 
 ## Command
 
@@ -77,11 +99,12 @@ assume that formatting preserves byte counts.
   the preceding token; own-line comments stay on their own line. Outside
   strings, blank lines and other whitespace normalize to structural separators.
 - Ordinary strings keep their source escapes. Literal and wrapped block bodies
-  are not word-reflowed or re-encoded. Physical line endings normalize to LF;
-  body indentation, including all-blank spaces/tabs, remains content. The
-  closing delimiter aligns with its structural indentation without changing
-  the body's dedent semantics. A block delimiter is never joined to a parent
-  closing brace/bracket on the same line.
+  are not word-reflowed or re-encoded. Physical line endings normalize to LF.
+  Entirely blank literal bodies strip horizontal whitespace according to the
+  syntax contract; nonblank body indentation remains content after dedent. The
+  closing delimiter aligns with its structural indentation without changing the
+  decoded value. A block delimiter is never joined to a parent closing
+  brace/bracket on the same line.
 - A leading BOM is retained. Output ends in one LF.
 
 Formatting is idempotent at the same width. Reparse equivalence includes exact
@@ -90,16 +113,17 @@ source spans necessarily change.
 
 ## Ownership and reused machinery
 
-`src/format.rs` builds documents for pinned MIT `pretty` 0.12.5, reusing its
-Wadler-style layout solver and arena instead of implementing a printer engine.
-Its dynamic and signed nesting support preserves blank-only literal bodies
-without injecting indentation into their value. The parser and formatter share
-one whitespace/comment scanner in `src/parser.rs`; comments are read only from
-AST-delimited source gaps. No second grammar or parser is introduced.
+`src/format.rs` builds data and native definition documents for pinned MIT
+`pretty` 0.12.5, reusing its Wadler-style layout solver and arena instead of
+implementing a printer engine. Dynamic and signed nesting keep nonblank literal
+content independent of structural indentation while aligning delimiters. The
+data parser and formatter share one whitespace/comment scanner in
+`src/parser.rs`; comments are read only from AST-delimited source gaps. No
+second data grammar or parser is introduced.
 
-The CLI is a thin input/output adapter. A future dprint or editor integration
-can use the same Rust API without making the language library depend on a host.
-See the [reuse assessment](formatter-reuse.md) for the alternatives and the
-[edge-case record](edge-cases.md) for confirmed rules versus observed/open
-language cases. The existing PLAN remains the implementation ledger; this guide
+The CLI accepts both data expressions and native definitions through the same
+native syntax and formatter path. It remains a thin input/output adapter. See the
+[reuse assessment](formatter-reuse.md) for alternatives and the
+[edge-case record](edge-cases.md) for confirmed rules and historical
+observations. The existing PLAN remains the implementation ledger; this guide
 owns the formatter contract rather than introducing a parallel task system.

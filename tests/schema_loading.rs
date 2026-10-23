@@ -569,6 +569,7 @@ fn schema_looking_default_const_enum_and_example_data_remain_inert() {
             "properties": {
                 "payload": {
                     "const": payload,
+                    "default": payload,
                     "enum": [payload]
                 }
             },
@@ -577,12 +578,7 @@ fn schema_looking_default_const_enum_and_example_data_remain_inert() {
     }))
     .expect("schema-looking annotation values are ordinary data");
     let schemas = Schemas::compose([module]).expect("annotations are not schemas");
-    let input = parse(
-        r##"!app.Data { payload: { $schema: "http://json-schema.org/draft-07/schema#"
-            dependencies: { legacy: ["data"] }
-            x-daml-tag: "ordinary data" } }"##,
-    )
-    .expect("input");
+    let input = parse("!app.Data").expect("input");
     let completed = schemas.resolve(&input).expect("literal data resolves");
     assert_eq!(
         completed.to_json(),

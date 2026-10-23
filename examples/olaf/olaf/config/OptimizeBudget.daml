@@ -1,0 +1,4 @@
+!Object {
+  candidates: !Int
+  concurrency: !Int
+} = { concurrency: 1 }

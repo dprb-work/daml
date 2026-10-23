@@ -1,0 +1,8 @@
+!Object {
+  payload: !String
+} = {
+  payload: """
+    first
+    second
+    """ # keep this comment
+}

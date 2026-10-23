@@ -10,3 +10,4 @@ cargo check --lib --no-default-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --all-features --no-deps --locked
+./scripts/check-python

@@ -1,0 +1,40 @@
+closed !Object {
+  name: !String
+  mode: "read" | "write"
+
+  adapter: !net.Adapter = !provider.Http {
+    addr: "localhost"
+    compression: true
+  }
+
+  workers: !List {
+    items: closed !Object {
+      name: !String
+      retries: !Int
+    } = {
+      retries: 3
+    }
+  } = [
+    {
+      name: "primary"
+    }
+  ]
+
+  labels: !Map {
+    values: !String
+  }
+
+  range: !Tuple [
+    !Int
+    !Int
+  ]
+  payload?: !Any
+  deprecated?: !Never
+} = {
+  name: "demo"
+  mode: "read"
+  range: [
+    1
+    10
+  ]
+}

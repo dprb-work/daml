@@ -1,0 +1,5 @@
+!net.Adapter {
+  timeout: !Int {
+    max: 10
+  }
+}

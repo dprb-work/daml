@@ -1,0 +1,35 @@
+{
+  "case": "mit-native-archive-and-installed-omp",
+  "evaluated_contracts": ["features/binary-archive.md", "features/omp-session.md"],
+  "skill_sha256": "4d32d66018a71c1ae15ae47d8d9bec0a0dd9db3accade1787d10dfacb6eac1f3",
+  "runtime_sha256": "4b0358e79e35ec8e21d2faaa24a7e33077dfc736459d2f7b10f6334866ca3480",
+  "binary_contract_sha256": "f9176075e2be50fa18d835c85d48f42303afbc83965e7fc6f91eeb8b28bef232",
+  "artifact": {
+    "version": "0.1.0",
+    "target": "x86_64-unknown-linux-gnu",
+    "sha256": "7667f7716d0aa71e3da88dcff6fe271ab8a54db8a1b327276d1bdcadbd6d627b",
+    "git_commit": "878ec490f093898be0a61ebd4769241e483477ac",
+    "git_dirty": true,
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "scope": "local pre-commit verification; not a release artifact"
+  },
+  "archive": {
+    "checksum_and_exact_layout": "passed",
+    "files": ["bin/daml-fmt", "bin/daml-lsp", "BUILD.json", "LICENSE", "SOURCES.md", "THIRD-PARTY-NOTICES.txt"],
+    "mit_text_inspected": true
+  },
+  "installed_process_contracts": {
+    "formatter_cli_tests_passed": 4,
+    "lsp_tests_passed": 5
+  },
+  "installed_omp": {
+    "version": "omp/18.12.6",
+    "exit": 0,
+    "actions": ["capabilities", "diagnostics", "diagnostics", "request", "diagnostics", "request"],
+    "final_source": "{ message: \"😀é\" }\n",
+    "model_turns": 0,
+    "isolated_state_removed": true,
+    "scope": "actual installed RPC process and built-in LSP tool; no TUI or editor-extension claim"
+  },
+  "passed": true
+}

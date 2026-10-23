@@ -1,3 +1,10 @@
 /target/
 /dist/
 /.scratch/
+/bindings/python/target/
+/bindings/python/.venv/
+/bindings/python/.pytest_cache/
+/bindings/python/.ruff_cache/
+/bindings/python/**/__pycache__/
+/bindings/python/python/daml/*.so
+/bindings/python/python/daml/*.pyd

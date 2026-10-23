@@ -51,6 +51,8 @@ mod json_backend;
 #[cfg(feature = "lsp")]
 pub mod lsp;
 mod model;
+mod names;
+mod native;
 mod parser;
 mod pointer;
 mod resolve;
@@ -63,6 +65,10 @@ mod strings;
 
 pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
+pub use native::{
+    BUNDLE_MANIFEST, Bundle, Definition, NativeError, NativeErrorKind, format_definition,
+    parse_definition, parse_definition_with_limits,
+};
 pub use resolved::{
     ErrorOrigin, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
     ResolvedNode, ResolvedValue, SchemaLocation,

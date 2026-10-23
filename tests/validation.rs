@@ -5,9 +5,9 @@ use serde_json::json;
 
 fn application_modules() -> Vec<SchemaModule> {
     vec![
-        SchemaModule::from_daml(include_str!("../examples/schemas/application.daml")).unwrap(),
+        SchemaModule::from_json(include_str!("../examples/schemas/application.json")).unwrap(),
         SchemaModule::from_json(include_str!("../examples/schemas/network.json")).unwrap(),
-        SchemaModule::from_daml(include_str!("../examples/schemas/text.daml")).unwrap(),
+        SchemaModule::from_json(include_str!("../examples/schemas/text.json")).unwrap(),
     ]
 }
 
@@ -227,21 +227,41 @@ fn unicode_diagnostics_retain_original_bytes_and_literal_pointer_segments() {
     let module = SchemaModule::from_value(json!({"types": {"Config": {"schema": {
         "type": "object",
         "properties": {"payload": {"type": "object", "properties": {
-            "a/b~c": {"type": "string", "maxLength": 1}
+            "a/b.c": {"type": "string", "maxLength": 1}
         }}}
     }}}}))
     .unwrap();
     let schemas = Schemas::compose([module]).unwrap();
-    let source = "!Config { label: \"é\"\n payload: { a/b~c: \"東京\" } }";
+    let source = "!Config { label: \"é\"\n payload: { a/b.c: \"東京\" } }";
     let document = parse(source).unwrap();
     let error = schemas.resolve(&document).unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
-    assert_eq!(error.path, "/payload/a~1b~0c");
+    assert_eq!(error.path, "/payload/a~1b.c");
     let ErrorOrigin::Input(span) = error.origin else {
         panic!("supplied value")
     };
     assert_eq!(document.slice(span), Some("\"東京\""));
     assert_eq!(span.end - span.start, 8);
+}
+
+#[test]
+fn generated_foreign_keys_keep_tilde_and_slash_pointer_escaping() {
+    let module = SchemaModule::from_value(json!({"types": {"Config": {"schema": {
+        "type": "object",
+        "properties": {"payload": {
+            "type": "object",
+            "default": {"a/b~c": "東京"},
+            "properties": {"a/b~c": {"type": "string", "maxLength": 1}}
+        }},
+        "required": ["payload"]
+    }}}}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let document = parse("!Config").unwrap();
+    let error = schemas.resolve(&document).unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+    assert_eq!(error.path, "/payload/a~1b~0c");
+    assert!(matches!(error.origin, ErrorOrigin::Default(_)));
 }
 
 #[test]
@@ -425,4 +445,19 @@ fn expected_union_does_not_waive_a_known_tags_own_schema() {
         .unwrap_err();
     assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
     assert_eq!(error.path, "");
+}
+
+#[test]
+fn explicit_tags_preserve_constraints_beside_a_reference() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Base": {"schema": {"$id": "urn:base-bound", "type": "integer", "minimum": 0}},
+        "Strict": {"schema": {"$ref": "urn:base-bound", "maximum": 5}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let document = parse("!Strict 7").unwrap();
+    let error = schemas.resolve(&document).unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+    assert_eq!(error.path, "");
+    assert_eq!(error.schema.as_ref().unwrap().pointer, "/maximum");
 }

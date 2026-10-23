@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+# Resolve the crate root so this also works from outside the repository.
+cd "$(dirname "$0")/.."
+
+project=bindings/python
+# uv's default editable cache does not track the Rust core's source files.
+# Re-enter maturin; Cargo owns incremental rebuild decisions for both crates.
+uv sync --project "$project" --locked --python 3.12 --group dev --reinstall-package daml
+python="$(uv run --project "$project" --locked --python 3.12 python -c 'import sys; print(sys.executable)')"
+
+cargo fmt --manifest-path "$project/Cargo.toml" --check
+PYO3_PYTHON="$python" cargo clippy --manifest-path "$project/Cargo.toml" --all-targets --locked -- -D warnings
+
+uv run --project "$project" --locked --python 3.12 ruff check "$project"
+uv run --project "$project" --locked --python 3.12 ruff format --check "$project"
+uv run --project "$project" --locked --python 3.12 pytest "$project/tests"

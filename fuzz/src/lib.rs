@@ -94,11 +94,47 @@ pub fn exercise_format(data: &[u8]) {
     let Ok(source) = std::str::from_utf8(data) else {
         return;
     };
-    let Ok(document) = parse_with_limits(source, PARSE_LIMITS) else {
-        return;
-    };
+    let document = parse_with_limits(source, PARSE_LIMITS);
     let options = daml::FormatOptions {
         line_width: 1 + source.len() % 100,
+    };
+    let native = daml::parse_definition_with_limits(source, PARSE_LIMITS);
+    if document.is_ok()
+        && let Err(error) = &native
+    {
+        assert_eq!(
+            error.kind,
+            daml::ErrorKind::LimitExceeded,
+            "native tooling syntax must accept valid data syntax"
+        );
+    }
+    if let Ok(definition) = native {
+        let output = daml::format_definition(&definition, options).expect("positive bounded width");
+        let limits = Limits {
+            max_input_bytes: output.len(),
+            max_scalar_bytes: 32 * 1024,
+            ..PARSE_LIMITS
+        };
+        let formatted = daml::parse_definition_with_limits(output, limits)
+            .expect("native formatting preserves syntax");
+        assert_eq!(
+            daml::format_definition(&formatted, options).unwrap(),
+            formatted.source(),
+            "native formatting is idempotent"
+        );
+        if let Ok(original) = &document {
+            let formatted_data = parse_with_limits(formatted.source(), limits)
+                .expect("native formatting preserves data syntax");
+            assert!(same_value(
+                original,
+                original.root(),
+                &formatted_data,
+                formatted_data.root()
+            ));
+        }
+    }
+    let Ok(document) = document else {
+        return;
     };
     let output = daml::format(&document, options).expect("positive bounded width");
     let output_bytes = output.len();

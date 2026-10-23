@@ -3,12 +3,78 @@ use crate::{
     resolved::{ResolvedNode, SchemaLocation},
     schema_error::{SchemaError, SchemaErrorKind},
 };
-use jsonschema::{Draft, PatternOptions, Registry, Resource, Validator};
+use jsonschema::{
+    Draft, Keyword, PatternOptions, Registry, Resource, ValidationError, Validator,
+    error::ValidationErrorKind, json::Node as _,
+};
+use regex_automata::{Anchored, Input, MatchKind, meta::Regex};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
 pub(crate) mod profile;
 use profile::{MAX_COMPILE_NODES, MAX_SCHEMA_DEPTH, MAX_SCHEMA_NODES, MAX_SOURCE_BYTES};
+
+const REGEX_SIZE_LIMIT: usize = 1 << 20;
+const NATIVE_REGEX_KEYWORD: &str = "x-daml-regex";
+
+pub(crate) fn native_regex_origin(origin: u64) -> String {
+    format!("urn:daml:native:regex-origin:{origin}")
+}
+
+struct NativeRegex(Regex);
+
+impl<'i> Keyword<'i, DamlJson> for NativeRegex {
+    fn validate(&self, instance: NodeRef<'i>) -> Result<(), ValidationError<'i>> {
+        if self.is_valid(instance) {
+            Ok(())
+        } else {
+            Err(ValidationError::custom(
+                "string does not match the required Regex",
+            ))
+        }
+    }
+
+    fn is_valid(&self, instance: NodeRef<'i>) -> bool {
+        instance.as_string().is_none_or(|value| {
+            self.0
+                .find(Input::new(value.as_ref()).anchored(Anchored::Yes))
+                .is_some_and(|found| found.end() == value.len())
+        })
+    }
+}
+
+fn native_regex_factory<'a>(
+    _parent: &'a Map<String, Value>,
+    value: &'a Value,
+    _path: jsonschema::paths::Location,
+) -> Result<Box<dyn for<'i> Keyword<'i, DamlJson>>, ValidationError<'a>> {
+    let config = value
+        .as_object()
+        .ok_or_else(|| ValidationError::schema("DAML Regex metadata must be an object"))?;
+    let pattern = config
+        .get("pattern")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ValidationError::schema("DAML Regex source must be a string"))?;
+    config
+        .get("origin")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ValidationError::schema("DAML Regex origin must be an integer"))?;
+    let regex = Regex::builder()
+        .configure(
+            Regex::config()
+                .match_kind(MatchKind::All)
+                .nfa_size_limit(Some(REGEX_SIZE_LIMIT))
+                .onepass_size_limit(Some(REGEX_SIZE_LIMIT))
+                .dfa_size_limit(Some(REGEX_SIZE_LIMIT)),
+        )
+        .build(pattern)
+        .map_err(|error| {
+            let message = std::error::Error::source(&error)
+                .map_or_else(|| error.to_string(), |source| format!("{error}: {source}"));
+            ValidationError::schema(format!("invalid DAML Regex: {message}"))
+        })?;
+    Ok(Box::new(NativeRegex(regex)))
+}
 
 #[derive(Clone)]
 struct Binding {
@@ -127,14 +193,14 @@ impl<'a> SchemaView<'a> {
     pub(crate) fn default_origin(self) -> Option<&'a SchemaLocation> {
         self.entry().default_origin.as_ref()
     }
-    pub(crate) fn default_tag(self, value: &Value) -> Option<&'a str> {
+    pub(crate) fn default_tag(&self, value: &Value) -> Option<(&'a str, Option<&'a str>)> {
         let entry = self.entry();
-        let index = entry.default_tags.get(&(value as *const Value as usize))?;
-        Some(
-            entry.value["x-daml-default-tags"][*index]["tag"]
-                .as_str()
-                .expect("default tag annotations are validated during admission"),
-        )
+        let index = *entry.default_tags.get(&(value as *const Value as usize))?;
+        let annotation = &entry.value["x-daml-default-tags"][index];
+        Some((
+            annotation["tag"].as_str().expect("validated tag"),
+            annotation.get("binding").and_then(Value::as_str),
+        ))
     }
     pub(crate) fn referenced(self) -> Option<Self> {
         self.registry
@@ -144,18 +210,20 @@ impl<'a> SchemaView<'a> {
             .map(|id| self.registry.view(id))
     }
     pub(crate) fn property(self, key: &str) -> Option<Self> {
-        if let Some(value) = self
-            .value()
-            .get("properties")
-            .and_then(|properties| properties.get(key))
-        {
-            self.registry.locate(value)
-        } else if self.value().get("patternProperties").is_none() {
-            self.value()
-                .get("additionalProperties")
-                .and_then(|value| self.registry.locate(value))
-        } else {
-            None
+        self.registry.locate(profile::property(self.value(), key)?)
+    }
+    pub(crate) fn requires_property(self, key: &str) -> bool {
+        self.value()
+            .get("required")
+            .and_then(Value::as_array)
+            .is_some_and(|required| required.iter().any(|name| name.as_str() == Some(key)))
+    }
+
+    pub(crate) fn container_kind(self) -> Option<&'static str> {
+        match self.value().get("type")?.as_str()? {
+            "object" => Some("object"),
+            "array" => Some("array"),
+            _ => None,
         }
     }
     pub(crate) fn property_names(self) -> impl Iterator<Item = &'a str> {
@@ -166,12 +234,7 @@ impl<'a> SchemaView<'a> {
             .flat_map(|properties| properties.keys().map(String::as_str))
     }
     pub(crate) fn item(self, index: usize) -> Option<Self> {
-        self.value()
-            .get("prefixItems")
-            .and_then(Value::as_array)
-            .and_then(|items| items.get(index))
-            .or_else(|| self.value().get("items"))
-            .and_then(|value| self.registry.locate(value))
+        self.registry.locate(profile::item(self.value(), index)?)
     }
     pub(crate) fn array_child(self, keyword: &str, index: usize) -> Option<Self> {
         // Index before resolving: mapped Iterator::nth also resolves skipped children.
@@ -209,21 +272,7 @@ impl<'a> SchemaView<'a> {
             .validator
             .validate(NodeRef::new(node))
             .map_err(|error| {
-                let keyword = error.schema_path().to_string();
-                let schema_location = if let Some(uri) = error.absolute_keyword_location() {
-                    let (resource, fragment) =
-                        uri.as_str().split_once('#').unwrap_or((uri.as_str(), ""));
-                    SchemaLocation {
-                        resource: resource.to_owned(),
-                        pointer: percent_decode(fragment)
-                            .expect("keyword fragments encode UTF-8 schema paths"),
-                    }
-                } else {
-                    SchemaLocation {
-                        resource: entry.location.resource.clone(),
-                        pointer: keyword,
-                    }
-                };
+                let schema_location = validation_error_location(&error, &entry.location);
                 SchemaFailure {
                     path: error.instance_path().to_string(),
                     schema: schema_location,
@@ -286,6 +335,14 @@ impl Schemas {
                 }
             }
         }
+        let registered = types.keys().map(String::as_str).collect::<HashSet<_>>();
+        for schema in types
+            .values()
+            .map(|binding| &binding.value)
+            .chain(resources.values())
+        {
+            validate_default_bindings(schema, &registered)?;
+        }
         let mut identifiers = HashSet::new();
         for binding in types.values() {
             if !identifiers.insert(binding.id.clone()) {
@@ -341,10 +398,11 @@ impl Schemas {
             .with_registry(&registry)
             .offline()
             .should_validate_formats(false)
+            .with_keyword(NATIVE_REGEX_KEYWORD, native_regex_factory)
             .with_pattern_options(
                 PatternOptions::regex()
-                    .size_limit(1 << 20)
-                    .dfa_size_limit(1 << 20),
+                    .size_limit(REGEX_SIZE_LIMIT)
+                    .dfa_size_limit(REGEX_SIZE_LIMIT),
             );
         let mut entries = Vec::new();
         let mut by_type = HashMap::new();
@@ -1077,6 +1135,26 @@ fn prepare_schema_graph(
         .map(|(id, node)| (node.location, memo[id].expect("every view was evaluated")))
         .collect())
 }
+fn validate_default_bindings(
+    schema: &Value,
+    registered: &HashSet<&str>,
+) -> Result<(), SchemaError> {
+    if let Some(annotations) = schema.get("x-daml-default-tags").and_then(Value::as_array) {
+        for annotation in annotations {
+            if let Some(binding) = annotation.get("binding").and_then(Value::as_str)
+                && !registered.contains(binding)
+            {
+                return Err(invalid(format!(
+                    "default tag binding {binding:?} does not name a registered type"
+                )));
+            }
+        }
+    }
+    for child in profile::children(schema) {
+        validate_default_bindings(child.value, registered)?;
+    }
+    Ok(())
+}
 fn validate_default_tags(schema: &Map<String, Value>) -> Result<(), SchemaError> {
     let Some(annotations) = schema.get("x-daml-default-tags") else {
         return Ok(());
@@ -1091,7 +1169,11 @@ fn validate_default_tags(schema: &Map<String, Value>) -> Result<(), SchemaError>
     let mut targets = HashSet::new();
     for annotation in annotations {
         let annotation = object(annotation, "default tag annotation")?;
-        reject_unknown(annotation, &["path", "tag"], "default tag annotation")?;
+        reject_unknown(
+            annotation,
+            &["path", "tag", "binding"],
+            "default tag annotation",
+        )?;
         let path = annotation
             .get("path")
             .and_then(Value::as_str)
@@ -1100,7 +1182,15 @@ fn validate_default_tags(schema: &Map<String, Value>) -> Result<(), SchemaError>
             .get("tag")
             .and_then(Value::as_str)
             .ok_or_else(|| invalid("default tag annotation requires a string tag"))?;
-        valid_name(tag)?;
+        if let Some(binding) = annotation.get("binding") {
+            let binding = binding
+                .as_str()
+                .ok_or_else(|| invalid("default tag binding must be a string"))?;
+            valid_name(binding)?;
+        }
+        if !crate::names::valid_tag(tag) {
+            return Err(invalid("default tag name is not a valid DAML tag spelling"));
+        }
         if !path.is_empty() && !path.starts_with('/') {
             return Err(invalid("default tag paths must be RFC 6901 JSON Pointers"));
         }
@@ -1143,6 +1233,11 @@ fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError
             ));
         }
         validate_default_tags(m)?;
+        if let Some(optional) = m.get("x-daml-native-optional")
+            && optional != &Value::Bool(true)
+        {
+            return Err(invalid("x-daml-native-optional must be true"));
+        }
         if let Some(dialect) = m.get("$schema")
             && !matches!(
                 dialect.as_str(),
@@ -1171,16 +1266,47 @@ fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError
     }
     Ok(())
 }
-fn compile_error(
-    e: impl std::error::Error + Send + Sync + 'static,
-    l: SchemaLocation,
-) -> SchemaError {
+fn validation_error_location(
+    error: &ValidationError<'_>,
+    fallback: &SchemaLocation,
+) -> SchemaLocation {
+    if let Some(uri) = error.absolute_keyword_location() {
+        let (resource, fragment) = uri.as_str().split_once('#').unwrap_or((uri.as_str(), ""));
+        return SchemaLocation {
+            resource: resource.to_owned(),
+            pointer: percent_decode(fragment).expect("keyword fragments encode UTF-8 schema paths"),
+        };
+    }
+    SchemaLocation {
+        resource: fallback.resource.clone(),
+        pointer: error.schema_path().to_string(),
+    }
+}
+
+fn native_regex_error_location(error: &ValidationError<'_>) -> Option<SchemaLocation> {
+    let ValidationErrorKind::Custom { keyword, .. } = error.kind() else {
+        return None;
+    };
+    if keyword != NATIVE_REGEX_KEYWORD {
+        return None;
+    }
+    let instance = error.instance();
+    let origin = instance.get("origin")?.as_u64()?;
+    Some(SchemaLocation {
+        resource: native_regex_origin(origin),
+        pointer: String::new(),
+    })
+}
+
+fn compile_error(error: ValidationError<'static>, fallback: SchemaLocation) -> SchemaError {
+    let location = native_regex_error_location(&error)
+        .unwrap_or_else(|| validation_error_location(&error, &fallback));
     SchemaError::new(
         SchemaErrorKind::InvalidSchema,
-        format!("schema compilation failed: {e}"),
+        format!("schema compilation failed: {error}"),
     )
-    .at(l)
-    .caused_by(e)
+    .at(location)
+    .caused_by(error)
 }
 fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError> {
     use crate::Value as V;

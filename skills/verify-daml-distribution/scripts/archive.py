@@ -78,7 +78,7 @@ def unpack(archive: Path, destination: Path) -> tuple[Path, dict[str, object]]:
     root = roots.pop()
     suffix = ".exe" if is_zip else ""
     required = {PurePosixPath(root) / name for name in (
-        "BUILD.json", "SOURCES.md", "THIRD-PARTY-NOTICES.txt",
+        "BUILD.json", "LICENSE", "SOURCES.md", "THIRD-PARTY-NOTICES.txt",
         f"bin/daml-lsp{suffix}", f"bin/daml-fmt{suffix}",
     )}
     if files != required:

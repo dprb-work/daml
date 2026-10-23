@@ -1,7 +1,8 @@
 # Native binary archive
 
 A user obtains `daml-lsp` and `daml-fmt` for their OS/architecture without compiling
-the project. The archive carries build identity and third-party notices.
+the project. The archive carries build identity, the canonical DAML MIT `LICENSE`,
+third-party notices, and source inventory.
 
 Reach it through a successful Binaries workflow artifact or the documented local
 packaging command. Supply the inner DAML archive and its sidecar to

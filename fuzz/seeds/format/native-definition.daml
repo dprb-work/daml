@@ -1,0 +1,15 @@
+closed !Object {
+  choice: (!Int # integer branch
+    | !String) & !Number
+  workers: !List {
+    items: !Object {
+      name: !String
+      retries: !Int
+    } = {
+      retries: 3
+    }
+  } = []
+  denied?: !Never
+} = {
+  choice: 3
+}

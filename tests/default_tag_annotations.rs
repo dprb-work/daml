@@ -188,3 +188,101 @@ fn supplied_objects_override_annotated_nonobject_parent_presets() {
     assert_eq!(completed.root().get("scalar").unwrap().tag(), None);
     assert_eq!(completed.root().get("sequence").unwrap().tag(), None);
 }
+#[test]
+fn private_binding_preserves_source_tag_and_applies_definition_fallback_after_field_preset() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {"type": "object", "properties": {
+            "adapter": {
+                "default": {"addr": "localhost", "compression": true},
+                "x-daml-default-tags": [{
+                    "path": "", "tag": "provider.Http", "binding": "private.Http"
+                }]
+            }
+        }, "required": ["adapter"]}},
+        "private.Http": {"schema": {"$id": "urn:private-http", "type": "object", "default": {
+            "addr": "localhost", "timeout": 45, "compression": false
+        }}},
+        "provider.Http": {"schema": {"$ref": "urn:private-http"}}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let document = parse("!Host").unwrap();
+    let omitted = schemas.resolve(&document).unwrap();
+    let adapter = omitted.root().get("adapter").unwrap();
+    assert_eq!(adapter.tag(), Some("provider.Http"));
+    assert_eq!(
+        adapter.to_json(),
+        json!({"addr": "localhost", "timeout": 45, "compression": true})
+    );
+    let document = parse("!Host { adapter: !provider.Http { addr: \"remote\" } }").unwrap();
+    let supplied = schemas.resolve(&document).unwrap();
+    assert_eq!(
+        supplied.root().get("adapter").unwrap().to_json(),
+        json!({"addr": "remote", "timeout": 45, "compression": false})
+    );
+}
+
+#[test]
+fn default_binding_must_name_a_registered_type() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {"properties": {"item": {
+            "default": {}, "x-daml-default-tags": [{
+                "path": "", "tag": "Public", "binding": "private.Missing"
+            }]
+        }}}}
+    }}))
+    .unwrap();
+    assert_eq!(
+        Schemas::compose([module]).err().unwrap().kind,
+        SchemaErrorKind::InvalidSchema
+    );
+}
+
+#[test]
+fn default_tag_display_name_must_obey_source_grammar_even_with_a_private_binding() {
+    let error = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {
+            "default": {},
+            "x-daml-default-tags": [{
+                "path": "", "tag": "provider/Http", "binding": "urn:private:http"
+            }]
+        }},
+        "urn:private:http": {"schema": {"type": "object"}}
+    }}))
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+}
+#[test]
+fn tag_owned_reference_defaults_fill_after_presets_at_every_boundary() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "Host": {"schema": {"type": "object", "properties": {"adapter": {
+            "default": {"x": 9, "z": 3},
+            "x-daml-default-tags": [{"path": "", "tag": "Provider"}]
+        }}, "required": ["adapter"]}},
+        "Provider": {"schema": {
+            "type": "object",
+            "allOf": [{"$ref": "urn:base"}, {"$ref": "urn:extra"}]
+        }},
+        "Base": {"schema": {
+            "$id": "urn:base", "type": "object", "default": {"x": 1}
+        }},
+        "Extra": {"schema": {
+            "$id": "urn:extra", "type": "object", "default": {"y": 2}
+        }}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let document = parse("!Host").unwrap();
+    let omitted = schemas.resolve(&document).unwrap();
+    assert_eq!(
+        omitted.root().get("adapter").unwrap().to_json(),
+        json!({"x": 9, "y": 2, "z": 3})
+    );
+    let document = parse("!Host { adapter: !Provider {} }").unwrap();
+    let supplied = schemas.resolve(&document).unwrap();
+    assert_eq!(
+        supplied.root().get("adapter").unwrap().to_json(),
+        json!({"x": 1, "y": 2})
+    );
+}

@@ -1,8 +1,9 @@
 # Run the hardening tools
 
-DAML's hardening tools exercise the portable parser, native schema ingestion,
-and default resolver. They do not execute application constructors, import
-consumer formats, or finalize the provisional key/tag alphabet.
+DAML's hardening tools exercise the portable data parser, definition syntax and
+reflow formatter, interchange ingestion, and default resolver. They do not execute
+application constructors or import consumer formats. Native filesystem bundle
+loading is covered by bounded integration cases, not a separate fuzz target.
 
 The [recorded baseline](hardening-baseline.md) retains the bounded campaign
 statistics, measurement samples, environment, and interpretation.
@@ -97,7 +98,7 @@ cleanliness, compiler, build flags, CPU affinity, kernel, and timestamp.
 Measurements from a shared machine are observations, not throughput guarantees
 or CI thresholds. Inspect all samples rather than comparing a single minimum.
 
-## Check both dependency graphs
+## Check dependency graphs
 
 ```sh
 ./scripts/check
@@ -105,10 +106,11 @@ cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnin
 cargo deny --locked check
 cargo deny --all-features --locked check
 cargo deny --manifest-path fuzz/Cargo.toml --locked check
+cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
 ```
 
-CI runs the stable gate, default/all-feature library policies, the isolated fuzz
-policy, and a bounded fuzz smoke. The optional LSP dependencies are absent from
-the default native graph. The `libfuzzer-sys` NCSA license exception is
-crate-scoped. Both packages remain unpublished until DAML's own distribution
-terms are selected explicitly.
+CI runs the aggregate gate, default/all-feature library policies, isolated fuzz
+and Python binding policies, and a bounded fuzz smoke. LSP dependencies are absent
+from the default native graph; PyO3 is confined to the binding graph. The
+`libfuzzer-sys` NCSA exception is crate-scoped. All packages remain unpublished
+until DAML's own distribution terms are selected explicitly.

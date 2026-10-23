@@ -37,9 +37,10 @@ on an OS where this driver has not run.
 
 Before driving, confirm the archive and sidecar are from the intended repository
 workflow run and target. The helper checks the SHA-256, rejects unsafe/special or
-duplicate members, requires the fixed five-file payload, and checks the archive
-root against `BUILD.json`. It refuses an existing installation destination.
-A matching checksum establishes integrity, not trust in an unknown publisher.
+duplicate members, requires the fixed six-file payload (including DAML's MIT
+`LICENSE` alongside generated third-party notices and source inventory), and
+checks the archive root against `BUILD.json`. It refuses an existing installation
+destination. A matching checksum establishes integrity, not trust in an unknown publisher.
 
 The OMP path records `omp --version`, uses a fresh project/root marker, and
 constructs isolated HOME/config/data/cache/tmp directories. Its environment does

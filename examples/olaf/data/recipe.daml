@@ -1,0 +1,26 @@
+!olaf.config.Recipe {
+  setup_id: "daily"
+  adapters: {
+    warehouse: !questdb.adapter
+    cache: !redis.adapter
+  }
+  execution: {}
+  optimize: {
+    objective: "score"
+    walker: "search"
+    budget: { candidates: 4 }
+  }
+  steps: [
+    !questdb.json_query {
+      query: """
+        select value
+        from metrics
+      """
+      quest: !questdb.adapter
+      unpack: [
+        "value"
+        0
+      ]
+    }
+  ]
+}

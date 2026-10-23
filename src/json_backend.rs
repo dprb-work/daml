@@ -35,7 +35,16 @@ pub(crate) fn equal_resolved(
     right: &ResolvedNode<'_>,
     tags: bool,
 ) -> bool {
-    if tags && left.tag() != right.tag() {
+    if tags
+        && left
+            .tag
+            .as_ref()
+            .map(|tag| tag.binding.as_deref().unwrap_or(tag.name.as_ref()))
+            != right
+                .tag
+                .as_ref()
+                .map(|tag| tag.binding.as_deref().unwrap_or(tag.name.as_ref()))
+    {
         return false;
     }
     match (&left.value, &right.value) {
