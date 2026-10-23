@@ -101,8 +101,11 @@ on a client's still-open stdin. On graceful shutdown all provided threads join.
 
 ## Boundaries
 
-No completion, hover, symbol indexing, incremental parsing, schema diagnostics,
-editor-specific grammar, or bundle semantic integration is provided.
+The server provides no completion, hover, symbol indexing, incremental parsing,
+schema diagnostics, or bundle semantic integration. Separate
+[client integrations](../integrations/README.md) own editor highlighting,
+process lifecycle, synchronization, and edit application; the grammar is not a
+second language authority.
 
 The protocol DTOs, framing, stdio threads, and shutdown helper come from the
 pinned upstream libraries. The DAML-specific code owns versioned documents,

@@ -338,8 +338,8 @@ complete native JSON Schema coverage, or semantic workspace LSP integration.
 bounded AddressSanitizer campaigns, licensed YAML/DAML corpus cases,
 cumulative-budget regressions, and release time/process-RSS measurements.
 See [the measured evidence](docs/hardening-baseline.md) and
-[reproduction commands](docs/hardening.md). Publication remains blocked on
-an explicit project-license and packaging decision; `publish = false` remains.
+[reproduction commands](docs/hardening.md). The private native release uses the
+MIT license and complete native legal payload; registry `publish = false` remains.
 
 **Result:** an adversarial document cannot turn routine parsing/validation into
 an uncontrolled panic, hang, unbounded recursion, or unintended execution.
@@ -579,24 +579,64 @@ retains its identity-owning lookup. Formatter simplification removes a redundant
 inherited-default guard while retaining the caller fast path and unchanged
 comment/literal framing.
 
-Verification passes the complete `CARGO_BUILD_JOBS=1 ./scripts/check`, including
-53 native-bundle cases and all eleven Python boundary cases. Actual native CLI
-and formatter probes cover retained defaults, scalar/mixed-field rejection,
-container narrowing, and canonical output. The six-file MIT native archive
-passes four installed formatter and five installed LSP contracts. The installed
-OMP 18.12.6 RPC/LSP probe passes with zero model turns and removes its isolated
-state. The skill-owned evaluation record identifies the dirty local artifact;
-only clean CI artifacts of the release commit may be published.
+The complete local aggregate gate passed before final documentation/fuzz repairs.
+The repaired candidate passed its Rust gate and fresh Python component separately
+after a host thread-creation failure; the exact committed candidate then passed
+the complete aggregate, dependency-policy, and fuzz gates on GitHub. Coverage
+includes 53 native-bundle cases and all eleven Python boundary cases. Actual
+native CLI/formatter probes cover retained defaults, scalar/mixed-field rejection,
+container narrowing, and canonical output. The six-file MIT native archives pass
+installed formatter/LSP contracts on Linux, macOS, and Windows. The clean released
+Linux archive also passes the real OMP 18.12.6 RPC/LSP probe with zero model turns
+and removes its isolated state. The earlier skill record remains explicitly
+dirty-local proof, not the published archive's provenance.
 Review repair moves the composition example's scalar data into its record
 preset. Separate valid formatter seeds retain grouped bare-tagged container
 presets and grouped multiline scalar-root framing. Both seeds reach the actual
 formatter, and `scripts/fuzz-smoke 100` passes all four bounded corpus runs.
 
-Publish the verified core as a private GitHub release with MIT-licensed source,
-native archives, and dependency notices. Keep repository visibility private and
-crate/PyPI publication disabled. Editor integrations for VS Code/Cursor and
-OMP/DSH follow the core release; they wrap the existing syntax/formatting LSP
-rather than adding schema-aware editor features.
+The private [v0.1.0 release](https://github.com/dprb-work/daml/releases/tag/v0.1.0)
+publishes three native archives and checksum sidecars from clean main commit
+`a75ae1ef881180c1c684ee0f68710091e23c650f`, after both main workflows passed.
+Every archive identifies that commit and includes MIT/dependency notices.
+Uploaded archive digests match the verified CI downloads; authenticated retrieval
+and checksum verification of the published Linux asset also pass. Repository
+visibility remains private; crate/PyPI publication remains disabled.
+
+### Editor and host integrations
+
+The [integration packages](integrations/README.md) follow the published core:
+an installable VS Code/Cursor VSIX and mergeable OMP/DSH registrations. They use
+the existing syntax/formatting LSP, not schema-aware editor features. The VSIX
+uses `vscode-languageclient`, a distinct language ID, a machine-scoped executable
+setting, workspace trust, and generated bundled dependency notices.
+
+Native DSH reuses Soul's canonical client and workspace authorization boundary.
+Its generic formatting preview returns `{ uri, version, edits }` without writes;
+`version` is the opaque filesystem freshness token. A private LSP document
+generation guard rejects concurrent same-document synchronization. The real-server
+regression fails before that guard and passes after it.
+Cold-start overlap has a separate real-server regression: reserve each document
+generation before awaiting notification writes, so duplicate opens cannot pair
+earlier text with a newer filesystem token. It fails before reservation and
+passes afterward. The installed VSIX also retains the standard language client's
+executable Unix termination helper; a lingering-parent restart case fails without
+that asset and passes with it. Native smoke cleanup runs even if disposal fails.
+
+Actual verification covers installed VS Code 1.105.1 diagnostics/clearing,
+Unicode edit application, idempotence and invalid-input preservation; a rendered
+editor session also exercises the error-to-valid-to-formatted transition.
+Trusted/restricted Electron cases preserve the executable-setting boundary and
+prevent untrusted server launch while retaining highlighting. Actual TextMate
+checks cover string/Regex boundaries; the escaped-backslash comment-scope
+regression fails before the grammar fix and passes afterward.
+The packaged registration passes real OMP 18.12.6 RPC. Native DSH passes its
+real Cordis/tools/local-filesystem/workspace-adapter smoke and lifecycle/snapshot
+regressions. Strict client builds, npm audits, and Soul's full `pnpm run check`
+pass. Cursor compatibility is
+declared through the VS Code API; Cursor itself was not launched. No active host
+installation/configuration is changed.
+
 
 ### Conversion agenda
 
@@ -620,8 +660,7 @@ Treat configuration conversion and definition conversion as separate contracts:
   Reuse existing tooling if source-preserving YAML editing is needed.
 
 No converter is implemented by this agenda. Native `contains`, conditionals,
-general negation, editor-specific integrations, and package/network retrieval
-remain outside this delivery.
+general negation, and package/network retrieval remain outside this delivery.
 
 ### Helm assessment
 

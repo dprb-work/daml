@@ -1,0 +1,78 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "DAML",
+  "scopeName": "source.daml",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#tripleDouble" },
+    { "include": "#tripleSingle" },
+    { "include": "#rawRegex" },
+    { "include": "#doubleString" },
+    { "include": "#tag" },
+    { "include": "#keys" },
+    { "include": "#keywords" },
+    { "include": "#numbers" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.daml", "match": "#.*$" }
+      ]
+    },
+    "tripleDouble": {
+      "name": "string.quoted.triple.double.daml",
+      "begin": "\"\"\"[ \\t]*$",
+      "end": "^([ \\t]*)\"\"\"[ \\t]*(#.*)?$",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.daml" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.daml" } },
+      "patterns": [{ "match": "\\\\\\\\|\\\\\"\"\"", "name": "constant.character.escape.daml" }]
+    },
+    "tripleSingle": {
+      "name": "string.quoted.triple.single.daml",
+      "begin": "'''[ \\t]*$",
+      "end": "^([ \\t]*)'''[ \\t]*(#.*)?$",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.daml" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.daml" } },
+      "patterns": [{ "match": "\\\\\\\\|\\\\'''", "name": "constant.character.escape.daml" }]
+    },
+    "rawRegex": {
+      "name": "string.regexp.daml",
+      "begin": "(!Regex)(\\s+)(\")",
+      "end": "\"|$",
+      "beginCaptures": {
+        "1": { "name": "entity.name.type.tag.daml" },
+        "2": { "name": "punctuation.whitespace.daml" },
+        "3": { "name": "punctuation.definition.string.begin.daml" }
+      },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.daml" } }
+    },
+    "doubleString": {
+      "name": "string.quoted.double.daml",
+      "begin": "\"",
+      "end": "\"|$",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.daml" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.daml" } },
+      "patterns": [{ "match": "\\\\(?:[\\\\\"/bfnrt]|u[0-9A-Fa-f]{4})", "name": "constant.character.escape.daml" }]
+    },
+    "keys": {
+      "name": "entity.name.label.daml",
+      "match": "[\\p{L}\\p{N}_./-][\\p{L}\\p{N}\\p{M}_./-]*(?=\\s*:)"
+    },
+    "tag": {
+      "name": "entity.name.type.tag.daml",
+      "match": "![\\p{L}\\p{N}_-][\\p{L}\\p{N}\\p{M}_-]*(?:\\.[\\p{L}\\p{N}_-][\\p{L}\\p{N}\\p{M}_-]*)*"
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.daml", "match": "\\b(?:closed|unset)\\b" },
+        { "name": "constant.language.daml", "match": "\\b(?:true|false|null)\\b" },
+        { "name": "entity.name.type.daml", "match": "\\b(?:String|Bool|Int|Number|Object|List|Tuple|Map|Any|Never|Regex)\\b" }
+      ]
+    },
+    "numbers": { "name": "constant.numeric.daml", "match": "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?" },
+    "operators": { "name": "keyword.operator.daml", "match": "[&|=?:]" },
+    "punctuation": { "name": "punctuation.definition.collection.daml", "match": "[{}\\[\\](),]" }
+  }
+}

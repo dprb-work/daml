@@ -1,0 +1,16 @@
+{
+  "name": "@dprb-work/daml-integration-verify",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated real-host verification for installable DAML integrations.",
+  "scripts": {
+    "test:grammar": "node vscode/grammar.test.cjs",
+    "test:vscode": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/run.mjs",
+    "test:vscode:visual": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/visual.mjs"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "2.5.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.2.0"
+  }
+}
