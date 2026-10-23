@@ -137,3 +137,23 @@ route. Do not add a duplicate project license.
 These package manifests keep crates unpublished. Python wheel and sdist assets
 are not part of the current release route; if added later, they also need generated
 third-party notices in addition to the project license.
+
+## Editor and host integrations
+
+`integrations/vscode/package-lock.json` pins the separate editor-client graph.
+The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
+dependencies, not a copied or modified protocol implementation. Packaging
+generates `THIRD-PARTY-NOTICES.txt` from license/notice files belonging to packages
+identified by the esbuild bundle metadata and stages the canonical DAML license.
+The build also copies that exact language-client package's
+`lib/node/terminateProcess.sh` beside the bundle with executable permission,
+retaining its Microsoft copyright/MIT notice and the standard client's Unix
+process-cleanup behavior. The dependency lock owns updates; no maintained fork
+of that helper is checked in.
+
+`integrations/verify/package-lock.json` pins independent development-only
+Electron and TextMate/Oniguruma verification tools. Its downloaded VS Code
+runtime is an ignored local test cache, not a redistributed part of DAML.
+Native archives retain their separate Cargo graph and legal payload.
+OMP/DSH integration payloads contain configuration only; Soul owns the native
+DSH client and its dependency graph.

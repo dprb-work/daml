@@ -1,0 +1,68 @@
+{
+  "name": "definitively-asserted-daml",
+  "displayName": "Definitively Asserted DAML",
+  "description": "Syntax highlighting, diagnostics, and formatting for DAML documents.",
+  "version": "0.1.0",
+  "publisher": "dprb-work",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dprb-work/daml.git",
+    "directory": "integrations/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Formatters"],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onLanguage:definitively-asserted-daml"],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting remains available; the language server starts only after workspace trust is granted."
+    }
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "definitively-asserted-daml",
+        "aliases": ["Definitively Asserted DAML", "DAML"],
+        "extensions": [".daml"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "definitively-asserted-daml",
+        "scopeName": "source.daml",
+        "path": "./syntaxes/daml.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Definitively Asserted DAML",
+      "properties": {
+        "definitivelyAssertedDaml.serverPath": {
+          "type": "string",
+          "default": "daml-lsp",
+          "description": "Path to the daml-lsp executable. Set an absolute path in user settings; workspace overrides are not permitted.",
+          "scope": "machine"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --metafile=dist/meta.json --outfile=dist/extension.js && node scripts/stage-runtime-assets.mjs",
+    "package": "npm run build && node scripts/stage-license.mjs && node scripts/stage-third-party-notices.mjs && vsce package --no-dependencies --out definitively-asserted-daml-0.1.0.vsix",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.10",
+    "@types/vscode": "1.85.0",
+    "@vscode/vsce": "4.0.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.7.3"
+  }
+}

@@ -11,12 +11,14 @@ validation. Deeply nested tags need no central discriminator map. A low-level
 JSON Schema interchange API remains available. Reflow formatting, an optional
 stdio LSP, and a separate native Python extension are implemented.
 
-Binary distribution proof is complete. See the
-[language walkthrough](docs/language-walkthrough.md) for confirmed choices and
-current behavior. The [distribution guide](docs/distribution.md) owns archive
-and installation details.
+The private [v0.1.0 release](https://github.com/dprb-work/daml/releases/tag/v0.1.0)
+contains verified Linux, macOS, and Windows native archives with checksums.
+See the [language walkthrough](docs/language-walkthrough.md) for confirmed choices
+and current behavior, and the [distribution guide](docs/distribution.md) for
+archive provenance and installation.
 
-Editor-specific integrations remain deferred.
+The [editor and host integrations](integrations/README.md) provide a VS Code/Cursor
+VSIX and native OMP/DSH registration payloads around the existing language server.
 
 ## Design
 

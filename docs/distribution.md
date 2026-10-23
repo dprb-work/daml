@@ -112,10 +112,10 @@ target names must match the downloaded archive. Keep the metadata and notices
 with the installed executables. `daml-lsp` starts stdio service with no arguments;
 `--help` is not a server mode.
 
-The [LSP guide](lsp.md) describes the protocol capabilities. Registration in a
-client remains a client configuration step; no editor-specific integration is
-shipped here. In particular, an OMP project/root marker is not a DAML schema-root
-policy.
+The [LSP guide](lsp.md) describes the protocol capabilities. Separate
+[editor/host packages](../integrations/README.md) provide VS Code/Cursor and
+OMP/DSH integration; they are not part of the native archives. An OMP project/root
+marker locates its server process, not a DAML schema root.
 
 ## Verify the installed archive
 
@@ -151,4 +151,4 @@ TUI or GUI-editor claim is implied.
 The [Python extension](python.md) is a separate package and build graph; it does
 not change these native archives or add a Python runtime requirement to them.
 The [plan](../PLAN.md#next-sequence) owns remaining language and conversion work.
-Editor integrations stay deferred.
+The [integration guide](../integrations/README.md) owns client packaging and verification.

@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "daml": {
+      "command": "daml-lsp",
+      "args": [],
+      "fileTypes": [".daml"],
+      "languageId": "daml",
+      "rootMarkers": ["daml.bundle", ".git"]
+    }
+  }
+}
