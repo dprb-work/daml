@@ -8,9 +8,9 @@ were copied. This is not a performance comparison or project-license decision.
 ## Keep language decisions separate from presentation
 
 The user confirmed the triple-string framing below. The
-[edge-case record](edge-cases.md) distinguishes that decision from 45 executable
-observations and the remaining provisional key/tag alphabet. Formatter work
-preserves existing meanings rather than introducing parser rules.
+[edge-case record](edge-cases.md) retains 45 historical executable observations.
+Its name-alphabet observations predate the current syntax contract. Formatter
+work preserves language meanings rather than selecting parser rules.
 
 The current [syntax contract](syntax.md#triple-string-boundaries) requires a line
 ending after either triple opener, allowing only spaces/tabs before it. The
@@ -34,15 +34,15 @@ The decoded value is `"hello"`, without a leading or trailing newline. A rebuilt
 | CRLF delimiter/content line endings | `"hello"` |
 | Empty block, opener immediately followed by its closing line | `""` |
 
-The user confirmed these framing rules. Other observations and unresolved
-language choices remain explicit in the edge-case record rather than being
-settled indirectly by formatter presentation.
+The user confirmed these framing rules. The [syntax
+contract](syntax.md#triple-string-boundaries) owns later decisions; formatter
+presentation does not select parser behavior.
 
 ## What can actually be reused
 
 | Candidate | Primary-source facts | DAML recommendation |
 |---|---|---|
-| **`tiny_pretty` 0.4.5** | Rust Wadler-style document printer with nesting, groups, hard lines, and width-dependent breaks. MIT; its published manifest has an optional `unicode-width` dependency and no required normal dependency. `Doc::text` must not contain line breaks. [API][tiny-api], [document primitives][tiny-doc], [manifest][tiny-manifest] | Compact native alternative. Its public document API does not provide signed/dynamic nesting; preserving blank-only literal bodies under structural indentation would need additional handling. Not selected for this implementation. |
+| **`tiny_pretty` 0.4.5** | Rust Wadler-style document printer with nesting, groups, hard lines, and width-dependent breaks. MIT; its published manifest has an optional `unicode-width` dependency and no required normal dependency. `Doc::text` must not contain line breaks. [API][tiny-api], [document primitives][tiny-doc], [manifest][tiny-manifest] | Compact native alternative. Its public document API does not provide signed/dynamic nesting; keeping nonblank literal content independent of structural indentation would need additional handling. Not selected for this implementation. |
 | **`pretty` 0.12.5** | Rust Wadler-style printer with boxed, reference-counted, and arena allocation APIs. MIT; required dependencies include `arrayvec`, `typed-arena`, and `unicode-width`. [API][pretty-api], [manifest][pretty-manifest] | Selected. Dynamic nesting and signed indentation offsets keep literal bodies outside structural indentation without a custom renderer. No executed performance evidence favors it or `tiny_pretty`. |
 | **Pretty YAML 0.6.0**, revision `c4068f4` | Rust YAML formatter. Its formatter package uses `yaml_parser`, Rowan, and `tiny_pretty`; its dprint integration lives in a separate package. MIT. [formatter manifest][yaml-manifest], [plugin manifest][yaml-plugin], [README][yaml-readme] | Closest concrete Rust implementation reference, especially the separation of formatter library and host integration. Not a drop-in DAML formatter: its parser and rules target YAML. |
 | **dprint / `dprint-core` 0.71.0** | Host supports Wasm and process plugins; plugins need not use its printer. Native Rust `dprint-core::formatting` provides print items and rendering. Its MIT manifest keeps formatting, Wasm, process communication, and async runtime features distinct. Host CLI already provides file selection, ignore handling, stdin, `check`, and incremental formatting. [plugins][dprint-plugin], [core API][dprint-api], [manifest][dprint-manifest], [CLI][dprint-cli] | Candidate for reusing surrounding tooling rather than writing our own formatting platform. A thin plugin should call the same Rust formatting library. Adopting dprint as host does not require adopting its printer, or vice versa; Wasm is not required for native core use. |
@@ -56,13 +56,13 @@ reflow, building documents from the existing AST and source spans. No second
 parser or formatting engine is introduced. The parser and formatter share one
 whitespace/comment scanner; comments are read from AST-delimited source gaps.
 
-The decisive fixture is a blank-only triple-double body. Such a body has zero
-dedent margin, so adding structural spaces to every body line changes its value.
-`pretty` provides [dynamic nesting][pretty-nesting] and
-[signed nesting offsets][pretty-builder], allowing the formatter to preserve
-body indentation and independently align the closing delimiter. `tiny_pretty`
-was the initial source-only preference, but this demonstrated requirement favors
-the existing capability in `pretty`. This is not a speed or code-size claim.
+At selection time, the decisive fixture was a blank-only triple-double body
+under the then-current parser behavior. The current grammar instead strips
+horizontal whitespace from entirely blank bodies while preserving their line
+breaks. Dynamic nesting and signed indentation remain useful for keeping
+nonblank literal content independent of surrounding structural indentation and
+aligning the closing delimiter. Replacing the selected printer would add churn
+without removing a demonstrated responsibility.
 
 The [formatter guide](formatting.md) owns the public API and presentation rules.
 

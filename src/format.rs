@@ -76,31 +76,36 @@ pub fn format(document: &Document, options: FormatOptions) -> Result<String, For
         source: document.source(),
         arena: &arena,
     };
-    let bom_end = usize::from(printer.source.starts_with('\u{feff}')) * 3;
-    let (leading, has_leading) = printer.comments(bom_end, document.root().span.start);
-    let mut output_doc = arena.text(&printer.source[..bom_end]).append(leading);
-    if has_leading {
-        output_doc = output_doc.append(arena.hardline());
-    }
-    output_doc = output_doc.append(printer.node(document.root()));
-    let (trailing, _) = printer.comments(document.root().span.end, printer.source.len());
-    output_doc = output_doc.append(trailing).append(arena.hardline());
-    let mut output = String::with_capacity(document.source().len());
-    output_doc
-        .render_fmt(options.line_width, &mut output)
-        .expect("rendering into a String cannot fail");
-    Ok(output)
+    Ok(printer.finish(document.root().span, printer.node(document.root()), options))
 }
 
-type Printed<'a> = DocBuilder<'a, Arena<'a>>;
+pub(crate) type Printed<'a> = DocBuilder<'a, Arena<'a>>;
 
-struct Printer<'a> {
-    source: &'a str,
-    arena: &'a Arena<'a>,
+pub(crate) struct Printer<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) arena: &'a Arena<'a>,
 }
 
 impl<'a> Printer<'a> {
-    fn node(&self, node: &Node) -> Printed<'a> {
+    pub(crate) fn finish(&self, span: Span, root: Printed<'a>, options: FormatOptions) -> String {
+        let bom_end = usize::from(self.source.starts_with('\u{feff}')) * 3;
+        let (leading, has_leading) = self.comments(bom_end, span.start);
+        let mut doc = self.arena.text(&self.source[..bom_end]).append(leading);
+        if has_leading {
+            doc = doc.append(self.arena.hardline());
+        }
+        let (trailing, _) = self.comments(span.end, self.source.len());
+        doc = doc
+            .append(root)
+            .append(trailing)
+            .append(self.arena.hardline());
+        let mut output = String::with_capacity(self.source.len());
+        doc.render_fmt(options.line_width, &mut output)
+            .expect("rendering into a String cannot fail");
+        output
+    }
+
+    pub(crate) fn node(&self, node: &Node) -> Printed<'a> {
         let mut start = node.tag.map_or(node.span.start, |tag| tag.end);
         while matches!(self.source.as_bytes().get(start), Some(b' ' | b'\t'))
             && start < node.span.end
@@ -181,7 +186,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn collection(
+    pub(crate) fn collection(
         &self,
         delimiters: (&'static str, &'static str),
         span: Span,
@@ -227,7 +232,7 @@ impl<'a> Printer<'a> {
 
     // Comments share the parser's scanner; no second lexer or AST parse is needed.
     // The result has no trailing separator, so its caller controls closing indentation.
-    fn comments(&self, start: usize, end: usize) -> (Printed<'a>, bool) {
+    pub(crate) fn comments(&self, start: usize, end: usize) -> (Printed<'a>, bool) {
         let mut printed = self.arena.nil();
         let mut cursor = start;
         let mut has_comments = false;
@@ -265,12 +270,10 @@ impl<'a> Printer<'a> {
         }
         let body = self.literal_lines(&raw[body_start..body_end]).into_doc();
         let arena = self.arena;
-        // Literal blank-only bodies have zero dedent margin. Indenting every body
-        // line would change their value; cancel structural indentation for the body.
+        // Keep literal lines independent of surrounding structural indentation.
+        // The parser owns dedent and all-blank normalization; the formatter
+        // preserves the chosen source body without turning indentation into data.
         let literal = arena.nesting(move |indent| {
-            // `pretty` chooses a hardline's indentation from the next document.
-            // Keep a zero-width command at the body indentation even when the
-            // preserved body is empty, or structural indentation becomes data.
             let boundary = arena.column(|_| arena.nil().into_doc());
             arena
                 .hardline()

@@ -1,0 +1,55 @@
+[
+  {
+    "input": "omitted.daml",
+    "expected": {
+      "name": "demo",
+      "mode": "read",
+      "adapter": {"addr": "localhost", "timeout": 45, "compression": true},
+      "workers": [{"name": "primary", "retries": 3}],
+      "labels": {},
+      "range": [1, 10]
+    },
+    "adapter_tag": "provider.Http",
+    "address_origin": "default"
+  },
+  {
+    "input": "supplied.daml",
+    "expected": {
+      "name": "example",
+      "mode": "read",
+      "adapter": {"addr": "remote", "timeout": 45, "compression": false},
+      "workers": [{"name": "secondary", "retries": 3}],
+      "labels": {"app.version": "v2", "/health": "ok", "200": "ok", "東京": "Tokyo"},
+      "range": [1, 10]
+    },
+    "adapter_tag": "http.Http",
+    "address_origin": "input"
+  },
+  {
+    "input": "patched.daml",
+    "expected": {
+      "name": "demo",
+      "mode": "read",
+      "adapter": {"addr": "remote", "timeout": 45, "compression": true},
+      "workers": [{"name": "primary", "retries": 3}],
+      "labels": {},
+      "range": [1, 10]
+    },
+    "adapter_tag": "provider.Http",
+    "address_origin": "input"
+  },
+  {
+    "input": "untagged-nested.daml",
+    "expected": {
+      "adapter": {"addr": "remote", "timeout": 45, "compression": false}
+    },
+    "adapter_tag": "http.Http",
+    "address_origin": "input"
+  },
+  {"input": "missing-worker-name.daml", "resolve_error": "SchemaViolation", "path": "/workers/0"},
+  {"input": "forbidden-field.daml", "resolve_error": "SchemaViolation", "path": "/deprecated"},
+  {"input": "empty-range.daml", "resolve_error": "SchemaViolation", "path": "/range"},
+  {"input": "private-alias.daml", "native_error": "UnknownReference"},
+  {"input": "boundary-crossing.daml", "native_error": "NestedBundleBoundary"},
+  {"input": "inherited-invalid-default.daml", "native_error": "InvalidDefault"}
+]

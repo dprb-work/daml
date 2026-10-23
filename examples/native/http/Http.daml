@@ -1,0 +1,7 @@
+closed !net.Adapter {
+  compression: !Bool
+} = {
+  addr: "localhost"
+  timeout: 45
+  compression: false
+}

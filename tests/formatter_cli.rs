@@ -87,9 +87,11 @@ fn file_input_is_formatted_without_changing_source() {
 
 #[test]
 fn invalid_source_and_cli_errors_exit_two() {
-    let invalid = cli(&[], b"{broken:");
-    assert_eq!(invalid.status.code(), Some(2));
-    assert!(invalid.stdout.is_empty());
+    for source in [b"{broken:".as_slice(), b"{ x: !Int = 1 = 2 }"] {
+        let invalid = cli(&[], source);
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(invalid.stdout.is_empty());
+    }
     for args in [
         &["--width", "0"][..],
         &["--width"][..],
@@ -100,5 +102,33 @@ fn invalid_source_and_cli_errors_exit_two() {
         let output = cli(args, b"{}");
         assert_eq!(output.status.code(), Some(2), "args: {args:?}");
         assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn adjacent_tag_payloads_remain_valid_data_after_cli_formatting() {
+    for (source, sequence) in [
+        ("!vendor.Payload[\"text\"]", true),
+        ("!vendor.Payload\"text\"", false),
+    ] {
+        let input = daml::parse(source).unwrap();
+        assert_eq!(input.tag(input.root()), Some("vendor.Payload"));
+        let output = cli(&[], source.as_bytes());
+        assert!(
+            output.status.success(),
+            "{source}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let formatted = daml::parse(String::from_utf8(output.stdout).unwrap()).unwrap();
+        assert_eq!(formatted.tag(formatted.root()), Some("vendor.Payload"));
+        let payload = match (&formatted.root().value, sequence) {
+            (daml::Value::Sequence(items), true) => {
+                assert_eq!(items.len(), 1);
+                &items[0]
+            }
+            (daml::Value::String(_), false) => formatted.root(),
+            _ => panic!("formatter changed payload kind for {source}"),
+        };
+        assert_eq!(formatted.string(payload), Some("text"));
     }
 }

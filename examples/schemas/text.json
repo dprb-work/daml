@@ -1,0 +1,18 @@
+{
+  "types": {
+    "text.Request": {
+      "schema": {
+        "$id": "https://daml.invalid/text/request",
+        "type": "object",
+        "description": "A request schema expressed using JSON Schema interchange.",
+        "properties": {
+          "instruction": {"type": "string", "minLength": 1},
+          "context": {"type": "string", "default": ""},
+          "request_id": {"type": "string", "default": "local"}
+        },
+        "required": ["instruction", "context"],
+        "additionalProperties": false
+      }
+    }
+  }
+}

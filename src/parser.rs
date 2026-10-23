@@ -1,3 +1,5 @@
+pub(crate) mod native;
+use crate::names::{valid_key, valid_tag};
 use crate::source::line_end;
 use crate::{Entry, ErrorKind, Limits, Node, ParseError, Span, Value};
 use std::collections::HashSet;
@@ -157,6 +159,9 @@ impl Parser<'_> {
                     self.pos,
                 ));
             }
+            if !valid_tag(&self.source[tag_start..self.pos]) {
+                return Err(self.error(ErrorKind::InvalidTag, tag_start, self.pos));
+            }
             let tag_end = self.pos;
             let tag = Span {
                 start: tag_start,
@@ -167,7 +172,7 @@ impl Parser<'_> {
                 return Err(self.error(ErrorKind::InvalidTag, self.pos, self.char_end(self.pos)));
             }
             let next = self.peek();
-            if next.is_none() || matches!(next, Some('}' | ']' | '#' | '\r' | '\n')) {
+            if next.is_none() || matches!(next, Some('}' | ']' | ')' | '#' | '\r' | '\n')) {
                 if parent_depth + 1 > self.limits.max_depth || parent_depth + 1 > HARD_MAX_DEPTH {
                     return Err(self.error(ErrorKind::LimitExceeded, start, tag_end));
                 }
@@ -373,6 +378,9 @@ impl Parser<'_> {
             if self.pos - key_start > self.limits.max_scalar_bytes {
                 return Err(self.error(ErrorKind::LimitExceeded, key_start, self.pos));
             }
+            if !valid_key(&self.source[key_start..self.pos]) {
+                return Err(self.error(ErrorKind::ExpectedKey, key_start, self.pos));
+            }
             let key = Span {
                 start: key_start,
                 end: self.pos,
@@ -437,6 +445,8 @@ fn is_name_char(ch: char) -> bool {
             '{' | '}'
                 | '['
                 | ']'
+                | '('
+                | ')'
                 | ':'
                 | ','
                 | '#'

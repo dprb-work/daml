@@ -455,15 +455,15 @@ fn a_missing_property_can_take_an_unambiguous_union_default() {
 }
 
 #[test]
-fn union_selection_does_not_give_root_defaults_precedence_over_branch_defaults() {
+fn root_preset_is_applied_before_union_branch_fallbacks() {
     let schemas = schemas(json!({
         "default": {"choice": 1},
         "anyOf": [{"default": {"choice": 2}}]
     }));
     let input = parse("!app.Config").unwrap();
     assert_eq!(
-        schemas.resolve(&input).unwrap_err().kind,
-        ResolveErrorKind::AmbiguousDefault
+        schemas.resolve(&input).unwrap().to_json(),
+        json!({"choice": 1})
     );
     let supplied = parse("!app.Config { choice: 9 }").unwrap();
     assert_eq!(
@@ -473,7 +473,7 @@ fn union_selection_does_not_give_root_defaults_precedence_over_branch_defaults()
 }
 
 #[test]
-fn defaults_on_children_do_not_invent_a_missing_parent_object() {
+fn required_parent_containers_are_materialized_before_child_defaults() {
     let schemas = schemas(json!({
         "type": "object",
         "properties": {"settings": {
@@ -484,8 +484,8 @@ fn defaults_on_children_do_not_invent_a_missing_parent_object() {
     }));
     let input = parse("!app.Config").unwrap();
     assert_eq!(
-        schemas.resolve(&input).unwrap_err().kind,
-        ResolveErrorKind::SchemaViolation
+        schemas.resolve(&input).unwrap().to_json(),
+        json!({"settings": {"enabled": true}})
     );
 }
 
@@ -507,7 +507,7 @@ fn unions_without_defaults_are_validated_without_candidate_explosion() {
 }
 
 #[test]
-fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
+fn definition_defaults_fill_only_fields_missing_from_the_per_use_preset() {
     let host = SchemaModule::from_value(json!({"types": {
         "Host": {"schema": {
             "type": "object",
@@ -523,16 +523,16 @@ fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
     let schemas = Schemas::compose([host, provider]).unwrap();
     let partial = parse("{}").unwrap();
     assert_eq!(
-        schemas.resolve_as(&partial, "Host").unwrap_err().kind,
-        ResolveErrorKind::AmbiguousDefault
+        schemas.resolve_as(&partial, "Host").unwrap().to_json(),
+        json!({"value": 1})
     );
     let explicitly_tagged = parse("!Provider").unwrap();
     assert_eq!(
         schemas
             .resolve_as(&explicitly_tagged, "Host")
-            .unwrap_err()
-            .kind,
-        ResolveErrorKind::AmbiguousDefault
+            .unwrap()
+            .to_json(),
+        json!({"value": 2})
     );
     let supplied = parse("{ value: 9 }").unwrap();
     let completed = schemas.resolve_as(&supplied, "Host").unwrap();
@@ -541,7 +541,7 @@ fn a_generated_tag_does_not_hide_conflicting_payload_defaults() {
 }
 
 #[test]
-fn a_missing_tagged_property_keeps_default_conflicts_visible() {
+fn tagged_definition_fallback_does_not_conflict_with_a_per_use_default() {
     let host = SchemaModule::from_value(json!({"types": {
         "Host": {"schema": {
             "$id": "urn:host",
@@ -564,8 +564,8 @@ fn a_missing_tagged_property_keeps_default_conflicts_visible() {
     for input in ["!Container", "!Container { child: {} }"] {
         let document = parse(input).unwrap();
         assert_eq!(
-            schemas.resolve(&document).unwrap_err().kind,
-            ResolveErrorKind::AmbiguousDefault
+            schemas.resolve(&document).unwrap().to_json(),
+            json!({"child": {"value": 1}})
         );
     }
 }
@@ -689,4 +689,269 @@ fn uniqueness_work_propagates_through_references_to_default_created_arrays() {
     exact
         .resolve_with_limits(&small, None, limits)
         .expect("small exact comparison fits the same budget");
+}
+#[test]
+fn required_containers_are_constructed_but_optional_containers_stay_absent() {
+    let schemas = schemas(json!({
+        "type": "object",
+        "properties": {
+            "object": {"type": "object"},
+            "array": {"type": "array"},
+            "optional": {"type": "object"}
+        },
+        "required": ["object", "array"]
+    }));
+    let document = parse("!app.Config").unwrap();
+    let resolved = schemas.resolve(&document).unwrap();
+    assert_eq!(resolved.to_json(), json!({"object": {}, "array": []}));
+}
+
+#[test]
+fn implicit_container_union_candidates_with_different_outputs_are_ambiguous() {
+    let schemas = schemas(json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {"left": {"type": "object"}},
+                "required": ["left"]
+            },
+            {
+                "type": "object",
+                "properties": {"right": {"type": "array"}},
+                "required": ["right"]
+            }
+        ]
+    }));
+    assert_eq!(
+        schemas
+            .resolve(&parse("!app.Config").unwrap())
+            .unwrap_err()
+            .kind,
+        ResolveErrorKind::AmbiguousDefault
+    );
+}
+#[test]
+fn lean_container_completion_expands_references_and_conjunctions() {
+    let schemas = schemas(json!({
+        "type": "object",
+        "properties": {"settings": {"$ref": "#/$defs/Settings"}},
+        "required": ["settings"],
+        "$defs": {
+            "Settings": {
+                "allOf": [
+                    {"type": "object"},
+                    {
+                        "properties": {"entries": {"type": "array"}},
+                        "required": ["entries"]
+                    }
+                ]
+            }
+        }
+    }));
+    assert_eq!(
+        schemas
+            .resolve(&parse("!app.Config").unwrap())
+            .unwrap()
+            .to_json(),
+        json!({"settings": {"entries": []}})
+    );
+}
+
+#[test]
+fn supplied_objects_complete_required_containers_through_nested_union_branches() {
+    let schemas = schemas(json!({
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "nested": {"anyOf": [
+                        {"type": "array", "items": {"type": "string"}},
+                        {"type": "integer"}
+                    ]}
+                },
+                "required": ["nested"]
+            },
+            {"type": "string"}
+        ]
+    }));
+    let document = parse("!app.Config {}").unwrap();
+    assert_eq!(
+        schemas.resolve(&document).unwrap().to_json(),
+        json!({"nested": []})
+    );
+}
+
+#[test]
+fn union_completion_discovers_required_containers_inside_supplied_children() {
+    for (schema, source, expected) in [
+        (
+            json!({"anyOf": [
+                {"type": "object", "properties": {
+                    "child": {"type": "object", "properties": {
+                        "entries": {"type": "array", "items": {"type": "integer"}}
+                    }, "required": ["entries"]}
+                }, "required": ["child"]},
+                false
+            ]}),
+            "{ child: {} }",
+            json!({"child": {"entries": []}}),
+        ),
+        (
+            json!({"anyOf": [
+                {"type": "array", "items": {
+                    "type": "object", "properties": {
+                        "entries": {"type": "array", "items": {"type": "integer"}}
+                    }, "required": ["entries"]
+                }},
+                false
+            ]}),
+            "[{}]",
+            json!([{"entries": []}]),
+        ),
+    ] {
+        let schemas = schemas(schema);
+        let input = parse(source).unwrap();
+        assert_eq!(
+            schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn external_union_fallback_precedence_is_independent_of_schema_factoring() {
+    for branch in [
+        json!({"default": {"choice": 2}}),
+        json!({"allOf": [{"default": {"choice": 2}}]}),
+        json!({"$ref": "#/$defs/Fallback"}),
+    ] {
+        let schemas = schemas(json!({
+            "$defs": {"Fallback": {"default": {"choice": 2}}},
+            "default": {"choice": 1},
+            "anyOf": [branch]
+        }));
+        let input = parse("{}").unwrap();
+        assert_eq!(
+            schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+            json!({"choice": 1})
+        );
+    }
+}
+
+#[test]
+fn union_container_completion_combines_conjunctive_requiredness_and_shape() {
+    for schema in [
+        json!({"anyOf": [
+            {"allOf": [
+                {"properties": {"entries": {"type": "array"}}},
+                {"required": ["entries"]}
+            ]},
+            false
+        ]}),
+        json!({
+            "$defs": {"Required": {"required": ["entries"]}},
+            "anyOf": [
+                {"allOf": [
+                    {"properties": {"entries": {"type": "array"}}},
+                    {"$ref": "#/$defs/Required"}
+                ]},
+                false
+            ]
+        }),
+        json!({"allOf": [
+            {"required": ["entries"]},
+            {"anyOf": [
+                {"properties": {"entries": {"type": "array"}}},
+                false
+            ]}
+        ]}),
+    ] {
+        let schemas = schemas(schema);
+        let input = parse("{}").unwrap();
+        assert_eq!(
+            schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+            json!({"entries": []})
+        );
+    }
+}
+
+#[test]
+fn common_completion_does_not_activate_independent_inert_unions() {
+    let schemas = schemas(json!({
+        "properties": {"entries": {"type": "array"}},
+        "required": ["entries"],
+        "default": {"entries": []},
+        "allOf": (0..20).map(|_| json!({"anyOf": [
+            {"type": "object"}, {"maxProperties": 3}
+        ]})).collect::<Vec<_>>()
+    }));
+    let input = parse("{}").unwrap();
+    assert_eq!(
+        schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+        json!({"entries": []})
+    );
+}
+
+#[test]
+fn union_discovery_includes_additional_properties_and_child_conjunctions() {
+    let additional = json!({
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "properties": {"entries": {"type": "array"}},
+            "required": ["entries"]
+        }
+    });
+    let split_child = json!({"allOf": [
+        {"properties": {"child": {"properties": {"entries": {"type": "array"}}}}},
+        {"properties": {"child": {"required": ["entries"]}}}
+    ]});
+    let input = parse("{ child: {} }").unwrap();
+    for branch in [additional.clone(), split_child] {
+        let schemas = schemas(json!({"anyOf": [branch, false]}));
+        assert_eq!(
+            schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+            json!({"child": {"entries": []}})
+        );
+    }
+    let schemas = schemas(json!({"anyOf": [additional, true]}));
+    assert_eq!(
+        schemas.resolve_as(&input, "app.Config").unwrap_err().kind,
+        ResolveErrorKind::AmbiguousDefault
+    );
+}
+
+#[test]
+fn branch_owned_work_survives_nested_unions_and_other_common_completion() {
+    for (schema, source, expected) in [
+        (
+            json!({"anyOf": [
+                {"anyOf": [
+                    {"properties": {"entries": {"type": "array"}}, "required": ["entries"]},
+                    false
+                ]},
+                false
+            ]}),
+            "!app.Config",
+            json!({"entries": []}),
+        ),
+        (
+            json!({"allOf": [
+                {"properties": {"entries": {"type": "array"}}, "required": ["entries"]},
+                {"anyOf": [
+                    {"properties": {"extra": {"type": "array"}}, "required": ["extra"]},
+                    false
+                ]}
+            ]}),
+            "{}",
+            json!({"entries": [], "extra": []}),
+        ),
+    ] {
+        let schemas = schemas(schema);
+        let input = parse(source).unwrap();
+        assert_eq!(
+            schemas.resolve_as(&input, "app.Config").unwrap().to_json(),
+            expected
+        );
+    }
 }

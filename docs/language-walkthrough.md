@@ -1,6 +1,6 @@
 # A walkthrough of DAML's language choices
 
-DAML makes structure and value conversion explicit. This walkthrough follows a document from its visible syntax through parsing, validation, formatting, and editor use. It separates confirmed language choices from current implementation observations and questions that remain open. The syntax contract, schema guide, formatter guide, LSP guide, and edge-case record remain authoritative for exact behavior.
+DAML makes structure and value conversion explicit. This walkthrough follows a document from its visible syntax through parsing, validation, formatting, and editor use. It separates confirmed language choices from implementation evidence. The syntax contract, schema guide, formatter guide, LSP guide, and edge-case record remain authoritative for exact behavior.
 
 ## Start with explicit structure
 
@@ -30,7 +30,7 @@ A document has exactly one root value; empty or comment-only source is rejected.
 
 This is a two-item sequence. `[1, 2]` is rejected rather than interpreted as another syntax style. Requiring line breaks for multiple entries keeps separators visible without making indentation a second source of structure.
 
-Keys are unquoted, nonempty tokens without whitespace, followed by `:`. Quoted keys are rejected. Dots and slashes are literal characters, not nested paths or file references. The current scanner also accepts numeric-leading, dotted, slashed, and Unicode names; this is provisional behavior, not a final alphabet decision. The final key and tag alphabets, and whether they should match, remain open.
+Keys are unquoted, nonempty tokens without whitespace, followed by `:`. Quoted keys are rejected. Unicode letters/numbers, subsequent combining marks, and `_ - . /` are allowed; digit-leading keys are strings. Dots/slashes in keys imply no lookup or file access. Tag segments use the same word characters but only `_ -` punctuation; dots separate segments. Names are exact, without normalization or case folding. The [syntax contract](syntax.md#structure-and-names) owns the complete alphabet.
 
 ## Tags mark values; they do not construct types
 
@@ -106,7 +106,9 @@ Boundary removal does not discard extra blank lines inside the body:
 This decodes to `\nx\n`. The first and last line endings frame the string;
 the additional blank lines remain content.
 
-All-blank triple-double content currently has a zero dedent baseline and preserves its spaces. Tabs likewise remain literal. These are current observed behaviors; final treatment of tabs and all-blank content remains open for language sharpening.
+Entirely blank triple-double content strips spaces/tabs from each content line
+while preserving internal line breaks. Tabs on any line containing non-whitespace
+remain literal data and never contribute to the dedent baseline.
 
 ## Keep scalar types explicit
 
@@ -120,18 +122,33 @@ Parsing produces a source-backed document with explicit values, literal tags,
 numeric spellings, comments, and original byte spans. It does not need a schema.
 Schema loading, default completion, and validation are separate operations.
 
-Modules use the JSON-compatible interchange format described in the
-[schema guide](schemas.md): named type schemas and explicitly registered
-resources. Ordinary JSON Schema constraints and `$ref` define structural
-compatibility. A containing schema and an explicitly tagged value's selected
-schema both apply. Untagged values may satisfy structural requirements, while
-unknown explicit tags remain errors. Consumers adapt foreign schema formats;
-the module format is not final native bundle authoring syntax.
+Modules use the low-level JSON-compatible interchange format described in the
+[schema guide](schemas.md). It accepts named type schemas and explicitly
+registered resources. Schema documents can use JSON Schema's `$id`, `$ref`, and
+other dollar-prefixed keywords, but final DAML data keys cannot contain `$`.
+Use `SchemaModule::from_json` or `SchemaModule::from_value` when supplying JSON
+interchange data; `from_value` accepts an already parsed value.
 
-Default completion recursively merges object defaults with supplied partial
-objects. Supplied values win; supplied arrays and scalars replace defaults. A
-partial default does not waive `required` or other constraints. Resolution does
-not mutate the input document.
+Native definitions and bundles are the authoring path described in
+[native definitions and bundles](native-authoring.md). The native compiler
+lowers them in memory to JSON Schema constraints and completion metadata; it
+does not generate schema files. The interchange APIs remain available to
+consumers that already have schemas.
+
+Sequence constraints use explicit constructors: `!List { items: !Int }` applies
+one constraint to every element; `!Tuple [!Int]` declares exactly one integer
+position. Tuple has no length/uniqueness facets or scalar position defaults.
+Its whole-value default follows the complete definition, as in
+`!Tuple [!Int] = [1]`. Bare brackets continue to represent ordinary sequence data.
+
+Native completion creates required missing records and maps from `{}` and lists
+from `[]`, then applies applicable defaults and validates. It does not invent
+primitive values, map entries, list elements, or implementation tags.
+Optional absent values remain absent. An explicitly tagged supplied object
+replaces its contextual object preset, even when its tag selects the same
+definition; defaults belonging to the selected definition still apply, and
+containing constraints remain active. Supplied arrays and scalars replace
+defaults. These rules do not mutate the parsed input document.
 
 ## Reformat without changing values
 
@@ -152,19 +169,25 @@ Exceeding a bound returns a structured error rather than a partial document;
 custom limits can lower these bounds or raise size and node limits, but cannot
 raise the nesting ceiling.
 
-## Evidence and open choices
+## Evidence and settled choices
 
-The edge-case record contains 45 canonical probe inputs with recorded status,
-output, errors, and byte spans. It is compact evidence, not exhaustive coverage
-or a final key/tag grammar.
+The edge-case record contains 45 canonical historical probe inputs with recorded
+status, output, errors, and byte spans. It is compact evidence, not exhaustive
+coverage; the current syntax contract owns the final key/tag grammar.
 
 Confirmed syntax choices include explicit braces and brackets, newline entry
 separation without commas, the two triple-string forms, mandatory space-based
-dedent, and unknown tags surviving parsing for later validation. The current
-schema cutover uses structural compatibility and registered standard-schema
-references; contracts, `implements`, `x-daml-tag`, and `x-daml-slot` are removed.
-The accepted native bundle/import and override direction is not implemented.
-Key/tag alphabets and tab/all-blank string details remain open. Array narrowing
-remains undecided after its question was cancelled. See the owning
-[syntax](syntax.md), [schema](schemas.md), [edge-case](edge-cases.md),
-[formatter](formatting.md), and [LSP](lsp.md) contracts.
+dedent, and unknown tags surviving parsing for later validation. Structural
+interchange uses registered JSON Schema references and structural compatibility;
+contracts, `implements`, `x-daml-tag`, and `x-daml-slot` are not part of that
+API.
+
+Earlier walkthrough and plan notes recorded native bundles, definition
+overrides, and container completion as accepted direction still awaiting
+implementation. Those statements describe the earlier state, not the current
+contract: native definitions and bundles are now specified in
+[native-authoring.md](native-authoring.md). Their rules are distinct from
+low-level interchange completion. The syntax alphabet and triple-string edge
+cases are now settled in the owning [syntax](syntax.md), [schema](schemas.md),
+[edge-case](edge-cases.md), [formatter](formatting.md), and [LSP](lsp.md)
+contracts.

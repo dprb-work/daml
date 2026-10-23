@@ -54,12 +54,33 @@ fn classify(keyword: &str, value: &Value, pattern_properties: bool) -> Option<Cl
     })
 }
 
+pub(crate) fn property<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    if let Some(named) = value
+        .get("properties")
+        .and_then(|properties| properties.get(key))
+    {
+        Some(named)
+    } else if value.get("patternProperties").is_none() {
+        value.get("additionalProperties")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn item(value: &Value, index: usize) -> Option<&Value> {
+    value
+        .get("prefixItems")
+        .and_then(Value::as_array)
+        .and_then(|items| items.get(index))
+        .or_else(|| value.get("items"))
+}
+
 enum Segment<'a> {
     Key(&'a str),
     Index(usize),
 }
 
-pub(super) struct Child<'a> {
+pub(crate) struct Child<'a> {
     keyword: &'a str,
     segment: Option<Segment<'a>>,
     pub value: &'a Value,
@@ -68,6 +89,24 @@ pub(super) struct Child<'a> {
 }
 
 impl Child<'_> {
+    pub(crate) fn keyword(&self) -> &str {
+        self.keyword
+    }
+
+    pub(crate) fn map_key(&self) -> Option<&str> {
+        match self.segment {
+            Some(Segment::Key(key)) => Some(key),
+            Some(Segment::Index(_)) | None => None,
+        }
+    }
+
+    pub(crate) fn array_index(&self) -> Option<usize> {
+        match self.segment {
+            Some(Segment::Index(index)) => Some(index),
+            Some(Segment::Key(_)) | None => None,
+        }
+    }
+
     pub(super) fn pointer(&self, parent: &str) -> String {
         let keyword = crate::pointer::join(parent, self.keyword);
         match &self.segment {
@@ -77,7 +116,6 @@ impl Child<'_> {
         }
     }
 }
-
 enum Nested<'a> {
     Empty,
     Map(serde_json::map::Iter<'a>),
@@ -100,7 +138,7 @@ impl<'a> Nested<'a> {
     }
 }
 
-pub(super) struct Children<'a> {
+pub(crate) struct Children<'a> {
     fields: Option<serde_json::map::Iter<'a>>,
     nested: Nested<'a>,
     keyword: &'a str,
@@ -145,7 +183,7 @@ impl<'a> Iterator for Children<'a> {
     }
 }
 
-pub(super) fn children(value: &Value) -> Children<'_> {
+pub(crate) fn children(value: &Value) -> Children<'_> {
     Children {
         fields: value.as_object().map(|map| map.iter()),
         nested: Nested::Empty,
@@ -153,5 +191,62 @@ pub(super) fn children(value: &Value) -> Children<'_> {
         applies: true,
         unsupported_defaults: false,
         pattern_properties: value.get("patternProperties").is_some(),
+    }
+}
+
+pub(crate) fn for_each_child_mut(value: &mut Value, mut visit: impl FnMut(&mut Value)) {
+    for_each_child_mut_with_location(value, |_, _, _, _, _, child| visit(child));
+}
+pub(crate) fn for_each_child_mut_with_location(
+    value: &mut Value,
+    mut visit: impl FnMut(&str, Option<&str>, Option<usize>, bool, bool, &mut Value),
+) {
+    let pattern_properties = value.get("patternProperties").is_some();
+    let Some(fields) = value.as_object_mut() else {
+        return;
+    };
+    for (keyword, child) in fields {
+        let Some(kind) = classify(keyword, child, pattern_properties) else {
+            continue;
+        };
+        match kind.shape {
+            Shape::Map => {
+                for (key, value) in child.as_object_mut().expect("classified object") {
+                    visit(
+                        keyword,
+                        Some(key),
+                        None,
+                        kind.applies,
+                        kind.unsupported_defaults,
+                        value,
+                    );
+                }
+            }
+            Shape::Array => {
+                for (index, value) in child
+                    .as_array_mut()
+                    .expect("classified array")
+                    .iter_mut()
+                    .enumerate()
+                {
+                    visit(
+                        keyword,
+                        None,
+                        Some(index),
+                        kind.applies,
+                        kind.unsupported_defaults,
+                        value,
+                    );
+                }
+            }
+            Shape::Single => visit(
+                keyword,
+                None,
+                None,
+                kind.applies,
+                kind.unsupported_defaults,
+                child,
+            ),
+        }
     }
 }

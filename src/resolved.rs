@@ -40,6 +40,7 @@ pub enum ResolvedValue<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ResolvedTag<'a> {
     pub(crate) name: Cow<'a, str>,
+    pub(crate) binding: Option<Cow<'a, str>>,
     pub(crate) origin: Origin<'a>,
 }
 

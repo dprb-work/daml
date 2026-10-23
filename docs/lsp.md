@@ -1,8 +1,9 @@
 # DAML language server
 
-`daml-lsp` provides syntax diagnostics and whole-document formatting over stdio.
-It reuses the checked DAML parser and reflow formatter. It does not resolve types,
-apply defaults, discover schemas, read source files, or write editor buffers.
+`daml-lsp` provides native-definition syntax diagnostics and whole-document
+formatting over stdio. It uses the native definition parser and formatter, but
+does not resolve aliases, load bundles, or validate bundle semantics. It does
+not apply defaults, discover schemas, read source files, or write editor buffers.
 
 ## Build and launch
 
@@ -27,9 +28,8 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 |---|---|
 | Initialization | Standard initialize/initialized handshake and server information. Invalid parameters return InvalidParams with `InitializeError.retry: true`; initialization remains pending for client correction or exit. |
 | Position encoding | First supported client offer among UTF-8, UTF-16, UTF-32; mandatory UTF-16 fallback when absent or unsupported. |
-| Document synchronization | Open/close plus full-text changes, not incremental ranges. |
-| Diagnostics | Native parser errors, with accepted document version and correctly encoded byte-span ranges. Valid replacements publish an empty list. |
-| Formatting | Canonical DAML reflow at 80 columns and two-space indentation, through the existing formatter. |
+| Diagnostics | Native definition syntax errors, with accepted document version and correctly encoded byte-span ranges. Valid replacements publish an empty list. |
+| Formatting | Canonical native definition reflow at 80 columns and two-space indentation, through `format_definition`. |
 | Shutdown | Standard shutdown response followed by exit; graceful sessions terminate successfully even while the client stdin pipe remains open. |
 
 Documents are identified only by client-provided URIs and text. Untitled buffers
@@ -99,15 +99,10 @@ owns transport threads and process termination; the library adapter creates no
 threads. On fatal failure the process exits rather than joining a reader blocked
 on a client's still-open stdin. On graceful shutdown all provided threads join.
 
-## Boundaries and final sharpening
+## Boundaries
 
 No completion, hover, symbol indexing, incremental parsing, schema diagnostics,
-editor-specific grammar, or schema discovery is provided in this slice.
-
-**Unresolved until post-LSP final sharpening:** how the schemata folder root is
-defined and which location owns the base for relative schema paths. No default,
-configuration format, root search, or cwd/workspace/document-path assumption is
-accepted here. The same deferred question is retained in the existing PLAN.
+editor-specific grammar, or bundle semantic integration is provided.
 
 The protocol DTOs, framing, stdio threads, and shutdown helper come from the
 pinned upstream libraries. The DAML-specific code owns versioned documents,

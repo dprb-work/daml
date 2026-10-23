@@ -1,0 +1,10 @@
+!Object {
+  addr: !String
+  timeout: !Int {
+    min: 1
+    max: 300
+  }
+} = {
+  addr: "localhost"
+  timeout: 30
+}

@@ -1,10 +1,13 @@
 # DAML syntax contract
 
-This contract owns syntax-to-document parsing (plan milestones 1–2).
-[Schema completion and validation](schemas.md) are separate passes. The
-[formatter](formatting.md) and optional [language server](lsp.md) reuse this
-parser. The governing rule is **one parse, no guessing**: parsing never infers
-nesting, string types, or missing values and never falls back to YAML.
+This contract owns syntax-to-document parsing. [Schema completion and
+validation](schemas.md) are separate passes. The [formatter](formatting.md)
+supports data expressions and native definitions; the optional [language
+server](lsp.md) provides syntax-only diagnostics and formatting. The governing
+rule is **one parse, no guessing**: data parsing never infers nesting, string
+types, or missing values and never falls back to YAML. Native definition parsing
+is a separate tooling grammar; see the [native authoring
+contract](native-authoring.md).
 
 ## Structure and names
 
@@ -17,16 +20,25 @@ Indentation never establishes collection ownership.
 
 Mapping keys are nonempty, unquoted tokens followed by `:`. Values are explicit
 strings, numbers, `true`, `false`, `null`, mappings, or sequences. Keys have no
-escape syntax and repeated exact key spellings are errors. Dots/slashes do not
-imply nested lookup, paths, or file access.
+escape syntax and repeated exact key spellings are errors. Dots and slashes in
+keys are ordinary characters; they do not imply nested lookup, paths, or file
+access.
 
-The final key and tag character alphabets, including whether they align, are
-intentionally deferred. For now both accept non-whitespace characters except
-structural punctuation: braces, brackets, colon, comma, hash, quotes, exclamation,
-backslash, ampersand, asterisk, pipe, greater-than, and percent. Control characters
-are invalid. This bounds tokens without prematurely deciding identifier rules;
-acceptance of numeric-looking, dotted, slashed, or Unicode names is provisional.
-There is no runtime key/tag grammar mode.
+Keys use Unicode 16 letters and numbers, followed by letters, numbers, combining
+marks, `_`, `-`, `.`, or `/`. Letters, numbers, `_`, `-`, `.`, and `/` may start
+a key, so digit-leading keys are valid. A combining mark may only follow another
+character. Tags use the same letters, numbers, and subsequent combining marks,
+with `_` and `-` permitted; dots separate nonempty tag segments, and slashes are
+not permitted. Tag segments cannot start with a combining mark. No Unicode
+normalization or case folding is performed.
+
+Both parsers use these name rules. Native definition syntax adds constraint and
+default expressions; successful syntax parsing does not imply that a constructor,
+metadata field, or bundle reference is semantically valid.
+
+Positional constraints require native `!Tuple [ ... ]` syntax. Bare brackets
+remain ordinary sequence data; they do not declare tuple positions. The native
+authoring contract owns tuple default placement and the separate `!List` facets.
 
 One optional `!tag` precedes any value. Tag names are literal and unknown tags
 are preserved rather than resolved by parsing. Stacked tags are errors.
@@ -75,6 +87,23 @@ are errors. Use a triple form for source text spanning physical lines.
 Unescaped ordinary content references the original source without a second
 string allocation. Escaped content owns its decoded text.
 
+## Native Regex literals
+
+Native definitions add one typed scalar that ordinary data documents do not:
+
+```daml
+pattern: !Regex "\d{4}-\d{2}-\d{2}"
+```
+
+The double quotes delimit the Regex body. Backslashes and other characters
+inside remain raw source for Rust `regex`; ordinary DAML string escapes are not
+decoded. The body must stay on one physical line and cannot contain a double
+quote; use the regex escape `\x22` when matching one. The body remains subject
+to the scalar-size limit. The formatter preserves its contents exactly.
+Semantic compilation, full-string matching, and
+the valid position under `String.pattern` belong to the
+[native authoring contract](native-authoring.md).
+
 ## Triple string boundaries
 
 Both triple forms start with a delimiter followed only by spaces/tabs and a line
@@ -97,12 +126,14 @@ an ordinary-string newline escape.
 `"""..."""` preserves internal layout after this exact sequence:
 
 1. Exclude delimiter-boundary line endings as above.
-2. Compute the minimum leading **space** count among nonblank physical lines.
-   Tabs are literal data, not indentation columns. Blank lines do not lower the
-   baseline; all-blank content has a zero baseline.
+2. If at least one physical content line is nonblank, compute the minimum leading
+   **space** count among nonblank lines. Tabs remain literal data and never count
+   as indentation columns.
 3. Remove that common space prefix. Remove up to the same prefix from blank
    lines, preserving remaining data and the number of internal line breaks.
-4. Decode escaped backslashes/delimiters and process explicit continuations.
+4. If the complete body is blank, instead remove all spaces/tabs from every
+   content line while preserving the number of internal line breaks.
+5. Decode escaped backslashes/delimiters and process explicit continuations.
 
 The closing delimiter's column and enclosing node depth do not set the margin.
 Moving equivalent content deeper into a map/list must preserve its decoded
@@ -153,4 +184,4 @@ but this syntax implementation does not copy or vendor upstream code or tests
 and needs no YAML parser dependency. YAML's full acceptance corpus is not the
 DAML grammar.
 Permanent cases cover consumer-visible syntax, values, original spans, failure
-categories, and limits; final key/tag alphabet restrictions are not pinned.
+categories, limits, and the current key/tag alphabets.

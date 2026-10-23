@@ -1,0 +1,4 @@
+[
+  !vendor.Payload["text"]
+  !vendor.Payload"text"
+]

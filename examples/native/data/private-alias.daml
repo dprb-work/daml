@@ -1,0 +1,5 @@
+!app.Config {
+  adapter: !provider.Http {
+    addr: "remote"
+  }
+}

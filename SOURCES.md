@@ -28,18 +28,44 @@ manual adaptations, not an automatic YAML-to-DAML preprocessing layer:
 - `236B.daml`: explicit braces and a quoted value, retaining invalid trailing
   input so DAML must not silently discard it.
 - `2EBW.daml`: moves the punctuation payload into a quoted string value under a
-  fixed key. It checks string boundaries without freezing the deferred key alphabet.
+  fixed key. String payloads do not depend on the key alphabet.
 
 The originals remain available as explicit rejection/fuzz inputs. Their being
 valid YAML does not imply that DAML should accept implicit maps, plain strings,
 commas, directives, anchors, or YAML block-scalar syntax. Updates are deliberate;
 there is no automatic upstream synchronization.
 
+## Representative consumer definitions
+
+The [standalone consumer example](examples/olaf/README.md) is manually authored
+from the ordinary data constraints in seven local Olaf schema files. No Olaf
+implementation or original schema files are copied, and the example has no
+Olaf runtime dependency:
+
+```text
+adapter/olaf.ext.questdb.adapter.adapter.json
+adapter/olaf.ext.redis.adapter.adapter.json
+config/olaf.config.ExecutionConfig.json
+config/olaf.config.OptimizeBudget.json
+config/olaf.config.OptimizeConfig.json
+config/olaf.config.Recipe.json
+questdb/olaf.ext.questdb.json_query.json_query.json
+```
+
+Paths are relative to the sampled `schema/` directory. SHA-256 over sorted
+relative UTF-8 paths and original bytes, each followed by NUL, is
+`91946356d04568e21d5103b8921e6742bfe942bd4403fd9a28e4d3d960daa8eb`.
+The local source snapshot has no resolvable Git `HEAD`; the content digest,
+not a fabricated commit, identifies this evidence. The example documents the
+deliberate marker/protocol and completion differences; it is not a whole-corpus
+conversion or an integration with the consumer.
+
 ## Cargo dependencies and fuzz tooling
 
-`Cargo.lock` owns the portable library graph; `fuzz/Cargo.lock` owns the isolated,
-unpublished fuzz-development graph. Dependency sources, licenses, advisories,
-and forbidden retrieval features are checked with `deny.toml` for each graph.
+`Cargo.lock` owns the portable library graph; `fuzz/Cargo.lock` owns the isolated
+fuzz-development graph. `bindings/python/Cargo.lock` owns the optional Python
+extension graph. Dependency sources, licenses, advisories, and forbidden retrieval
+features are checked with `deny.toml` for each graph.
 
 The fuzz runtime is `libfuzzer-sys` 0.4.13, declared as
 `(MIT OR Apache-2.0) AND NCSA`. Its LLVM runtime has an additional NCSA obligation;
@@ -47,12 +73,19 @@ the policy exception is scoped to that crate, not a blanket new license allowanc
 The sources remain Cargo dependencies rather than copied DAML source files.
 `cargo-fuzz` 0.13.2 is a development tool under MIT OR Apache-2.0.
 
-The formatter uses the Cargo dependency `pretty` 0.12.5 (MIT), pinned in both
-lockfiles, with default features disabled. Its normal dependencies are
+The formatter uses the Cargo dependency `pretty` 0.12.5 (MIT), pinned in the
+runtime lockfiles with default features disabled. Its normal dependencies are
 `arrayvec` 0.5.2, `typed-arena` 2.0.2, and `unicode-width` 0.2.2. No printer
 source was copied into DAML; the formatter uses the library's document API.
 See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.toml)
 and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
+
+The shared key/tag classifier directly uses pinned `unicode-general-category`
+1.1.0 (Apache-2.0), already present in the validator's dependency graph. Its
+published `UNICODE_VERSION` is 16.0.0; the generated L/N/M category tables are
+used without copying them into DAML. There is no Unicode normalization layer.
+See the [published manifest](https://docs.rs/crate/unicode-general-category/1.1.0/source/Cargo.toml)
+and [category API](https://docs.rs/unicode-general-category/1.1.0/unicode_general_category/).
 
 The optional `lsp` feature uses `lsp-server` 0.10.0 (MIT OR Apache-2.0) and
 `lsp-types` 0.97.0 (MIT), pinned in the root lockfile. Their transport and protocol
@@ -69,10 +102,38 @@ the DAML runtime dependency graph. The owned plaintext template uses the tool's
 documented output schema; no generator source is copied. See the
 [tool documentation](https://embarkstudios.github.io/cargo-about/) and
 [published manifest](https://docs.rs/crate/cargo-about/0.9.2/source/Cargo.toml).
-CI archives are private trial artifacts, not a selection of DAML's project terms
-or a public release. The [distribution guide](docs/distribution.md) owns the build,
-archive, and installed-binary verification contract.
+Native private-release archives carry the canonical root `LICENSE`, generated
+`THIRD-PARTY-NOTICES.txt`, and this source inventory. The upstream YAML fixture
+license remains separately retained at `tests/fixtures/yaml/LICENSE`.
+The [distribution guide](docs/distribution.md) owns the archive and verification
+contract.
 
-These notices do not select DAML's own distribution license. The library and
-fuzz package remain unpublished; choosing project terms and packaging for
-redistribution requires an explicit decision.
+## Python boundary and packaging
+
+The isolated extension uses [PyO3 0.30.1](https://pyo3.rs/v0.30.1/)
+(MIT OR Apache-2.0), pinned in its own Cargo lockfile. No PyO3 source is copied
+into DAML. Its standard OS-string conversion preserves filesystem paths; its
+native exception and object APIs own Python representation.
+The pin includes the fixes for
+[RUSTSEC-2026-0176](https://rustsec.org/advisories/RUSTSEC-2026-0176) and
+[RUSTSEC-2026-0177](https://rustsec.org/advisories/RUSTSEC-2026-0177); neither
+advisory is ignored.
+
+PyO3's build dependency `target-lexicon` uses
+[`Apache-2.0 WITH LLVM-exception`](https://docs.rs/crate/target-lexicon/0.13.5/source/LICENSE).
+The exception grants additional permissions for embedded compiled portions and
+GPLv2 combinations. Its allowance in `deny.toml` is limited to that crate, not
+the global license list.
+
+[maturin 1.15.0](https://www.maturin.rs/) (MIT OR Apache-2.0) owns wheel/source
+packaging and Rust path-dependency inclusion. It is pinned as the build backend
+and a development tool, not a runtime dependency. `bindings/python/uv.lock`
+owns the remaining Python tools, including Ruff and Pytest. Python project and
+Cargo metadata declare MIT. Cargo rejects a Python-workspace `license-file` path
+to the root license outside that workspace; Python wheel/sdist license-text and
+third-party-notice inclusion remain unverified and are not part of the release
+route. Do not add a duplicate project license.
+
+These package manifests keep crates unpublished. Python wheel and sdist assets
+are not part of the current release route; if added later, they also need generated
+third-party notices in addition to the project license.

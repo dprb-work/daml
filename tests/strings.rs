@@ -137,13 +137,16 @@ fn triple_double_continuation_happens_after_dedent() {
 }
 
 #[test]
-fn blank_lines_tabs_and_all_blank_dedent_are_literal() {
+fn blank_line_spaces_dedent_but_all_blank_bodies_strip_horizontal_whitespace() {
     assert_eq!(
         root_string("\"\"\"\n    one\n\n      \n    two\n\"\"\""),
         "one\n\n  \ntwo"
     );
     assert_eq!(root_string("\"\"\"\n\tdata\n\"\"\""), "\tdata");
-    assert_eq!(root_string("\"\"\"\n  \n\t \n\"\"\""), "  \n\t ");
+    assert_eq!(root_string("\"\"\"\n    \n\"\"\""), "");
+    assert_eq!(root_string("\"\"\"\n  \n\t \n\"\"\""), "\n");
+    assert_eq!(root_string("\"\"\"\r\n  \r\n\t \r\n\"\"\""), "\n");
+    assert_eq!(root_string("\"\"\"\r  \r\t \r\"\"\""), "\n");
 }
 
 #[test]

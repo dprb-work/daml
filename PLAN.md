@@ -1,9 +1,11 @@
 # DAML implementation plan
 
-Status: syntax, structural schema validation, default completion, hardening,
-reflow formatting, the minimal stdio LSP, and binary distribution proof are
-implemented. [Syntax](docs/syntax.md) and [schemas](docs/schemas.md) own current
-behavior. Key/tag alphabets and native schema authoring remain open.
+Status: data parsing, native definitions and local bundle loading, structural
+validation and completion, hardening, reflow formatting, the minimal stdio LSP,
+binary distribution proof, and the isolated Python extension are implemented.
+[Syntax](docs/syntax.md), [native authoring](docs/native-authoring.md),
+[interchange](docs/schemas.md), and the [Python API](docs/python.md) own the
+current contracts.
 
 ## Target result
 
@@ -43,16 +45,12 @@ and license lineage.
 
 ## Key and tag policy boundary
 
-Unquoted, spaceless keys are confirmed. Final key/tag character sets and whether
-they align are deferred. They are local lexical policies, not prerequisites for
-starting the parser. The current scanner bounds both by structural delimiters
-and whitespace; it does not freeze numeric-leading, dotted, slashed, or Unicode
-identifier rules.
-
-Names remain literal. Dots/slashes never imply nesting, path traversal,
-references, or file access; braces establish nesting. Schema lookup, formatting,
-and the language server must use actual names/tree ownership rather than infer
-structure from punctuation. Do not expose competing grammar modes.
+The final key/tag grammar is implemented by one shared Unicode 16.0 classifier.
+Ordinary keys allow letters/numbers, subsequent combining marks, and `_ - . /`;
+tag segments allow the word characters and `_ -`, with dots separating segments.
+Digit-leading names are allowed. No case folding or normalization occurs.
+Keys remain literal: dots/slashes imply no nesting, lookup, or filesystem access.
+Only bundle-qualified tags acquire definition-path meaning during loading.
 
 ## First acceptance specimen
 
@@ -147,8 +145,7 @@ upstream code/tests and introduced no dependency.
 - Mark each YAML-derived fixture as unchanged, adapted, or intentionally rejected.
   Record the original upstream case ID and selected immutable corpus revision.
 - Settle semantically consequential structure/value rules in the syntax contract;
-  do not grow a YAML compatibility mode. Final key/tag alphabets may remain
-  provisional behind the lexical policy.
+  keep current key/tag grammar in the syntax contract rather than a second table.
 - Use the same hard fixtures to assess a candidate reuse seam. Prefer a small
   native scanner/direct parser unless a targeted adaptation or helper such as
   Winnow demonstrably simplifies the implementation. Do not build two complete
@@ -161,7 +158,7 @@ The implemented decisions and limits are owned by the syntax contract, not a
 second grammar table here. It fixes explicit collection boundaries, precise
 decimal lexemes, JSON-style ordinary escapes, both triple-string forms, mandatory
 dedent before continuation, UTF-8/line endings, structured errors, and resource
-bounds. Only the final key/tag alphabets are intentionally left provisional.
+bounds. The native-authoring slice subsequently fixed the name alphabets.
 
 **Gate:** confirmed structure/value spellings have exact acceptance outcomes,
 imported material (if any) has provenance, and there is one production parsing
@@ -220,47 +217,120 @@ without membership declarations; incompatible structure and invalid data tags
 fail at their value paths. Standard schema references and applicable defaults
 remain covered by consumer examples and checks.
 
-## Accepted native-authoring direction, not implemented
+## Native authoring and bundle loading
 
-Future bundle authoring uses keyed bundle roots, where each key names a
-namespace and each value gives its bundle root. Each tag walks directly to one
-file containing that definition. Imports have private schema-local scopes:
-transitive imports do not expose names to roots, parents, or siblings, though a
-root may import a dependency under another alias. A tag reference selects a
-definition directly; exact spellings, metadata placement, scope granularity,
-and loading identity remain open. Value-shaped scalar narrowing is distinct
-from schema definitions, and compatibility is structural.
+**Implemented:** the [native authoring contract](docs/native-authoring.md) owns
+definition syntax, one-type files, `daml.bundle`, local alias maps, private
+imports, canonical-root identity, nested bundle boundaries, default replacement,
+and completion. The executable corpus is `examples/native/cases.json`.
 
-Authoring reuse has one base. Constraint, requiredness, and default are
-independent override components. A replacement constraint expression is atomic,
-not a recursive keyword patch. Derived definitions may change all three without
-waiving structural compatibility at a use site. Existing object-default/data
-merging follows the [schema guide](docs/schemas.md#exact-completion-rules);
-native default-removal syntax remains open. Array narrowing remains
-**undecided**; the question about positional patterns was cancelled, so no array
-behavior is selected.
+The accepted decisions were consolidated out of this plan rather than kept as
+a second grammar. Their important tradeoffs remain:
 
-Changes must satisfy these maintenance criteria:
+- Bundle-local imports avoid repeated per-file declarations and dependency
+  leakage. Nested manifests require explicit imports rather than route-dependent
+  scope switching. Aliases are spellings, never nominal compatibility checks.
+- `:` declares field constraints; `=` supplies a whole definition's default.
+  Scalar field defaults are grouped in the containing record's preset, not
+  scattered across inferred or typed member declarations. Nested container
+  and metadata item/value presets remain attached to their own definitions.
+  Default data uses `:` rather than declaration syntax.
+- Records are open unless prefixed `closed`. Postfix closure, `as const`, and
+  closed-by-default plus `...` were rejected. Referenced constraints conjoin;
+  unrestricted derivation/weakening would violate structural contracts.
+- Definition overrides replace a default component atomically; configuration
+  completion prefills untagged objects. Explicitly tagged supplied objects
+  discard the contextual preset but retain their selected definition's defaults.
+- Required containers complete leanly; optional omissions stay absent.
+  No primitive values, implementation tags, map entries, or list positions are
+  guessed. Lists replace rather than index-merge.
+- Inclusive unions accept only unambiguous semantic completion. Alternative
+  order never selects a fallback. Known contradictory defaults fail compilation;
+  partial defaults are allowed without a general satisfiability solver.
+- In-memory lowering reuses the existing validator. Generated JSON Schema files,
+  a second validator, published type IDs, and a package/network resolver are
+  unnecessary for the accepted local bundle contract.
 
-- Own custom responsibilities only for required behavior that sufficient
-  libraries or platform facilities do not provide.
-- Count adapters, integration, operational assumptions, upgrades, and recovery
-  as maintenance costs. Material scope growth needs an explicit owner decision.
-- Every code delivery includes consolidation followed by simplification across
-  the normal end-to-end ownership and validation flow; justified no-change
-  conclusions are valid.
-- Admission establishes local shape and invariants. Revalidation needs a
-  distinct reason, such as mutation or a new combined-resource boundary.
-- Reject knowable violations before dependent effects, without disguising
-  fallbacks. Preserve independently evolving boundaries and justified safeguards.
+### Structural refinement
 
-The structural cutover removed nominal membership/custom validators in favor of
-the existing JSON Schema engine. Post-merge refinement keeps local shape checks
-at admission, preserves composition's aggregate/reference checks, and removes
-obsolete identifier parameterization and per-byte temporary strings.
+Normal path examined: source admission → shared parser/name rules → bundle-local
+reference loading → native lowering → existing schema admission/composition →
+default completion/validation → source-preserving formatting or LSP transport.
 
-The missing native authoring/import syntax blocks frontend work, not the
-structural-validation cutover.
+Consolidation: default-check projection now uses the schema profile's canonical
+child-position classifier; removed its duplicate keyword table. Native and data
+formatters share layout/trivia/string mechanics. Bundle filesystem admission
+remains separate from schema validation and application construction.
+
+Simplification: native lowering carries a borrowed source context instead of
+repeating source/root/file argument triples. Completion layers are named rather
+than an opaque tuple. The shared name classifier uses an ASCII fast path and
+one Unicode category lookup per non-ASCII character. Removed compiler-side
+revalidation of keys already admitted by the private syntax AST.
+
+Post-review refinement: member-default replacement is normalized into cached,
+per-use schema projections, not resolver ordering flags. One fallible recursive
+owner caches changed and unchanged projections and bounds clone nodes and scalar
+bytes before copying. Lowering depth is cumulative across expression/reference
+traversal. Conditional alternatives retain both inherited member defaults and
+ancestor-preset components, including through root-default-free projections.
+Effective-default admission delegates constraints to the engine and shares property
+and item selection with runtime completion, including overlapping map/named and
+homogeneous/positional constraints. All declared default assertions are validated
+centrally, including nested tags under grouped Any. Custom reference, applicator,
+child, and preset walks share cumulative work/depth admission before the engine.
+Both mutable traversal APIs use one classified child loop. Normalization carries
+one borrowed inherited-state view and reuses the budget's borrowed source path.
+Entry tags stay borrowed until unique binding registration. Completed schema
+maps/arrays move into module envelopes instead of being serialized into copies.
+Compiler materialization uses the same cumulative node/scalar-byte admission for
+projections, lowering, presets, retained checks, and resolved default nodes. It
+charges before cloning. An actual 600-reference, one-megabyte-default consumer
+under a 192 MiB process cap now returns a structured compiler-limit error at
+`A31.daml`; before this admission the process aborted on allocation.
+
+Native optional presence intent is admitted once and consulted only for missing
+values; supplying an object still uses its presets. Low-level interchange
+optional defaults keep their existing behavior. Grouping preserves default
+replacement/unset and optional-default rejection. Reflow keeps triple delimiters
+on their own lines, including inside groups.
+Malformed repeated assignments reject during parsing instead of reaching printer
+invariants. `closed` renders intervening comments through the shared trivia owner.
+Named defaults project an inherited map-value fallback at that key while retaining
+the fallback for unrelated map entries.
+
+Independent review's counterexamples now have regressions: adjacent tagged data
+payloads in tooling, inherited member replacement/removal, recursive narrowed
+defaults, contradictory union-branch defaults, optional references with presets,
+and declaring-file diagnostics. Parent verification also exercises partial-object
+replacement and branch-scoped overrides through a further reference.
+
+Acceptance covers private imports and generated-tag bindings, explicit-tag preset
+replacement, lean containers, list/item defaults, tuples, forbidden members,
+invalid inherited defaults, nested boundaries, source limits, lossless filesystem
+identity, and meaning-preserving native reflow.
+
+Verification exercised on Linux:
+
+- `scripts/check`: portable build, all-feature Clippy/tests/doctests, warning-clean
+  rustdoc, and root/fuzz formatting.
+- Default, all-feature, and fuzz dependency-policy graphs; fuzz Clippy.
+- `scripts/fuzz-smoke 1000`: parse, interchange, resolution, and formatting under
+  AddressSanitizer, including native syntax/reflow and data-superset properties.
+- Runnable native bundle consumer with omitted, patched, and explicitly tagged
+  data; inherited member replacement and contradictory-default rejection.
+- Actual native formatter/check and stdio LSP open/diagnostics/format/shutdown.
+- Migrated JSON interchange consumer and external adapter example; local
+  maintained-document links.
+- Bounded native-consumer probes: unchanged diamond graph reaches the engine's
+  expanded-work rejection; many distinct overrides hit projection clone
+  admission; warmed references hit graph-depth admission; list/map/tuple inherited
+  defaults fail under contradictory conjunctions. Temporary inputs are removed.
+
+The full gate uses `CARGO_BUILD_JOBS=1` on this host after one parallel linker
+launch failed with OS error 11. No test or contract was weakened. These checks
+do not establish cross-platform runtime behavior, native filesystem fuzzing,
+complete native JSON Schema coverage, or semantic workspace LSP integration.
 
 ## Milestone 4 — harden and ship the standalone library
 
@@ -290,8 +360,9 @@ an uncontrolled panic, hang, unbounded recursion, or unintended execution.
   without measurements, or add timing-sensitive CI thresholds.
 - Document the actual grammar, public APIs, ownership, errors, limits, and
   deliberate YAML differences. Recheck notices and distribution terms for all
-  code, fixtures, and dependencies. Keep `publish = false` until publication and
-  DAML's own distribution license are explicitly selected.
+  code, fixtures, and dependencies. DAML's code is MIT licensed; keep
+  `publish = false` for the selected private GitHub release. Registry publication
+  requires a separate decision.
 - Run the consumer smoke, targeted regressions, and full gate; review the final
   complete head rather than approving lexer/AST checkpoints.
 
@@ -340,9 +411,9 @@ syntax diagnostics, negotiated Unicode ranges, and native reflow formatting.
 - Associate results with document versions so stale work does not replace newer
   diagnostics or format a different revision. Keep workspace schema discovery
   separate from executing application code.
-- Schema-folder root selection and the base for relative schema paths remain
-  unresolved. Discuss them after the minimal LSP, during final sharpening;
-  this slice must not infer discovery rules from cwd, workspace, or document paths.
+- Bundle discovery and relative-path rules are now settled in native authoring.
+  Wiring those semantics into LSP diagnostics remains separately scoped; the
+  current adapter still handles client-supplied syntax/formatting only.
 
 **Gate:** a real LSP client session opens a document, introduces and fixes an
 error, and requests formatting. Diagnostics clear on the correct revision,
@@ -366,18 +437,17 @@ The formatter and optional LSP follow the standalone library, not hidden
 prerequisites for it. They share the checked parser/source information rather
 than introducing another grammar or changing string rules.
 
-Serde integration, Python bindings/wheels, and a full command-line product remain
-separately scoped. Their earlier illustrative APIs are not frozen commitments.
+Serde integration and a full command-line product remain separately scoped.
+The separate Python package follows its documented API rather than earlier
+illustrative sketches.
 
-The standalone library now has a retained hardening baseline, reflow formatter,
-and minimal stdio language server. The sequence below puts binary-distribution
-proof before final sharpening and consolidation. Schema resolution remains
-independent of application construction and execution.
+The standalone library has a retained hardening baseline, native bundle
+authoring/loading, reflow formatter, and minimal stdio language server.
+Schema resolution remains independent of application construction/execution.
 
-The [edge-case record](docs/edge-cases.md) retains 45 exact runtime probes.
-Triple-double opening/closing newline framing and mandatory dedent are confirmed.
-The record separates those decisions from current observations and unresolved
-alphabet/edge-case choices; formatter work does not silently settle them.
+The [edge-case record](docs/edge-cases.md) retains 45 historical runtime probes.
+Triple-double boundary framing and mandatory dedent remain confirmed; the
+current syntax contract supersedes provisional name-policy observations.
 
 The [formatter reuse assessment](docs/formatter-reuse.md) records the selection
 of `pretty` after proving source-sensitive literal and comment fixtures. Host
@@ -385,8 +455,191 @@ integration remains separate; no formatter platform or style framework is added.
 
 ## Next sequence
 
-Binary distribution proof is merged, and structural consolidation and
-simplification are complete. The next session starts by sharpening the deferred
-native authoring and import syntax before starting Python bindings. Array
-narrowing remains undecided after the cancelled question. Editor integrations
-remain deferred.
+The [JSON Schema Draft 2020-12 audit](docs/json-schema-2020-12-audit.md)
+separates backend validation, native expressibility, completion, and deliberate
+profile limits. It found no sampled delegated-assertion defect and does not
+justify another validator or blanket native parity.
+
+Olaf's three apparent recursive components are closed-world discriminator
+collector artifacts. Native tags and open structural protocols remove the
+collector-to-implementation edges, along with `discriminator`, `__fn__`, and
+`__type__`; they do not justify recursive definition support.
+
+The native local-facet slice adds typed raw `!Regex`, String length/pattern,
+List cardinality/uniqueness, and Map/Object property-count constraints. These
+are basic local assertions independent of the current Olaf corpus. Native Regex
+uses Rust syntax directly and full-string matching; standard JSON Schema
+interchange retains its own pattern contract.
+
+Consolidation closed after three independent review/repair rounds. Formatting
+framing belongs to `Printer`; tag-aware/JSON-only equality belongs to one
+`json_backend` comparator; the LSP admits syntax without copying whole buffers.
+Normal unique completion and partial-default feasibility share the candidate
+kernel. Branch-owned implicit-work discovery reuses the budgeted conjunction
+owner and canonical property/item selectors; common work cannot activate inert
+unions. Positional narrowing preserves item-schema defaults without promoting
+replaced whole-array data into element fallbacks.
+
+The [representative native conversion](examples/olaf/README.md) retains a recipe,
+execution/optimizer definitions, a query, and independently scoped providers.
+Three executable cases cover completed values/tags, five invalid shapes,
+structural acceptance, and private-alias rejection. This is not an Olaf
+integration: no consumer source/configuration changes, constructors, callable
+dispatch, or runtime dependencies. Callable `parameters`/`returns` metadata
+stays consumer-owned.
+
+The [Python extension](docs/python.md) uses a separate PyO3/maturin package,
+preserving the core, CLI, and fuzz dependency boundaries. Immutable Rust documents
+and a resolved snapshot expose plain data and separate tag exports. One numeric
+conversion seam uses Python integers and `decimal.Decimal`, never float. Parsed
+exports use core string accessors; tag traversal shares escaped-pointer encoding
+and one reusable path buffer, avoiding an intermediate source-tag map and
+per-edge string copies. Snapshot tag entries use an append-only vector until
+Python builds the exported dictionary; there is no redundant Rust hash table.
+AST-backed and owned-JSON traversals stay separate to avoid allocating an
+intermediate JSON tree for parsed exports. They share numeric and pointer
+conversion, not a generic conversion framework. Schema admission remains in
+Rust; composition admits Python iterables directly into shared module handles,
+then clones schema trees lazily during consuming composition. No intermediate
+Python-object vector or sequence-only restriction is retained.
+The standard mixed Python/Rust package layout keeps one native stub and the
+`py.typed` marker beside the extension for both wheel and source installations.
+The small public initializer only re-exports that native API; no archive-copy
+script or duplicate stub source is maintained.
+No PyPI publication, cross-platform wheel support, or consumer construction
+is implied.
+
+Local verification: the aggregate Rust/Python gate passes, including eleven Python
+boundary cases. Default/all-feature native, fuzz, and binding dependency policies
+pass without ignored advisories. The stale fuzz lockfile's core dependency edge
+was refreshed without changing package versions.
+
+The same private `cp312-abi3-manylinux_2_34_x86_64` wheel was installed into clean
+CPython 3.12.3 and 3.13.15 environments. The source archive was rebuilt and
+installed independently on 3.12.3. All three ran outside the checkout and passed
+exact-number, tag/default, error/path, formatting, discovery, snapshot-isolation,
+and shared-registry probes (40 calls across four worker threads per environment).
+Wheel and source-installed packages both contain the native stub and `py.typed`.
+A typed iterator consumer passes basedpyright against each distribution path;
+the pre-repair wheel rejected that supported call. CI and other platforms are
+not claimed by these local results.
+
+The sequence syntax decision is settled: native definitions use separate
+`!List { items: ... }` and `!Tuple [ ... ]` constructors. List retains repeated
+element constraints and its `min`, `max`, and `unique` facets. Tuple declares
+exact positions without those facets; empty tuples have zero positions and
+duplicate values are allowed. Bare brackets remain ordinary sequence data,
+not an alternative positional-definition spelling.
+
+Tuple defaults belong after the complete definition:
+`!Tuple [!Int] = [1]`. Direct scalar position defaults, including grouped
+assignments and positional `= unset`, are excluded. This removes the former
+inherited-array-preset question rather than adding implicit array editing.
+A child uses `!self.Base = [2]` to replace the whole default or
+`!self.Base = unset` to remove it without changing positional constraints.
+Nested object-member completion remains unchanged. Positional narrowing of
+a reference uses `!self.Base & !Tuple [ ... ]`, not reference-plus-bare-brackets.
+
+The explicit-tuple cutover passes `CARGO_BUILD_JOBS=1 ./scripts/check`, including
+the Rust, stdio LSP, doctest, documentation, and eleven Python boundary cases.
+Frozen native checks cover exact positions, nesting, empty tuples, duplicate
+values, whole-default replacement/removal, and rejection of position defaults
+and tuple metadata. Existing object-default projection and untouched union
+alternatives remain covered. Recursive lowering uses smaller tagged helpers
+so the cumulative depth limit produces a structured error on the standard test
+thread stack without increasing that stack or reducing the limit.
+
+Actual native CLI and Python-extension probes complete omitted tuple members,
+replace whole defaults, accept explicitly supplied values after `unset`, and
+allow duplicate tuple values. They reject missing positions, tuple metadata,
+grouped position defaults, and duplicate values in a unique List. Formatter
+CLI probes retain explicit Tuple syntax, comments, and numeric spelling, and
+pass canonical `--check`; ordinary tagged arrays remain data.
+Grouped tuple/reference operands and reassociated conjunctions preserve nested
+member-default replacement and removal. Regression checks and native/Python
+probes cover the repaired grouping boundary; empty Tuple formatting also passes
+canonical checking at width 1.
+Sibling union alternatives remain independently scoped: a supplied member keeps
+the replaced tuple default, while differing omitted-member completions remain
+ambiguous. The regression and native/Python probes cover this boundary without
+embedding registered base identifiers or restoring replaced defaults.
+
+### Core closeout and delivery
+
+The closeout removes inferred member declarations and inline scalar field defaults.
+Scalar data belongs in the record's grouped preset. Root defaults, nested
+container presets, and `List.items`/`Map.values` metadata presets remain supported.
+Reference-dependent `unset` admission uses bounded schema proof, including
+container constants; it does not add filesystem access to syntax parsing.
+
+The behavior-preserving refinement gives seven read-only compiler walks one
+borrowed schema-registry lookup, `Compiler::schema_for_reference`. Traversal,
+projection, copying, and budget policies remain separate. Mutable projection
+retains its identity-owning lookup. Formatter simplification removes a redundant
+inherited-default guard while retaining the caller fast path and unchanged
+comment/literal framing.
+
+Verification passes the complete `CARGO_BUILD_JOBS=1 ./scripts/check`, including
+53 native-bundle cases and all eleven Python boundary cases. Actual native CLI
+and formatter probes cover retained defaults, scalar/mixed-field rejection,
+container narrowing, and canonical output. The six-file MIT native archive
+passes four installed formatter and five installed LSP contracts. The installed
+OMP 18.12.6 RPC/LSP probe passes with zero model turns and removes its isolated
+state. The skill-owned evaluation record identifies the dirty local artifact;
+only clean CI artifacts of the release commit may be published.
+Review repair moves the composition example's scalar data into its record
+preset. Separate valid formatter seeds retain grouped bare-tagged container
+presets and grouped multiline scalar-root framing. Both seeds reach the actual
+formatter, and `scripts/fuzz-smoke 100` passes all four bounded corpus runs.
+
+Publish the verified core as a private GitHub release with MIT-licensed source,
+native archives, and dependency notices. Keep repository visibility private and
+crate/PyPI publication disabled. Editor integrations for VS Code/Cursor and
+OMP/DSH follow the core release; they wrap the existing syntax/formatting LSP
+rather than adding schema-aware editor features.
+
+### Conversion agenda
+
+Treat configuration conversion and definition conversion as separate contracts:
+
+- Configuration: YAML/JSON to DAML and DAML to YAML/JSON. Reuse a maintained
+  YAML parser/emitter rather than owning YAML grammar. Decide the admitted
+  YAML profile first: duplicate keys, non-string keys, aliases/cycles, custom
+  tags, non-finite numbers, and multiple documents cannot be silently coerced.
+  Define the explicit tag-loss policy for plain exports and distinguish
+  syntax-only export from completed/validated export. DAML's unquoted key
+  grammar cannot represent every arbitrary JSON/YAML string key.
+- Definitions: JSON Schema, including JSON Schema serialized as YAML, to native
+  DAML definitions and back where representable. Report unsupported keywords,
+  dialects, recursive graphs, regex differences, and consumer annotations;
+  never silently discard constraints. Bundle imports, explicit assertions,
+  default replacement, and completion are not fully expressible as standard
+  JSON Schema. Keep this separate from merely serializing an interchange module.
+- Source fidelity is not semantic conversion: comments, scalar styles, anchors,
+  source spans, and numeric spelling need an explicit preservation contract.
+  Reuse existing tooling if source-preserving YAML editing is needed.
+
+No converter is implemented by this agenda. Native `contains`, conditionals,
+general negation, editor-specific integrations, and package/network retrieval
+remain outside this delivery.
+
+### Helm assessment
+
+The narrow integration point is completed plain values before Helm renders:
+serialize them to a values file, or use selected JSON overrides through
+[`--set-json`](https://helm.sh/docs/helm/helm_install#synopsis).
+Helm retains its own [values precedence and merging](https://helm.sh/docs/chart_template_guide/values_files/).
+DAML tags and provenance do not survive that plain-data boundary.
+
+A chart's [`values.schema.json`](https://helm.sh/docs/topics/charts/#schema-files)
+is the schema interchange seam, not a native DAML definition. Helm's documented
+example uses Draft-07; DAML's admitted interchange dialect is Draft 2020-12.
+Do not infer dialect compatibility or skip chart validation. JSON Schema
+[`default`](https://json-schema.org/understanding-json-schema/reference/annotations#default)
+does not perform DAML completion.
+
+[Post-renderers](https://helm.sh/docs/topics/advanced/#post-rendering) receive
+already rendered manifests, too late to convert values. A future CLI wrapper
+could prepare values and invoke Helm; no plugin, chart mutation, deployment,
+or Helm-specific runtime is needed here. Helm 3/4 behavior must be selected
+explicitly if such an integration is later accepted.

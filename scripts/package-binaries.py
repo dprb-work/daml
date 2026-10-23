@@ -198,6 +198,7 @@ def package(out: Path) -> Path:
         copy_binaries(stage, target_dir, host)
         write_build(stage / "BUILD.json", version=version, commit=commit, dirty=dirty, host=host, rustc=rustc)
         shutil.copyfile(ROOT / "SOURCES.md", stage / "SOURCES.md")
+        shutil.copyfile(ROOT / "LICENSE", stage / "LICENSE")
         shutil.copyfile(render_notices(host, temporary_path), stage / "THIRD-PARTY-NOTICES.txt")
         temporary_archive = temporary_path / (base + suffix)
         if suffix == ".zip":

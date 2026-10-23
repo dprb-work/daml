@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+
+[package]
+name = "daml-python"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+license = "MIT"
+description = "Python bindings for Definitively Asserted Markup Language"
+repository = "https://github.com/dprb-work/daml"
+
+[lib]
+name = "daml"
+crate-type = ["cdylib"]
+
+[dependencies]
+daml_core = { package = "daml", version = "=0.1.0", path = "../.." }
+pyo3 = { version = "=0.30.1", features = ["abi3-py312"] }
+serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
+
+[lints.rust]
+unsafe_code = "forbid"

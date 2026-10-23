@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
-use daml::{FormatOptions, Limits, format, parse};
+use daml::{FormatOptions, Limits, format_definition, parse_definition};
 
 fn main() -> ExitCode {
     match run() {
@@ -61,10 +61,10 @@ fn run() -> Result<u8, String> {
     let options = FormatOptions { line_width: width };
     options.validate().map_err(|error| error.to_string())?;
     let input = read_input(input_path.as_deref())?;
-    let document = parse(input).map_err(|error| error.to_string())?;
-    let output = format(&document, options).map_err(|error| error.to_string())?;
+    let definition = parse_definition(input).map_err(|error| error.to_string())?;
+    let output = format_definition(&definition, options).map_err(|error| error.to_string())?;
     if check {
-        if output == document.source() {
+        if output == definition.source() {
             Ok(0)
         } else {
             let label = input_path

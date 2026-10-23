@@ -6,7 +6,9 @@
 
 mod positions;
 
-use crate::{Document, FormatOptions, Limits, Span, format, parser};
+use crate::{
+    Definition, FormatOptions, Limits, Span, format_definition, parser::native::parse_definition,
+};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response, ResponseError};
 use lsp_types::{
     Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
@@ -211,7 +213,7 @@ fn send(connection: &Connection, message: Message) -> Result<(), ServerError> {
 struct OpenDocument {
     version: i32,
     // A rejected version retains no source buffer. Its diagnostic has been published.
-    parsed: Option<Document>,
+    parsed: Option<Definition>,
 }
 
 struct Session {
@@ -307,8 +309,8 @@ impl Session {
     ) -> Result<(), ServerError> {
         let limits = Limits::default();
         let oversized = source.len() > limits.max_input_bytes;
-        let (parsed, diagnostics) = match parser::parse(&source, limits) {
-            Ok(root) => (Some(Document { source, root }), Vec::new()),
+        let (parsed, diagnostics) = match parse_definition(&source, limits) {
+            Ok(root) => (Some(Definition { source, root }), Vec::new()),
             Err(error) => {
                 // Over-limit text is discarded; its document-level diagnostic does
                 // not require a position table for arbitrarily large client input.
@@ -371,14 +373,14 @@ impl Session {
                 "cannot format a document with parser diagnostics".to_owned(),
             )
         })?;
-        let output = format(document, FormatOptions::default())
+        let output = format_definition(document, FormatOptions::default())
             .map_err(|error| (ErrorCode::RequestFailed, error.to_string()))?;
         if output == document.source() {
             return Ok(Vec::new());
         }
         // Layout can grow scalar source spans as well as total bytes. Admit the
         // proposed text through the same parser before asking the client to apply it.
-        parser::parse(&output, Limits::default()).map_err(|error| {
+        parse_definition(&output, Limits::default()).map_err(|error| {
             (
                 ErrorCode::RequestFailed,
                 format!("formatted document rejected by parser: {error}"),

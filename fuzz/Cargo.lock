@@ -112,8 +112,10 @@ version = "0.1.0"
 dependencies = [
  "jsonschema",
  "pretty",
+ "regex-automata",
  "serde",
  "serde_json",
+ "unicode-general-category",
 ]
 
 [[package]]

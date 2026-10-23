@@ -418,8 +418,23 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<StringValue
         }
         at = next;
     }
+    // A blank body containing only normalized line breaks already is its decoded
+    // value. Keep it source-backed instead of allocating an identical string.
+    if margin == usize::MAX && raw.bytes().all(|byte| byte == b'\n') {
+        return Ok(StringValue::Source(Span {
+            start: source_at,
+            end: source_at + raw.len(),
+        }));
+    }
     if margin == usize::MAX {
-        margin = 0;
+        let mut line_breaks = 0;
+        at = 0;
+        while at < bytes.len() {
+            let (end, next) = next_line(raw, at);
+            line_breaks += usize::from(next > end);
+            at = next;
+        }
+        return Ok(StringValue::Decoded("\n".repeat(line_breaks)));
     }
 
     let unchanged = margin == 0

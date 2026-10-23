@@ -1,0 +1,7 @@
+!Object {
+  objective: !Any
+  walker: !Any
+  budget: !self.config.OptimizeBudget
+  lineage?: !List
+  writers?: !List { items: !Object {} }
+}

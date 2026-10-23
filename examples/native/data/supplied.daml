@@ -1,0 +1,17 @@
+!app.Config {
+  name: "example"
+  adapter: !http.Http {
+    addr: "remote"
+  }
+  workers: [
+    {
+      name: "secondary"
+    }
+  ]
+  labels: {
+    app.version: "v2"
+    /health: "ok"
+    200: "ok"
+    東京: "Tokyo"
+  }
+}

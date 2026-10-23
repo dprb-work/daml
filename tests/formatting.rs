@@ -91,13 +91,13 @@ number: -0.0000001E+0009}"#;
 }
 
 #[test]
-fn block_string_blank_only_data_is_not_structurally_indented() {
+fn block_string_blank_only_data_strips_horizontal_whitespace() {
     let input = "{text:\"\"\"\n  \t\n    \n  \"\"\"\n}";
     let output = checked(input, 80);
     let parsed = parse(output).unwrap();
     assert_eq!(
         parsed.string(parsed.get(parsed.root(), "text").unwrap()),
-        Some("  \t\n    ")
+        Some("\n")
     );
 }
 

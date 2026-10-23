@@ -1,43 +1,49 @@
 # Schema modules, defaults, and structural validation
 
-DAML uses JSON Schema 2020-12 for structural constraints. The current
-`SchemaModule` interchange format is JSON-compatible data written as JSON or
-DAML; it is not the final native bundle-authoring format.
+DAML exposes two related schema paths. `SchemaModule` is a low-level,
+JSON-compatible interchange API for consumers that already have JSON Schema.
+Native definitions and bundles are the authoring API described in
+[native definitions and bundles](native-authoring.md). Native compilation
+lowers definitions to in-memory JSON Schema constraints and DAML completion
+metadata; it writes no generated schema files.
 
 JSON Schema's standard `default` is an annotation, not a command to mutate an
-instance. DAML defines a separate completion step, followed by full validation.
-See [standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default).
+instance. DAML's completion step applies defaults before full validation. See
+[standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default).
+The [Draft 2020-12 baseline audit](json-schema-2020-12-audit.md) separates
+backend validation, DAML completion, and native expressibility. Interchange is a
+bounded Draft 2020-12 profile, not an unqualified conformance claim.
 
-## Write a module in DAML
+## Supply an interchange module
 
-```daml
+Interchange accepts a JSON-compatible envelope of named types and registered
+resources. Schema documents use JSON Schema keywords such as `$id`, `$ref`, and
+`$defs`. These dollar-prefixed names belong to schema documents, not final DAML
+data keys: data parsing rejects `$` in keys. Supply such schemas as JSON with
+`SchemaModule::from_json`, or as already parsed JSON-compatible values with
+`SchemaModule::from_value`.
+
+```json
 {
-  types: {
-    app.Request: {
-      schema: {
-        $id: "urn:example:Request"
-        type: "object"
-        properties: {
-          params: {
-            type: "object"
-            default: {
-              timeout: 30
-              retries: 2
-            }
-            properties: {
-              timeout: { type: "integer" }
-              retries: { type: "integer" }
-              endpoint: { type: "string" }
-            }
-            required: [
-              "timeout"
-              "retries"
-              "endpoint"
-            ]
-            additionalProperties: false
+  "types": {
+    "app.Request": {
+      "schema": {
+        "$id": "urn:example:Request",
+        "type": "object",
+        "properties": {
+          "params": {
+            "type": "object",
+            "default": {"timeout": 30, "retries": 2},
+            "properties": {
+              "timeout": {"type": "integer"},
+              "retries": {"type": "integer"},
+              "endpoint": {"type": "string"}
+            },
+            "required": ["timeout", "retries", "endpoint"],
+            "additionalProperties": false
           }
-        }
-        required: ["params"]
+        },
+        "required": ["params"]
       }
     }
   }
@@ -49,12 +55,10 @@ containing `timeout: 30`, `retries: 2`, and the supplied endpoint. Supplying
 `timeout: 5` overrides 30. Omitting the endpoint is still an error: the default
 object can be partial, but the completed request cannot lack required values.
 
-The JSON representation has the same module keys and JSON Schema content;
-only the serialization changes. Use `SchemaModule::from_daml`, `from_json`, or
-`from_value`, then `Schemas::compose`. Unknown module-envelope fields are errors.
-Interchange schema documents are JSON-compatible values: tags in a schema
-document are rejected rather than silently discarded. Data documents remain
-fully tagged.
+For the JSON representation, use `SchemaModule::from_json` or `from_value`,
+then `Schemas::compose`. Unknown module-envelope fields are errors. Interchange
+schema documents are JSON-compatible values: tags in a schema document are
+rejected rather than silently discarded. Data documents remain fully tagged.
 Duplicate JSON object members are rejected, including escaped spellings of the
 same key. `from_value` receives an already constructed map, so duplicate-key
 admission belongs to its caller.
@@ -93,7 +97,7 @@ membership; its full format is described below.
 ## Resolve, then inspect the completed result
 
 ```rust
-let module = daml::SchemaModule::from_daml(schema_source)?;
+let module = daml::SchemaModule::from_json(schema_source)?;
 let schemas = daml::Schemas::compose([module])?;
 let supplied = daml::parse(input_source)?;
 let resolved = schemas.resolve(&supplied)?;
@@ -111,8 +115,8 @@ Run the complete multi-module consumer:
 
 ```sh
 cargo run --locked --example resolve -- examples/application.daml \
-  examples/schemas/application.daml examples/schemas/network.json \
-  examples/schemas/text.daml
+  examples/schemas/application.json examples/schemas/network.json \
+  examples/schemas/text.json
 ```
 
 It validates nested records, scalars, and arrays; fills the adapter timeout and
@@ -120,18 +124,28 @@ request ID; and prints completed JSON data. It does not invoke an adapter.
 
 ## Exact completion rules
 
-- Supplied values win. Explicit `null` is supplied data, never an omitted value.
+- Supplied values win. Explicit `null` is supplied data, never omission.
 - Object defaults merge recursively with supplied partial objects. Unknown
-  supplied fields are retained so `additionalProperties` can reject them.
-- Supplied arrays and scalars replace a default value; arrays are not concatenated.
-- A missing property is created only by an explicit applicable default, not by
-  guessing that a new object should exist because its children have defaults.
-- A parent object preset is already present when child fallback defaults are
-  considered. A preset value is not overwritten by a child's fallback.
-- A default may itself be partial. Required fields and all other constraints are
-  checked on the completed result, not on that default literal in isolation.
-- Conflicting applicable defaults for a still-missing path are an error, not a
+  supplied fields remain present so `additionalProperties` can reject them.
+- Supplied arrays and scalars replace defaults; arrays are never concatenated.
+- A missing required object or map starts as `{}`; a missing required list starts
+  as `[]`. Completion then applies applicable presets and child defaults before
+  validation. Empty construction does not invent primitives, map entries, list
+  elements, or implementation tags.
+- Optional absent containers remain absent. Explicit defaults still apply to
+  absent values, including optional values in the low-level interchange API.
+- An explicitly tagged supplied object replaces that field's contextual object
+  preset, regardless of whether the tag resolves to the same definition. The
+  selected tag's own defaults still apply, and containing constraints remain
+  active. Tag presence, not identity comparison, sets this boundary.
+- A default may be partial. Required fields and all other constraints are checked
+  on the completed result, not on the default literal in isolation.
+- Conflicting applicable defaults for a still-missing path are errors, not a
   last-module-wins rule. Explicit supplied data at that path takes precedence.
+- Union branches complete isolated candidates. Different valid completed values
+  are ambiguous and rejected rather than choosing the first branch. `oneOf`
+  still requires exactly one valid branch; `anyOf` may accept several branches
+  only when completion yields the same value.
 - Union branches complete isolated candidates. Different valid completed values
   are ambiguous and rejected, rather than choosing the first branch. `oneOf`
   still requires exactly one valid branch; `anyOf` may accept several branches
@@ -189,18 +203,19 @@ removed tag/slot keywords.
 ### Annotate tags on defaults
 
 The native `x-daml-default-tags` keyword assigns tags to values inside the
-schema's `default`. Its value is an array of records with exactly two fields:
-`path`, an RFC 6901 pointer relative to the default root, and `tag`, a nonempty
-literal tag string. Use the empty path `""` for the default root. Each path must
-identify a value in the default, and paths must be unique.
-The schema must contain `default`.
+schema's `default`. Each record has a `path` RFC 6901 pointer relative to the
+default root and a nonempty literal `tag` spelling. A native compiler may also
+supply `binding`, a private resolved type key used when the declaring bundle's
+alias is not visible to the entry context. Preserve this field when adapting
+native defaults. Use `""` for the default root. Each path must identify a value
+in the default, paths must be unique, and the schema must contain `default`.
 
 ```json
 {
   "type": "object",
   "default": {"payload": {"value": 1}},
   "x-daml-default-tags": [
-    {"path": "/payload", "tag": "vendor.Payload"}
+    {"path": "/payload", "tag": "vendor.Payload", "binding": "internal-key"}
   ]
 }
 ```
@@ -212,7 +227,7 @@ scalar or array default also discards its tag; that discarded assertion cannot
 leak onto supplied data.
 Malformed records, unknown fields, invalid or duplicate paths, missing targets,
 and an empty annotation array are rejected during schema admission. The declared
-tag must satisfy DAML's existing provisional tag-name rules.
+tag must satisfy the current [tag grammar](syntax.md#structure-and-names).
 
 `examples/schema_adapter.rs` contains a complete consumer-side conversion from a
 made-up vendor format. It maps that format's record marker and default-tag
