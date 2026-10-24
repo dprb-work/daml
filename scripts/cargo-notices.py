@@ -29,7 +29,6 @@ def main() -> int:
             capture_output=True,
             text=True,
             encoding="utf-8",
-            cwd=ROOT,
         ).stdout.strip()
         if version != ABOUT_VERSION:
             raise ValueError(f"install {ABOUT_VERSION} before generating notices")
@@ -77,7 +76,6 @@ def main() -> int:
                 command,
                 check=True,
                 capture_output=True,
-                cwd=ROOT,
             ).stdout
         sys.stdout.buffer.write(notices)
     except subprocess.CalledProcessError as error:
