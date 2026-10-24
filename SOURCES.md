@@ -152,9 +152,11 @@ process-cleanup behavior. The dependency lock owns updates; no maintained fork
 of that helper is checked in.
 
 `integrations/verify/package-lock.json` pins independent development-only
-Electron and TextMate/Oniguruma verification tools. Its downloaded VS Code
-runtime is an ignored local test cache, not a redistributed part of DAML.
-Native archives retain their separate Cargo graph and legal payload.
+`@vscode/test-electron` 3.1.0 and TextMate 9.3.2/Oniguruma 2.0.1 verification
+tools. The Electron test helper requires Node 22 or newer; the editor workflow
+continues to use Node 24.19.0. Its downloaded VS Code runtime remains pinned
+to 1.105.1 in the verifier and is an ignored local test cache, not a redistributed
+part of DAML. Native archives retain their separate Cargo graph and legal payload.
 OMP/DSH integration payloads contain configuration only; Soul owns the native
 DSH client and its dependency graph.
 
