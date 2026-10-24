@@ -19,7 +19,7 @@ if (run(cargo, ['about', '--version']).trim() !== 'cargo-about 0.9.2') throw new
 const temporary = join(root, 'artifacts', 'license-config.toml');
 await mkdir(join(root, 'artifacts'), { recursive: true });
 const python = process.env.PYTHON ?? 'python3';
-const config = run(python, ['-c', [
+const config = run(python, ['-B', '-c', [
   'import importlib.util, sys',
   'spec = importlib.util.spec_from_file_location("daml_native_packaging", sys.argv[1])',
   'module = importlib.util.module_from_spec(spec)',
