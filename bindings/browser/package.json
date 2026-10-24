@@ -1,0 +1,22 @@
+{
+  "name": "@dprb-work/daml-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone browser bindings for the native DAML engine",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/daml_browser.d.ts",
+      "import": "./dist/daml_browser.js"
+    },
+    "./daml_browser_bg.wasm": "./dist/daml_browser_bg.wasm"
+  },
+  "files": ["dist", "README.md", "LICENSE", "SOURCES.md", "THIRD-PARTY-NOTICES.txt", "BUILD.json"],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "https://github.com/dprb-work/daml.git", "directory": "bindings/browser" }
+}

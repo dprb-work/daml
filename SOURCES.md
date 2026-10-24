@@ -64,8 +64,8 @@ conversion or an integration with the consumer.
 
 `Cargo.lock` owns the portable library graph; `fuzz/Cargo.lock` owns the isolated
 fuzz-development graph. `bindings/python/Cargo.lock` owns the optional Python
-extension graph. Dependency sources, licenses, advisories, and forbidden retrieval
-features are checked with `deny.toml` for each graph.
+extension graph; `bindings/browser/Cargo.lock` owns the separate WASM binding
+graph. `deny.toml` owns the shared dependency/license policy.
 
 The fuzz runtime is `libfuzzer-sys` 0.4.13, declared as
 `(MIT OR Apache-2.0) AND NCSA`. Its LLVM runtime has an additional NCSA obligation;
@@ -157,3 +157,27 @@ runtime is an ignored local test cache, not a redistributed part of DAML.
 Native archives retain their separate Cargo graph and legal payload.
 OMP/DSH integration payloads contain configuration only; Soul owns the native
 DSH client and its dependency graph.
+
+## Browser boundary and packaging
+
+The isolated browser binding uses `wasm-bindgen` 0.2.129 and `js-sys` 0.3.106
+(MIT OR Apache-2.0), pinned in its Cargo lockfile. Their generated web-target
+glue and the compiled WASM are packaged together; no upstream source is copied
+into maintained DAML source. See the [wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/)
+and published manifests for [wasm-bindgen](https://docs.rs/crate/wasm-bindgen/0.2.129/source/Cargo.toml)
+and [js-sys](https://docs.rs/crate/js-sys/0.3.106/source/Cargo.toml).
+
+The matching `wasm-bindgen` 0.2.129 CLI is a build-time tool, not a browser
+runtime dependency. The browser runtime has no npm dependencies, Python
+requirement, automatic definition fetch, or authoring service dependency.
+The independent verifier pins Playwright 1.64.1 (Apache-2.0) and TypeScript
+6.0.3 (Apache-2.0) in `bindings/browser/verify/package-lock.json`; neither is
+included in the browser package.
+
+Private local SDK tarballs carry the canonical MIT license and this inventory.
+`cargo-about` 0.9.2 generates the WASM Cargo graph's notices using the same
+`deny.toml` policy and plaintext template as native packaging.
+`bindings/browser/scripts/package.mjs` records legal-payload hashes alongside
+the build source/output provenance. The [SDK guide](bindings/browser/README.md)
+owns exact values, resource admission, lifecycle, build, and package contracts.
+Registry publication and promotion to a clean private release are separate actions.

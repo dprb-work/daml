@@ -9,7 +9,7 @@ The Rust library parses source-backed documents, loads native type definitions
 from independently scoped bundles, and completes partial values before structural
 validation. Deeply nested tags need no central discriminator map. A low-level
 JSON Schema interchange API remains available. Reflow formatting, an optional
-stdio LSP, and a separate native Python extension are implemented.
+stdio LSP, a native Python extension, and a standalone browser/WASM SDK are implemented.
 
 The private [v0.1.0 release](https://github.com/dprb-work/daml/releases/tag/v0.1.0)
 contains verified Linux, macOS, and Windows native archives with checksums.
@@ -38,6 +38,8 @@ VSIX and native OMP/DSH registration payloads around the existing language serve
   negotiated Unicode positions, version ownership, and explicit non-goals.
 - [Python API](docs/python.md): exact values, retained assertions, native bundles,
   structured errors, and private wheel/source packaging.
+- [Browser SDK](bindings/browser/README.md): explicit in-memory definitions,
+  exact editable values, contextual semantic writing, and private static packaging.
 - [Syntax contract](docs/syntax.md): structure, string decoding, Unicode key/tag
   grammar, source spans, errors, and resource bounds.
 - [Schema modules and defaults](docs/schemas.md): low-level interchange,

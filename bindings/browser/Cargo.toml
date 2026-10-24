@@ -1,0 +1,27 @@
+[package]
+name = "daml-browser"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+daml = { path = "../.." }
+js-sys = "=0.3.106"
+serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
+wasm-bindgen = "=0.2.129"
+
+[[example]]
+name = "native-parity"
+path = "verify/native.rs"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"

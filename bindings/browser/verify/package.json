@@ -1,0 +1,16 @@
+{
+  "name": "daml-browser-sdk-verify",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify": "node run.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1",
+    "typescript": "6.0.3"
+  }
+}

@@ -3,9 +3,11 @@
 Status: data parsing, native definitions and local bundle loading, structural
 validation and completion, hardening, reflow formatting, the minimal stdio LSP,
 binary distribution proof, and the isolated Python extension are implemented.
+The standalone browser SDK also passes focused local acceptance for Olaf's
+browser-authoring prerequisite; it is not a published release.
 [Syntax](docs/syntax.md), [native authoring](docs/native-authoring.md),
-[interchange](docs/schemas.md), and the [Python API](docs/python.md) own the
-current contracts.
+[interchange](docs/schemas.md), the [Python API](docs/python.md), and the
+[browser SDK](bindings/browser/README.md) own the current contracts.
 
 ## Target result
 
@@ -637,6 +639,45 @@ pass. Cursor compatibility is
 declared through the VS Code API; Cursor itself was not launched. No active host
 installation/configuration is changed.
 
+
+### Standalone browser SDK
+
+The [private browser SDK](bindings/browser/README.md) implements
+[DAML issue 16](https://github.com/dprb-work/daml/issues/16), the standalone
+browser-authoring prerequisite for [Olaf issue 387](https://github.com/dprb-work/Olaf/issues/387).
+Olaf adoption remains a separate change; no Olaf code, hosted CI, active host
+installation, or registry publication is part of this delivery.
+
+`Bundle::from_sources` supplies bounded logical resources to the existing native
+compiler. Canonical semantic writing accepts edited exact values and preserves
+assertion identity through visible aliases, rejecting private collisions and
+constrained-alias substitutions. WASM classes expose those core operations,
+original source, owned snapshots, and input/default provenance.
+
+Consolidation review retains one compiler for filesystem and supplied resources,
+one Rust language engine across native/browser clients, and the existing shared
+license-policy producer. The browser bridge converts only at its JS boundary;
+resolved values and origins are exported in one traversal, without an
+intermediate owned Rust snapshot. Simplification removes up-front sparse-list
+capacity allocation, repeated pointer-prefix copies, alias candidate sorting,
+and unnecessary scalar conversions. Independent core and binding reviews approve
+the repaired source; neither review substitutes for runtime evidence.
+
+Focused local evidence covers 142 Rust cases across `browser_resources`,
+`semantic_write`, `native_bundles`, `default_tag_annotations`, `defaults`, and
+`schema_loading`; core and WASM-binding Clippy with warnings denied; generated
+TypeScript consumer checking; and the real native parity executable.
+Playwright drives release WASM in Google Chrome for Testing 153.0.8010.12,
+including the extracted private tarball, with zero requests after static preload.
+Rendered package inspection also confirms the documented edit/write/re-admit
+path, snapshot mutation isolation, and exact Unicode diagnostic coordinates.
+
+Local packaging includes canonical MIT/dependency notices, source/output/legal
+hashes, and a SHA-256 sidecar. An injected unrecorded `dist` file is rejected
+before packaging. Only a clean committed build may be promoted as a release;
+building and verifying a private local tarball does not publish it.
+The [verifier guide](bindings/browser/verify/README.md) owns repeatable commands.
+CI optimization remains blocked here because another agent owns it.
 
 ### Conversion agenda
 
