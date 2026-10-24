@@ -173,3 +173,22 @@ not a clean published release, even when its checksum is valid.
 The source repository's `bindings/browser/verify/README.md` owns the focused
 native/browser parity, generated-type, and offline-after-preload verification
 procedure. Browser runtime assets do not include the verifier or its tooling.
+
+## Retrieve a private release
+
+Browser packages use scoped `browser-sdk-v<version>` GitHub releases, separate
+from the native binary releases. For this package version, use
+[`browser-sdk-v0.1.0`](https://github.com/dprb-work/daml/releases/tag/browser-sdk-v0.1.0):
+
+```sh
+gh release download browser-sdk-v0.1.0 --repo dprb-work/daml \
+  --pattern 'dprb-work-daml-browser-0.1.0.tgz*' --dir download
+cd download
+sha256sum -c dprb-work-daml-browser-0.1.0.tgz.sha256
+tar -xzf dprb-work-daml-browser-0.1.0.tgz
+```
+
+Retrieve through an authenticated build environment, then serve the selected
+JS/WASM as static application assets. Do not embed repository credentials in a
+browser bundle or make runtime requests to private GitHub release endpoints.
+Inspect `package/BUILD.json` for source revision and clean-build provenance.

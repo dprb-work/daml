@@ -4,7 +4,7 @@ Status: data parsing, native definitions and local bundle loading, structural
 validation and completion, hardening, reflow formatting, the minimal stdio LSP,
 binary distribution proof, and the isolated Python extension are implemented.
 The standalone browser SDK also passes focused local acceptance for Olaf's
-browser-authoring prerequisite; it is not a published release.
+browser-authoring prerequisite. Private publication is a separate delivery step.
 [Syntax](docs/syntax.md), [native authoring](docs/native-authoring.md),
 [interchange](docs/schemas.md), the [Python API](docs/python.md), and the
 [browser SDK](bindings/browser/README.md) own the current contracts.
