@@ -4,67 +4,271 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+  workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}
+  group: check-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null && (github.event.changes.title != null || github.event.changes.body != null) && 'metadata' || 'verification' }}
   cancel-in-progress: true
 
 jobs:
-  check:
+  plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    outputs:
+      tier: ${{ steps.plan.outputs.tier }}
+      checks: ${{ steps.plan.outputs.checks }}
+      base: ${{ steps.plan.outputs.base }}
+      head: ${{ steps.plan.outputs.head }}
+      checkout_sha: ${{ steps.plan.outputs.checkout_sha }}
+      mode: ${{ steps.plan.outputs.mode }}
+      base_ref: ${{ steps.plan.outputs.base_ref }}
+      draft: ${{ steps.plan.outputs.draft }}
+      metadata_only: ${{ steps.metadata.outputs.metadata_only }}
     steps:
+      - id: metadata
+        name: Classify metadata-only pull-request edits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as stream:
+              event = json.load(stream)
+          changes = event.get("changes")
+          metadata_only = (
+              os.environ["EVENT_NAME"] == "pull_request"
+              and event.get("action") == "edited"
+              and isinstance(changes, dict)
+              and bool(changes)
+              and set(changes) <= {"title", "body"}
+              and all(
+                  isinstance(change, dict)
+                  and set(change) == {"from"}
+                  and (
+                      isinstance(change["from"], str)
+                      or (key == "body" and change["from"] is None)
+                  )
+                  for key, change in changes.items()
+              )
+          )
+          value = str(metadata_only).lower()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"metadata_only={value}\n")
+          print(f"Metadata-only pull-request edit: {value}")
+          PY
+      - id: pr-context
+        if: steps.metadata.outputs.metadata_only != 'true' && github.event_name == 'pull_request'
+        name: Read current pull-request candidate and target base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          headers = {"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"}
+          endpoint = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/pulls/{os.environ['PR_NUMBER']}"
+          with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
+              pull_request = json.load(response)
+          if pull_request["head"]["sha"] != os.environ["EVENT_PR_HEAD"]:
+              raise SystemExit("ci-plan: current PR head differs from triggering event")
+          repository = pull_request["base"]["repo"]["full_name"]
+          base_ref = pull_request["base"]["ref"]
+          base_ref_path = urllib.parse.quote(base_ref, safe="/")
+          endpoint = f"https://api.github.com/repos/{repository}/git/ref/heads/{base_ref_path}"
+          with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
+              base = json.load(response)["object"]["sha"]
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"head={pull_request['head']['sha']}\n")
+              output.write(f"base={base}\n")
+              output.write(f"draft={str(pull_request['draft']).lower()}\n")
+              output.write(f"base_ref={base_ref}\n")
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: steps.metadata.outputs.metadata_only != 'true'
         with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Install pinned Rust toolchain
-        run: rustup show
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
-        with:
-          version: 0.12.10
-      - name: Verify
-        run: ./scripts/check
+      - name: Run protected planner contract
+        if: steps.metadata.outputs.metadata_only != 'true'
+        run: python3 tests/ci_plan_test.py
+      - id: plan
+        if: steps.metadata.outputs.metadata_only != 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_DRAFT: ${{ steps.pr-context.outputs.draft || github.event.pull_request.draft }}
+          PR_BASE: ${{ steps.pr-context.outputs.base || github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ steps.pr-context.outputs.head || github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ steps.pr-context.outputs.base_ref || github.event.pull_request.base.ref }}
+          PUSH_BASE: ${{ github.event.before }}
+          PUSH_HEAD: ${{ github.event.after }}
+          EVENT_HEAD: ${{ github.sha }}
+          EVENT_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          base_ref=""
+          paths="$RUNNER_TEMP/daml-changed-paths"
+          raw="$RUNNER_TEMP/daml-changed-paths.raw"
+          read_raw=false
+          if [[ "$EVENT_NAME" == pull_request ]]; then
+            if [[ "$PR_DRAFT" == true ]]; then mode=draft; else mode=ready; fi
+            draft="$PR_DRAFT"
+            base="$PR_BASE"
+            head="$PR_HEAD"
+            base_ref="$PR_BASE_REF"
+            merge_base=$(git rev-parse HEAD^1)
+            merge_head=$(git rev-parse HEAD^2)
+            [[ "$merge_base" == "$base" && "$merge_head" == "$head" ]]
+            git diff --no-renames --name-only -z "$base...$head" > "$raw"
+            read_raw=true
+          elif [[ "$EVENT_NAME" == push ]]; then
+            mode=push
+            draft=false
+            base="$PUSH_BASE"
+            head="$PUSH_HEAD"
+            if [[ "$base" =~ ^0+$ ]]; then
+              printf '*\n' > "$paths"
+            else
+              git diff --no-renames --name-only -z "$base..$head" > "$raw"
+              read_raw=true
+            fi
+          else
+            mode=manual-full
+            draft=false
+            base="$EVENT_HEAD"
+            head="$EVENT_HEAD"
+            printf 'manual-full\n' > "$paths"
+          fi
+          checkout_sha=$(git rev-parse HEAD)
+          if [[ "$read_raw" == true ]]; then
+            python3 -I - "$raw" "$paths" <<'PY'
+          from pathlib import Path
+          import sys
+          raw = Path(sys.argv[1]).read_bytes()
+          if not raw or not raw.endswith(b"\0"):
+              raise SystemExit("ci-plan: incomplete NUL-delimited git diff")
+          paths = raw[:-1].split(b"\0")
+          if any(not path or b"\n" in path or b"\r" in path for path in paths):
+              raise SystemExit("ci-plan: unsupported or malformed changed path")
+          try:
+              text = "\n".join(path.decode("utf-8") for path in paths) + "\n"
+          except UnicodeDecodeError as error:
+              raise SystemExit(f"ci-plan: changed path is not UTF-8: {error}")
+          Path(sys.argv[2]).write_text(text, encoding="utf-8")
+          PY
+          fi
+          result=$(python3 scripts/ci-plan.py --mode "$mode" --paths-file "$paths")
+          RESULT="$result" MODE="$mode" BASE="$base" BASE_REF="$base_ref" HEAD="$head" CHECKOUT_SHA="$checkout_sha" DRAFT="$draft" python3 - <<'PY'
+          import json, os, subprocess
+          result = json.loads(os.environ["RESULT"])
+          if "docs" in result["checks"]:
+              mode, base, head = os.environ["MODE"], os.environ["BASE"], os.environ["HEAD"]
+              if mode == "manual-full":
+                  command = ["git", "diff", "--check", "--no-renames", "HEAD^", "HEAD"]
+              elif mode in {"ready", "draft"}:
+                  command = ["git", "diff", "--check", "--no-renames", f"{base}...{head}"]
+              else:
+                  command = ["git", "diff", "--check", "--no-renames", f"{base}..{head}"]
+              subprocess.run(command, check=True)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"tier={result['tier']}\n")
+              output.write("checks=" + json.dumps(result["checks"], separators=(",", ":")) + "\n")
+              output.write(f"base={os.environ['BASE']}\nbase_ref={os.environ['BASE_REF']}\nhead={os.environ['HEAD']}\ncheckout_sha={os.environ['CHECKOUT_SHA']}\nmode={os.environ['MODE']}\ndraft={os.environ['DRAFT']}\n")
+          print(f"DAML CI tier: {result['tier']}; checks: {', '.join(result['checks']) or 'none'}")
+          PY
 
-  dependencies:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Install pinned Rust toolchain
-        run: rustup show
-      - name: Install dependency policy tool
-        run: cargo install cargo-deny --version 0.20.2 --locked
-      - name: Check advisories, licenses, bans, and sources
-        run: |
-          cargo deny --locked check
-          cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
-          cargo deny --all-features --locked check
+  heavy:
+    name: Heavy verification
+    needs: plan
+    if: >-
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.metadata_only != 'true' &&
+      needs.plan.outputs.tier != 'draft' &&
+      (contains(fromJSON(needs.plan.outputs.checks || '[]'), 'core') ||
+       contains(fromJSON(needs.plan.outputs.checks || '[]'), 'dependencies') ||
+       contains(fromJSON(needs.plan.outputs.checks || '[]'), 'fuzz') ||
+       contains(fromJSON(needs.plan.outputs.checks || '[]'), 'editors') ||
+       contains(fromJSON(needs.plan.outputs.checks || '[]'), 'binaries'))
+    uses: ./.github/workflows/ci-heavy.yml
+    with:
+      checks: ${{ needs.plan.outputs.checks }}
+      ref: ${{ needs.plan.outputs.checkout_sha }}
 
-  fuzz:
+  required:
+    name: ${{ needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required' }}
+    needs: [plan, heavy]
+    if: always() && !(needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Install pinned stable and fuzz toolchains
+      - id: current
+        name: Read current candidate and target-base tip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PLAN_BASE: ${{ needs.plan.outputs.base }}
         run: |
-          rustup show
-          (cd fuzz && rustup show)
-      - name: Install pinned fuzz and policy tools
+          python3 -I - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          headers = {"Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json"}
+          if os.environ["EVENT_NAME"] == "pull_request":
+              endpoint = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/pulls/{os.environ['PR_NUMBER']}"
+              with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
+                  pull_request = json.load(response)
+              head = pull_request["head"]["sha"]
+              draft = str(pull_request["draft"]).lower()
+              repository = pull_request["base"]["repo"]["full_name"]
+              base_ref = pull_request["base"]["ref"]
+              base_ref_path = urllib.parse.quote(base_ref, safe="/")
+              endpoint = f"https://api.github.com/repos/{repository}/git/ref/heads/{base_ref_path}"
+              with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
+                  base = json.load(response)["object"]["sha"]
+          else:
+              ref = os.environ["REF"].removeprefix("refs/")
+              endpoint = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/git/ref/{urllib.parse.quote(ref, safe='/')}"
+              with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
+                  current = json.load(response)
+              head, base = current["object"]["sha"], os.environ["PLAN_BASE"]
+              base_ref = ""
+              draft = "false"
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"head={head}\nbase={base}\nbase_ref={base_ref}\ndraft={draft}\n")
+          PY
+      - name: Require all selected checks for the current candidate and base
+        env:
+          PLAN_TIER: ${{ needs.plan.outputs.tier }}
+          PLAN_CHECKS: ${{ needs.plan.outputs.checks }}
+          PLAN_BASE: ${{ needs.plan.outputs.base }}
+          PLAN_HEAD: ${{ needs.plan.outputs.head }}
+          PLAN_BASE_REF: ${{ needs.plan.outputs.base_ref }}
+          PLAN_DRAFT: ${{ needs.plan.outputs.draft }}
+          CURRENT_BASE: ${{ steps.current.outputs.base }}
+          CURRENT_HEAD: ${{ steps.current.outputs.head }}
+          CURRENT_BASE_REF: ${{ steps.current.outputs.base_ref }}
+          CURRENT_DRAFT: ${{ steps.current.outputs.draft }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          HEAVY_RESULT: ${{ needs.heavy.result }}
         run: |
-          cargo install cargo-fuzz --version 0.13.2 --locked
-          cargo install cargo-deny --version 0.20.2 --locked
-      - name: Lint fuzz harness
-        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
-      - name: Check fuzz dependency policy
-        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
-      - name: Exercise address-sanitized targets and retained seeds
-        run: ./scripts/fuzz-smoke 1000
+          python3 - <<'PY'
+          import importlib.util, json, os, sys
+          spec = importlib.util.spec_from_file_location("ci_plan", "scripts/ci-plan.py")
+          planner = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(planner)
+          selected = json.loads(os.environ["PLAN_CHECKS"] or "[]")
+          heavy = os.environ["HEAVY_RESULT"]
+          results = {"docs": os.environ["PLAN_RESULT"], "core": heavy, "dependencies": heavy, "fuzz": heavy, "editors": heavy, "binaries": heavy}
+          base_ref_current = os.environ["CURRENT_BASE_REF"] == os.environ["PLAN_BASE_REF"]
+          draft_current = os.environ["CURRENT_DRAFT"] == os.environ["PLAN_DRAFT"]
+          passed = os.environ["PLAN_TIER"] != "draft" and base_ref_current and draft_current and planner.required_result(selected, results, os.environ["PLAN_HEAD"], os.environ["PLAN_BASE"], os.environ["CURRENT_HEAD"], os.environ["CURRENT_BASE"])
+          print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; base current: {os.environ['CURRENT_BASE'] == os.environ['PLAN_BASE']}; base ref current: {base_ref_current}; readiness current: {draft_current}")
+          sys.exit(0 if passed else 1)
+          PY

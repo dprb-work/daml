@@ -34,3 +34,19 @@ asset when changing bundlers: the standard client uses it to terminate lingering
 server process trees on Linux/macOS after shutdown.
 
 The grammar is editor presentation only. It follows constructs described in the repository's [`native authoring contract`](https://github.com/dprb-work/daml/blob/v0.1.0/docs/native-authoring.md) and [`syntax contract`](https://github.com/dprb-work/daml/blob/v0.1.0/docs/syntax.md); it is not a parser or semantic validator. Diagnostics and formatting are solely supplied by the existing language server.
+
+### Temporary build-tool security exception
+
+The manifest scopes an MSAL Node `7.1.0` override to VSCE `4.0.0` through Azure
+Identity `4.14.0`, fixing [GHSA-xcx6-jx8p-x3h5](https://github.com/advisories/GHSA-xcx6-jx8p-x3h5).
+This is an explicitly accepted compatibility exception: Identity still declares
+MSAL `^6.0.0`; no released parent currently admits the patched version.
+
+The [MSAL v7 migration guide](https://github.com/AzureAD/microsoft-authentication-library-for-js/blob/msal-node-v7.1.0/lib/msal-node/docs/v7-migration.md)
+identifies removal of interactive `responseMode`; the inspected Identity calls
+do not supply it. Static API review and packaging/editor checks do not establish
+every Azure credential or authenticated publishing flow. The high-severity npm
+audit remains enforced without exclusions.
+
+Keep the parent-version selectors exact. Remove this exception when a supported
+parent release admits patched MSAL rather than widening it to unreviewed parents.
