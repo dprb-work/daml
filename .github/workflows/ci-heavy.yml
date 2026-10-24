@@ -1,0 +1,42 @@
+name: Selected DAML heavy checks
+
+on:
+  workflow_call:
+    inputs:
+      checks:
+        description: JSON array of selected stable check identities
+        required: true
+        type: string
+      ref:
+        description: Admitted immutable checkout SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Check
+    if: >-
+      contains(fromJSON(inputs.checks), 'core') ||
+      contains(fromJSON(inputs.checks), 'dependencies') ||
+      contains(fromJSON(inputs.checks), 'fuzz')
+    uses: ./.github/workflows/check-heavy.yml
+    with:
+      checks: ${{ inputs.checks }}
+      ref: ${{ inputs.ref }}
+
+  editors:
+    name: Editor integrations
+    if: contains(fromJSON(inputs.checks), 'editors')
+    uses: ./.github/workflows/editors-heavy.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  binaries:
+    name: Binaries
+    if: contains(fromJSON(inputs.checks), 'binaries')
+    uses: ./.github/workflows/binaries-heavy.yml
+    with:
+      ref: ${{ inputs.ref }}

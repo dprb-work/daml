@@ -11,8 +11,12 @@ DAML's native distributions carry the MIT license and generated dependency notic
 
 ## Build matrix and downloads
 
-The workflow runs for pull requests, pushes to main, and manual dispatches.
-Each job builds and exercises the archive on its native runner:
+The automatic `Check` workflow selects native archive verification for pull
+requests and pushes to `main` when source, package metadata, toolchain, or archive
+inputs affect the distribution contract. Draft pull requests skip archive builds.
+Manual `Check` dispatch selects the full CI plan; the standalone `Binaries`
+workflow remains a manual archive-verification entrypoint. Each selected native
+job builds and exercises the archive on its runner:
 
 | Runner | Rust target | Archive |
 |---|---|---|

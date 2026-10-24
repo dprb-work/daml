@@ -50,6 +50,8 @@ VSIX and native OMP/DSH registration payloads around the existing language serve
   statistics and all measurement samples.
 - [Sources and distribution boundaries](SOURCES.md): pinned YAML fixtures and
   development-runtime notices.
+- [CI checks and path selection](docs/ci.md): positive documentation paths,
+  selected check boundaries, and the native-platform limits.
 
 The syntax contract owns data parsing; the native authoring guide owns definition
 expressions and bundle loading. The schema guide owns structural validation and

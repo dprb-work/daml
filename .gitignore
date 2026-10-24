@@ -1,6 +1,7 @@
 /target/
 /dist/
 /.scratch/
+/scripts/__pycache__/
 /bindings/python/target/
 /bindings/python/.venv/
 /bindings/python/.pytest_cache/

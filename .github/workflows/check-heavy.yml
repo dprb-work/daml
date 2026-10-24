@@ -1,0 +1,78 @@
+name: Check
+
+on:
+  workflow_call:
+    inputs:
+      checks:
+        description: JSON array of selected stable check identities
+        required: true
+        type: string
+      ref:
+        description: Admitted immutable checkout SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: contains(fromJSON(inputs.checks), 'core')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: 0.12.10
+      - name: Verify
+        run: ./scripts/check
+
+  dependencies:
+    if: contains(fromJSON(inputs.checks), 'dependencies')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Install dependency policy tool
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Check advisories, licenses, bans, and sources
+        run: |
+          cargo deny --locked check
+          cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
+          cargo deny --all-features --locked check
+
+  fuzz:
+    if: contains(fromJSON(inputs.checks), 'fuzz')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Install pinned stable and fuzz toolchains
+        run: |
+          rustup show
+          (cd fuzz && rustup show)
+      - name: Install pinned fuzz and policy tools
+        run: |
+          cargo install cargo-fuzz --version 0.13.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: Lint fuzz harness
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Check fuzz dependency policy
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
+      - name: Exercise address-sanitized targets and retained seeds
+        run: ./scripts/fuzz-smoke 1000

@@ -109,8 +109,10 @@ cargo deny --manifest-path fuzz/Cargo.toml --locked check
 cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
 ```
 
-CI runs the aggregate gate, default/all-feature library policies, isolated fuzz
-and Python binding policies, and a bounded fuzz smoke. LSP dependencies are absent
-from the default native graph; PyO3 is confined to the binding graph. The
-`libfuzzer-sys` NCSA exception is crate-scoped. All packages remain unpublished
-until DAML's own distribution terms are selected explicitly.
+The CI planner selects the aggregate gate, dependency policies, and bounded fuzz
+smoke for the affected source, manifest, lock, and fuzz inputs. Docs-only changes
+run only the whitespace check, and drafts skip the automatic heavy path. See the
+[CI path map](ci.md) for exact boundaries. LSP dependencies are absent from the
+default native graph; PyO3 is confined to the binding graph. The `libfuzzer-sys`
+NCSA exception is crate-scoped. All packages remain unpublished until DAML's
+distribution terms are selected explicitly.
