@@ -43,8 +43,10 @@ unsupported path bytes fail closed instead of truncating the change set.
 An `edited` PR event is metadata-only only when `changes` is nonempty, contains
 only `title` or `body`, and each value has exactly a `from` field. A previous
 body may be null. That run skips every later planner step and the heavy wrapper;
-the aggregate is renamed `metadata-only` and skipped, so it cannot replace the
-stable `Check / Required` status. Title/body edits use a separate concurrency
+the aggregate is skipped under a distinct non-required name expression, so it
+cannot replace the stable `Check / Required` status. GitHub may display the
+unevaluated expression rather than the intended metadata label. Title/body
+edits use a separate concurrency
 group and do not cancel verification runs. Base edits, mixed edits, and
 malformed changes take the normal full classification path.
 
