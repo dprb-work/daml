@@ -166,7 +166,7 @@ fn schema_writer_rejects_a_constrained_alias_but_uses_its_visible_target() {
     let schemas = Schemas::compose([module]).unwrap();
     let document = parse("!Host").unwrap();
     let resolved = schemas.resolve(&document).unwrap();
-    let mut semantic = SemanticNode::from_resolved(&resolved.root());
+    let mut semantic = SemanticNode::from_resolved(resolved.root());
     let SemanticValue::Mapping(entries) = &mut semantic.value else {
         panic!("Host resolution must be a mapping");
     };
@@ -201,7 +201,7 @@ fn schema_writer_rejects_a_constrained_alias_but_uses_its_visible_target() {
     );
 
     let rebound = schemas.resolve(&emitted).unwrap();
-    let rebound_semantic = SemanticNode::from_resolved(&rebound.root());
+    let rebound_semantic = SemanticNode::from_resolved(rebound.root());
     let SemanticValue::Mapping(rebound_entries) = &rebound_semantic.value else {
         panic!("re-resolved Host must be a mapping");
     };

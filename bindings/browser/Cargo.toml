@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-daml = { path = "../.." }
+daml = { version = "=0.1.0", path = "../.." }
 js-sys = "=0.3.106"
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision"] }
 wasm-bindgen = "=0.2.129"
