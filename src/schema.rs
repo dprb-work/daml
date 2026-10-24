@@ -298,6 +298,7 @@ pub struct Schemas {
     by_type: HashMap<String, SchemaId>,
     by_address: HashMap<usize, SchemaId>,
     references: HashMap<SchemaId, SchemaId>,
+    source_tags: Option<HashSet<String>>,
 }
 
 impl Schemas {
@@ -530,7 +531,92 @@ impl Schemas {
             by_type,
             by_address,
             references,
+            source_tags: None,
         })
+    }
+
+    /// Restricts source spellings available to semantic serialization.
+    ///
+    /// Native compilation supplies explicit registered source names; low-level
+    /// composed modules retain their default visibility unless this is called.
+    pub(crate) fn restrict_source_tags(&mut self, tags: impl IntoIterator<Item = String>) {
+        self.source_tags = Some(tags.into_iter().collect());
+    }
+
+    /// Serializes semantic data while preserving asserted schema binding identity.
+    pub fn format_semantic(
+        &self,
+        node: &crate::SemanticNode,
+        options: crate::FormatOptions,
+    ) -> Result<String, crate::SemanticError> {
+        crate::semantic::format_with_tags(node, options, |tag, path| {
+            let visible = |name: &str| {
+                self.source_tags
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(name))
+            };
+            match tag.binding.as_deref() {
+                Some(binding) => {
+                    let Some(binding_id) = self.binding_identity(binding) else {
+                        return Err(crate::semantic::unrepresentable_tag(path));
+                    };
+                    if tag.name.len() <= crate::semantic::MAX_SCALAR_BYTES
+                        && visible(&tag.name)
+                        && self.binding_identity(&tag.name) == Some(binding_id)
+                    {
+                        return Ok(tag.name.as_str());
+                    }
+                    self.by_type
+                        .keys()
+                        .filter(|name| {
+                            name.len() <= crate::semantic::MAX_SCALAR_BYTES
+                                && visible(name)
+                                && self.binding_identity(name) == Some(binding_id)
+                        })
+                        .min()
+                        .map(String::as_str)
+                        .ok_or_else(|| crate::semantic::unrepresentable_tag(path))
+                }
+                None => {
+                    if tag.name.len() > crate::semantic::MAX_SCALAR_BYTES {
+                        Err(crate::semantic::tag_limit_error(path))
+                    } else if crate::names::valid_tag(&tag.name) && visible(&tag.name) {
+                        Ok(tag.name.as_str())
+                    } else {
+                        Err(crate::semantic::unrepresentable_tag(path))
+                    }
+                }
+            }
+        })
+    }
+    fn binding_identity(&self, name: &str) -> Option<SchemaId> {
+        let mut current = self.by_type.get(name).copied().or_else(|| {
+            self.entries.iter().enumerate().find_map(|(index, entry)| {
+                (entry.location.pointer.is_empty() && entry.location.resource == name)
+                    .then_some(SchemaId(index))
+            })
+        })?;
+        let mut steps = 0;
+        while let Some(next) = self.references.get(&current).copied() {
+            let entry = &self.entries[current.0];
+            let pure_alias = entry.value.as_object().is_some_and(|object| {
+                object.get("$ref").and_then(Value::as_str).is_some()
+                    && object.keys().all(|key| key == "$ref" || key == "$id")
+                    && (object.len() == 1
+                        || (object.len() == 2
+                            && object.get("$id").and_then(Value::as_str)
+                                == Some(entry.location.resource.as_str())))
+            });
+            if steps >= self.entries.len() {
+                return None;
+            }
+            if !pure_alias {
+                return Some(current);
+            }
+            current = next;
+            steps += 1;
+        }
+        Some(current)
     }
 
     pub(crate) fn type_schema(&self, tag: &str) -> Option<SchemaView<'_>> {

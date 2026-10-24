@@ -59,6 +59,7 @@ mod resolve;
 mod resolved;
 mod schema;
 mod schema_error;
+mod semantic;
 mod source;
 mod strict_json;
 mod strings;
@@ -75,6 +76,9 @@ pub use resolved::{
 };
 pub use schema::{SchemaModule, Schemas};
 pub use schema_error::{SchemaError, SchemaErrorKind};
+pub use semantic::{
+    SemanticError, SemanticErrorKind, SemanticNode, SemanticTag, SemanticValue, format_semantic,
+};
 
 /// Parses one complete DAML value with default resource bounds.
 ///

@@ -62,6 +62,15 @@ impl<'a> ResolvedNode<'a> {
     pub fn tag(&self) -> Option<&str> {
         self.tag.as_ref().map(|tag| tag.name.as_ref())
     }
+    /// Returns the stable schema binding identifier for an asserted tag, when known.
+    pub fn tag_binding(&self) -> Option<&str> {
+        self.tag.as_ref()?.binding.as_deref()
+    }
+
+    /// Returns the input/default provenance of the asserted tag, when present.
+    pub fn tag_origin(&self) -> Option<Origin<'a>> {
+        self.tag.as_ref().map(|tag| tag.origin)
+    }
 
     /// Returns supplied-input or declared-default provenance.
     pub fn origin(&self) -> Origin<'a> {
