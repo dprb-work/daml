@@ -663,6 +663,15 @@ capacity allocation, repeated pointer-prefix copies, alias candidate sorting,
 and unnecessary scalar conversions. Independent core and binding reviews approve
 the repaired source; neither review substitutes for runtime evidence.
 
+The ownership refinement borrows selected tag names from their input/registry
+and borrows JS record handles during admission; neither needs a copied owner.
+`scripts/cargo-notices.py` now owns notice generation for both packagers,
+including the tool pin, policy translation, template, and temporary config.
+This removes the browser's import of native-packager internals and its duplicate
+notice orchestration. Both native and WASM legal payloads match their previous
+producers byte-for-byte. Source-preserving reflow, semantic writing, and JS
+transport retain separate contracts rather than becoming a generic visitor.
+
 Focused local evidence covers 142 Rust cases across `browser_resources`,
 `semantic_write`, `native_bundles`, `default_tag_annotations`, `defaults`, and
 `schema_loading`; core and WASM-binding Clippy with warnings denied; generated

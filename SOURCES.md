@@ -95,11 +95,11 @@ cover the all-feature graph used by the stdio executable. See their published
 manifests: [lsp-server](https://docs.rs/crate/lsp-server/0.10.0/source/Cargo.toml)
 and [lsp-types](https://docs.rs/crate/lsp-types/0.97.0/source/Cargo.toml).
 
-Binary packaging uses the build-time tool `cargo-about` 0.9.2 (MIT OR Apache-2.0)
-to generate dependency notices and license texts. Its accepted license list is
-derived from `deny.toml`; it does not introduce another license policy or enter
-the DAML runtime dependency graph. The owned plaintext template uses the tool's
-documented output schema; no generator source is copied. See the
+Native and browser packaging use `scripts/cargo-notices.py` with the build-time
+tool `cargo-about` 0.9.2 (MIT OR Apache-2.0) to generate dependency notices and
+license texts. The shared producer derives accepted licenses from `deny.toml`;
+it introduces no second policy or runtime dependency. The owned plaintext template
+uses the tool's documented output schema; no generator source is copied. See the
 [tool documentation](https://embarkstudios.github.io/cargo-about/) and
 [published manifest](https://docs.rs/crate/cargo-about/0.9.2/source/Cargo.toml).
 Native private-release archives carry the canonical root `LICENSE`, generated

@@ -31,7 +31,7 @@ export async function fingerprint() {
   const selected = [
     join(repository, 'Cargo.toml'), join(repository, 'rust-toolchain.toml'),
     join(repository, 'LICENSE'), join(repository, 'SOURCES.md'),
-    join(repository, 'deny.toml'), join(repository, 'scripts/package-binaries.py'),
+    join(repository, 'deny.toml'), join(repository, 'scripts/cargo-notices.py'),
     join(repository, 'scripts/third-party-notices.hbs'),
     join(root, 'Cargo.toml'), join(root, 'Cargo.lock'), join(root, 'package.json'),
     ...await files(join(repository, 'src')), ...await files(join(root, 'src')),

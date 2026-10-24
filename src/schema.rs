@@ -564,7 +564,7 @@ impl Schemas {
                         && visible(&tag.name)
                         && self.binding_identity(&tag.name) == Some(binding_id)
                     {
-                        return Ok(tag.name.clone());
+                        return Ok(tag.name.as_str());
                     }
                     self.by_type
                         .keys()
@@ -574,14 +574,14 @@ impl Schemas {
                                 && self.binding_identity(name) == Some(binding_id)
                         })
                         .min()
-                        .cloned()
+                        .map(String::as_str)
                         .ok_or_else(|| crate::semantic::unrepresentable_tag(path))
                 }
                 None => {
                     if tag.name.len() > crate::semantic::MAX_SCALAR_BYTES {
                         Err(crate::semantic::tag_limit_error(path))
                     } else if crate::names::valid_tag(&tag.name) && visible(&tag.name) {
-                        Ok(tag.name.clone())
+                        Ok(tag.name.as_str())
                     } else {
                         Err(crate::semantic::unrepresentable_tag(path))
                     }

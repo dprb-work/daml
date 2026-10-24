@@ -193,23 +193,15 @@ pub fn format_semantic(
         if tag.binding.is_some() {
             Err(unrepresentable_tag(path))
         } else {
-            if tag.name.len() > MAX_SCALAR_BYTES {
-                return Err(error(
-                    SemanticErrorKind::LimitExceeded,
-                    path,
-                    "tag exceeds scalar byte bound",
-                ));
-            }
-            validate_tag(&tag.name, path)?;
-            Ok(tag.name.clone())
+            Ok(tag.name.as_str())
         }
     })
 }
 
-pub(crate) fn format_with_tags(
-    node: &SemanticNode,
+pub(crate) fn format_with_tags<'node>(
+    node: &'node SemanticNode,
     options: FormatOptions,
-    mut tag_name: impl FnMut(&SemanticTag, &[String]) -> Result<String, SemanticError>,
+    mut tag_name: impl FnMut(&'node SemanticTag, &[String]) -> Result<&'node str, SemanticError>,
 ) -> Result<String, SemanticError> {
     if options.line_width == 0 {
         return Err(error(
@@ -303,15 +295,15 @@ fn quote(value: &str, path: &[String]) -> Result<String, SemanticError> {
     })
 }
 
-fn build_doc<'a>(
-    node: &'a SemanticNode,
-    arena: &'a pretty::Arena<'a>,
+fn build_doc<'node: 'doc, 'doc>(
+    node: &'node SemanticNode,
+    arena: &'doc pretty::Arena<'doc>,
     path: &mut Vec<String>,
     depth: usize,
     nodes: &mut usize,
     bytes: &mut usize,
-    tag_name: &mut impl FnMut(&SemanticTag, &[String]) -> Result<String, SemanticError>,
-) -> Result<pretty::DocBuilder<'a, pretty::Arena<'a>>, SemanticError> {
+    tag_name: &mut impl FnMut(&'node SemanticTag, &[String]) -> Result<&'node str, SemanticError>,
+) -> Result<pretty::DocBuilder<'doc, pretty::Arena<'doc>>, SemanticError> {
     *nodes = nodes.saturating_add(1);
     *bytes = bytes.saturating_add(2usize.saturating_mul(depth).saturating_add(4));
     if *nodes > MAX_NODES {
@@ -342,7 +334,7 @@ fn build_doc<'a>(
                 "tag exceeds scalar byte bound",
             ));
         }
-        validate_tag(&name, path)?;
+        validate_tag(name, path)?;
         *bytes = bytes.saturating_add(name.len() + 2);
         Some(name)
     } else {

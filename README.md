@@ -231,13 +231,25 @@ uses private GitHub releases; crate and PyPI publication remain disabled.
   formatting. `src/parser.rs` owns checked input admission, syntax, and the
   whitespace/comment scanner; borrowed source becomes owned only after parsing.
 - `src/names.rs` owns the shared Unicode key/tag classifier.
-- `src/native` owns definition syntax, bundle filesystem admission, and lowering
-  to the existing in-memory schema engine. It adds no second validator or
-  application-construction path. Default-validation schema traversal reuses the
-  schema profile's child-position classifier.
+- `src/native` owns definition syntax, filesystem/supplied-resource bundle
+  admission, and lowering to the existing in-memory schema engine. It adds no
+  second validator or application-construction path. Default-validation schema
+  traversal reuses the schema profile's child-position classifier.
 - `src/format.rs` owns shared source-preserving layout and trivia mechanics;
   `src/native/format.rs` renders definition expressions through that printer.
   The `daml-fmt` binary only handles arguments and bounded input/output.
+- `src/semantic.rs` owns editable semantic snapshots and bounded canonical data
+  writing. `Schemas` selects source-visible names that retain bound identity;
+  the writer checks the selected output grammar. Names remain borrowed from
+  their input or registry owner.
+- `bindings/browser/src` owns JS shape/UTF-16 admission, lossless transport,
+  JavaScript errors, and owned snapshot lifecycle—not language semantics.
+  Input and resolved traversals remain distinct to avoid an intermediate Rust
+  tree and preserve their different provenance requirements.
+- `scripts/cargo-notices.py` owns the Cargo notice-tool pin, license-policy
+  translation, template invocation, and temporary-config lifecycle for both
+  native and browser packaging. Each packager owns its build, archive, and
+  provenance format.
 - The optional `src/lsp` adapter owns in-memory URI/version state and protocol
   coordinate conversion. It reuses the checked parser and formatter; protocol
   dependencies and the stdio binary are activated only by the `lsp` feature.

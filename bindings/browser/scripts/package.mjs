@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { cargo, files, fingerprint, repository, root, run } from './build.mjs';
 
@@ -15,24 +15,13 @@ for (const [name, expected] of Object.entries(provenance.outputs)) {
   const actual = createHash('sha256').update(await readFile(join(root, name))).digest('hex');
   if (actual !== expected) throw new Error(`built SDK output changed: ${name}`);
 }
-if (run(cargo, ['about', '--version']).trim() !== 'cargo-about 0.9.2') throw new Error('packaging requires cargo-about 0.9.2');
-const temporary = join(root, 'artifacts', 'license-config.toml');
+const notices = run(process.env.PYTHON ?? 'python3', [
+  '-B', join(repository, 'scripts', 'cargo-notices.py'),
+  '--manifest-path', join(root, 'Cargo.toml'),
+  '--target', 'wasm32-unknown-unknown', '--cargo', cargo,
+]);
+await writeFile(join(root, 'THIRD-PARTY-NOTICES.txt'), notices);
 await mkdir(join(root, 'artifacts'), { recursive: true });
-const python = process.env.PYTHON ?? 'python3';
-const config = run(python, ['-B', '-c', [
-  'import importlib.util, sys',
-  'spec = importlib.util.spec_from_file_location("daml_native_packaging", sys.argv[1])',
-  'module = importlib.util.module_from_spec(spec)',
-  'spec.loader.exec_module(module)',
-  'print(module.make_about_config().replace("${HOST}", "wasm32-unknown-unknown"), end="")',
-].join('\n'), join(repository, 'scripts', 'package-binaries.py')]);
-try {
-  await writeFile(temporary, config);
-  const notices = run(cargo, ['about', 'generate', '--manifest-path', join(root, 'Cargo.toml'), '--config', temporary, '--locked', '--target', 'wasm32-unknown-unknown', '--fail', join(repository, 'scripts', 'third-party-notices.hbs')]);
-  await writeFile(join(root, 'THIRD-PARTY-NOTICES.txt'), notices);
-} finally {
-  await rm(temporary, { force: true });
-}
 const packageInputs = {};
 for (const name of ['LICENSE', 'SOURCES.md', 'README.md', 'THIRD-PARTY-NOTICES.txt']) {
   packageInputs[name] = createHash('sha256').update(await readFile(join(root, name))).digest('hex');

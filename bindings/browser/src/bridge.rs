@@ -150,13 +150,13 @@ fn string_for(
     Ok(out)
 }
 
-struct Fields {
-    value: JsValue,
+struct Fields<'a> {
+    value: &'a JsValue,
     keys: Vec<String>,
 }
 
-impl Fields {
-    fn new(value: &JsValue, path: &DataPath<'_>) -> Result<Self, JsValue> {
+impl<'a> Fields<'a> {
+    fn new(value: &'a JsValue, path: &DataPath<'_>) -> Result<Self, JsValue> {
         if !value.is_object() || value.is_null() || Array::is_array(value) {
             return Err(invalid("InvalidInput", "expected a semantic record", path));
         }
@@ -172,10 +172,7 @@ impl Fields {
             .iter()
             .map(|key| string(&key, 32, path))
             .collect::<Result<_, _>>()?;
-        Ok(Self {
-            value: value.clone(),
-            keys,
-        })
+        Ok(Self { value, keys })
     }
 
     fn allow(&self, allowed: &[&str], path: &DataPath<'_>) -> Result<(), JsValue> {
@@ -201,7 +198,7 @@ impl Fields {
 
     fn optional(&self, name: &str) -> Result<Option<JsValue>, JsValue> {
         if self.keys.iter().any(|key| key == name) {
-            Ok(Some(Reflect::get(&self.value, &JsValue::from_str(name))?))
+            Ok(Some(Reflect::get(self.value, &JsValue::from_str(name))?))
         } else {
             Ok(None)
         }
