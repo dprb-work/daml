@@ -37,7 +37,7 @@ VSCODE_CDP_PORT=9222 npm run test:vscode:visual
 
 The launcher prints its PID, `http://127.0.0.1:9222` CDP endpoint, and open `.daml` file, then keeps the actual Electron editor open until it exits or receives SIGINT/SIGTERM. This is a real VS Code surface; Cursor is not claimed. The installer uses `resolveCliArgsFromVSCodeExecutablePath` to invoke VS Code's CLI rather than starting the Electron binary in install mode.
 
-`DAML_VSCODE_NO_SANDBOX=1` is a process-local opt-in for environments where Electron's setuid sandbox cannot run (for example, some unprivileged Linux VMs). It weakens Chromium's process isolation: use only with the scratch workspace, no private files/secrets, and a trusted disposable verification machine. CI leaves this variable unset; don't modify host sandbox ownership or permissions.
+`DAML_VSCODE_NO_SANDBOX=1` is a process-local opt-in for environments where Electron's setuid sandbox cannot run (for example, some unprivileged Linux VMs). It weakens Chromium's process isolation: use only with the scratch workspace, no private files/secrets, and a trusted disposable verification machine. The editor workflow explicitly sets this variable for its isolated verifier; don't modify host sandbox ownership or permissions.
 
 ## OMP packaged-registration process
 
