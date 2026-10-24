@@ -13,7 +13,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "Cargo.toml"
-TEMPLATE = Path(__file__).with_name("third-party-notices.hbs")
-ABOUT_VERSION = "cargo-about 0.9.2"
 
 
 def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> str:
@@ -80,39 +77,6 @@ def git_build_info() -> tuple[str, bool, int]:
     except ValueError as exc:
         raise RuntimeError(f"invalid git commit timestamp: {epoch_text!r}") from exc
     return commit, dirty, epoch
-
-
-def make_about_config() -> str:
-    policy = tomllib.loads((ROOT / "deny.toml").read_text(encoding="utf-8"))
-    allowed = policy.get("licenses", {}).get("allow")
-    if not isinstance(allowed, list) or not all(isinstance(item, str) for item in allowed):
-        raise RuntimeError("deny.toml [licenses].allow must be a list of license identifiers")
-    return "\n".join(
-        (
-            "accepted = " + json.dumps(allowed),
-            'targets = ["${HOST}"]',
-            "ignore-build-dependencies = false",
-            "ignore-dev-dependencies = true",
-            "ignore-transitive-dependencies = false",
-            "private = { ignore = true }",
-            "",
-        )
-    )
-
-
-def render_notices(host: str, directory: Path) -> Path:
-    if run(["cargo", "about", "--version"]).strip() != ABOUT_VERSION:
-        raise RuntimeError(f"install {ABOUT_VERSION} before building an archive")
-    config = directory / "about.toml"
-    config.write_text(make_about_config().replace("${HOST}", host), encoding="utf-8")
-    notice = directory / "THIRD-PARTY-NOTICES.txt"
-    command = [
-        "cargo", "about", "generate", "--manifest-path", str(MANIFEST), "--config", str(config),
-        "--locked", "--all-features", "--fail", str(TEMPLATE),
-    ]
-    notice.write_text(run(command), encoding="utf-8", newline="\n")
-    return notice
-
 
 
 def copy_binaries(stage: Path, target_dir: Path, host: str) -> None:
@@ -199,7 +163,11 @@ def package(out: Path) -> Path:
         write_build(stage / "BUILD.json", version=version, commit=commit, dirty=dirty, host=host, rustc=rustc)
         shutil.copyfile(ROOT / "SOURCES.md", stage / "SOURCES.md")
         shutil.copyfile(ROOT / "LICENSE", stage / "LICENSE")
-        shutil.copyfile(render_notices(host, temporary_path), stage / "THIRD-PARTY-NOTICES.txt")
+        notices = run([
+            sys.executable, "-B", str(ROOT / "scripts" / "cargo-notices.py"),
+            "--manifest-path", str(MANIFEST), "--target", host, "--all-features",
+        ])
+        (stage / "THIRD-PARTY-NOTICES.txt").write_text(notices, encoding="utf-8", newline="\n")
         temporary_archive = temporary_path / (base + suffix)
         if suffix == ".zip":
             archive_zip(stage, temporary_archive, epoch)

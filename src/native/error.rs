@@ -10,9 +10,9 @@ pub enum NativeErrorKind {
     InvalidManifest,
     /// A bundle alias, tag path, or definition name is invalid.
     InvalidName,
-    /// A referenced definition file does not exist or cannot be read.
+    /// A referenced definition file or supplied resource does not exist or cannot be read.
     MissingDefinition,
-    /// A definition symlink resolves outside its selected canonical root.
+    /// A definition symlink or supplied logical resource path escapes its selected boundary.
     PathEscape,
     /// A definition path crosses a nested bundle without an explicit binding.
     NestedBundleBoundary,
@@ -35,7 +35,7 @@ pub enum NativeErrorKind {
 pub struct NativeError {
     /// Machine-readable category for caller branching.
     pub kind: NativeErrorKind,
-    /// Manifest or definition path associated with the failure, when known.
+    /// Manifest, definition, or logical resource identifier associated with the failure, when known.
     pub path: Option<PathBuf>,
     /// Original-source byte span associated with the failure, when known.
     pub span: Option<Span>,

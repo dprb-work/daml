@@ -56,6 +56,25 @@ defaults remain after the closing bracket. Ordinary arrays and tagged arrays
 remain data expressions; the formatter does not infer a tuple definition from
 bare brackets.
 
+## Edited semantic values
+
+`SemanticNode::from_document` and `SemanticNode::from_resolved` produce owned
+editable trees. `format_semantic(&node, options)` writes canonical data source
+without comments or original field order; numbers remain exact. It rejects
+bound assertions because it has no schema context.
+
+`schemas.format_semantic(&node, options)` retains a bound assertion only through
+a root-visible name for the same registered identity. It can rebase a private
+default's literal alias when a safe visible equivalent exists, but does not
+treat structural equality or `$ref` refinements as identity. Unrepresentable
+bindings fail explicitly instead of being dropped or renamed to unrelated types.
+
+Semantic writing checks keys, scalar tokens, node/depth limits, and an 8 MiB
+output cap; it does not validate edited values. Parse and resolve the result
+under the selected schema context before accepting an edit. See the
+[browser SDK](../bindings/browser/README.md) for the lossless transport and
+browser lifecycle around these same core operations.
+
 ## Command
 
 ```sh

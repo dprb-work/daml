@@ -20,8 +20,8 @@ is a flat map of local aliases to directory paths:
 ```
 
 An empty manifest is `{}`. Relative paths are anchored to the declaring
-manifest's directory. Absolute local paths are permitted. URI, network, package,
-and environment-variable resolution are not implied by a path string.
+manifest's directory. Filesystem bundles permit absolute local paths. URI,
+network, package, and environment-variable resolution are not implied by a path string.
 
 `!app.network.Host` selects binding `app`, then `network/Host.daml` beneath that
 root. Only dots separate tag segments; slashes are not alternative separators.
@@ -57,6 +57,15 @@ directory, unless a caller explicitly selects a context. Cwd, Git roots, and
 editor workspace roots are not discovery rules. Untitled/stdin documents need
 an explicit context for bundle resolution. A root tag or explicit caller chooses
 the expected root definition; there are no filename/glob association tables.
+
+`Bundle::from_sources(root, sources)` selects the same compiler with an explicit
+in-memory resource table instead of filesystem discovery. Resource keys are
+normalized slash-relative IDs; root is `.` or a relative directory. Manifest
+locators such as `.`, `./dep/`, and confined parent references resolve within
+that supplied namespace; absolute paths and namespace escapes are rejected.
+Referenced imports remain private and lazy, and nested manifests still establish
+bundle boundaries. The [browser SDK](../bindings/browser/README.md#resource-table-and-bounds)
+documents table admission and its static browser binding.
 
 ## Definition expressions
 

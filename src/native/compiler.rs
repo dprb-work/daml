@@ -3,7 +3,6 @@ use crate::{Document, Node, SchemaError, SchemaModule, Schemas, Span, StringValu
 use serde_json::{Map, Number, Value as Json};
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -124,6 +123,7 @@ struct Compiler<'a> {
     types: Map<String, Json>,
     resources: Vec<Json>,
     registrations: HashMap<String, String>,
+    builtin_tags: HashSet<String>,
     checks: Vec<DefaultCheck>,
     regex_origins: HashMap<String, RegexOrigin>,
     next_regex_origin: u64,
@@ -149,6 +149,7 @@ pub(super) fn compile(
         types: Map::new(),
         resources: Vec::new(),
         registrations: HashMap::new(),
+        builtin_tags: HashSet::new(),
         checks: Vec::new(),
         regex_origins: HashMap::new(),
         next_regex_origin: 0,
@@ -164,10 +165,21 @@ pub(super) fn compile(
     if let Some(expected) = expected {
         roots.push((expected, document.root().span));
     }
-    for (tag, span) in roots {
+    let mut source_tags = roots
+        .iter()
+        .map(|(tag, _)| (*tag).to_owned())
+        .collect::<HashSet<_>>();
+    for &(tag, span) in &roots {
         if !compiler.registrations.contains_key(tag) {
             let (key, _) = compiler.load_tag(tag, span, &bundle.root)?;
             compiler.registrations.insert(tag.to_owned(), key);
+        }
+    }
+    source_tags.extend(compiler.builtin_tags.iter().cloned());
+    for tag in &compiler.builtin_tags {
+        let key = format!("native_builtin_{tag}");
+        if compiler.types.contains_key(&key) {
+            compiler.registrations.entry(tag.clone()).or_insert(key);
         }
     }
     for (alias, key) in compiler.registrations {
@@ -240,8 +252,9 @@ pub(super) fn compile(
     ]));
     let module = SchemaModule::from_value(module_value)
         .map_err(|error| native_schema_error(error, &bundle.root, &compiler.regex_origins))?;
-    let schemas = Schemas::compose([module])
+    let mut schemas = Schemas::compose([module])
         .map_err(|error| native_schema_error(error, &bundle.root, &compiler.regex_origins))?;
+    schemas.restrict_source_tags(source_tags);
     let mut default_limits = crate::ResolutionLimits::default();
     for check in compiler.checks {
         admit_copy(
@@ -363,6 +376,7 @@ impl Compiler<'_> {
         context_root: &Path,
     ) -> Result<(String, String), NativeError> {
         if let Some(schema) = builtin(tag) {
+            self.builtin_tags.insert(tag.to_owned());
             let key = format!("native_builtin_{tag}");
             let id = format!("urn:daml:native:builtin:{tag}");
             if !self.types.contains_key(&key) {
@@ -381,6 +395,7 @@ impl Compiler<'_> {
             return Ok((key, id));
         }
         if tag == "Never" {
+            self.builtin_tags.insert(tag.to_owned());
             let key = "native_builtin_Never".to_owned();
             let id = "urn:daml:native:builtin:Never".to_owned();
             self.types
@@ -391,11 +406,10 @@ impl Compiler<'_> {
             return Ok((key, id));
         }
         let (root, relative) = self.locate(tag, span, context_root)?;
-        let canonical_root = fs::canonicalize(&root).map_err(|error| {
-            NativeError::io(&root, error)
-                .at_span(span)
-                .for_reference(tag)
-        })?;
+        let canonical_root = self
+            .bundle
+            .canonical_root(&root)
+            .map_err(|error| error.at_span(span).for_reference(tag))?;
         self.imports_for(&canonical_root)?;
         let file = canonical_root.join(relative);
         let mut logical_parent = file.parent();
@@ -403,7 +417,7 @@ impl Compiler<'_> {
             if directory == canonical_root.as_path() {
                 break;
             }
-            if directory.join(super::BUNDLE_MANIFEST).is_file() {
+            if self.bundle.has_manifest(directory) {
                 return Err(NativeError::new(
                     NativeErrorKind::NestedBundleBoundary,
                     "definition route crosses a nested bundle; add it as an explicit import",
@@ -414,16 +428,10 @@ impl Compiler<'_> {
             }
             logical_parent = directory.parent();
         }
-        let canonical_file = fs::canonicalize(&file).map_err(|error| {
-            NativeError::new(
-                NativeErrorKind::MissingDefinition,
-                format!("cannot load definition: {error}"),
-            )
-            .at_path(&file)
-            .at_span(span)
-            .for_reference(tag)
-            .caused_by(error)
-        })?;
+        let canonical_file = self
+            .bundle
+            .canonical_file(&file)
+            .map_err(|error| error.at_span(span).for_reference(tag))?;
         if !canonical_file.starts_with(&canonical_root) {
             return Err(NativeError::new(
                 NativeErrorKind::PathEscape,
@@ -438,7 +446,7 @@ impl Compiler<'_> {
             if directory == canonical_root.as_path() {
                 break;
             }
-            if directory.join(super::BUNDLE_MANIFEST).is_file() {
+            if self.bundle.has_manifest(directory) {
                 return Err(NativeError::new(NativeErrorKind::NestedBundleBoundary, "definition path crosses a nested bundle; add the nested bundle as an explicit import").at_path(directory).at_span(span).for_reference(tag));
             }
             parent = directory.parent();
@@ -478,7 +486,9 @@ impl Compiler<'_> {
             .at_span(span)
             .for_reference(tag));
         }
-        let source = super::bundle::read_source(&canonical_file, remaining)
+        let source = self
+            .bundle
+            .read_resource(&canonical_file, remaining)
             .map_err(|error| error.at_span(span).for_reference(tag))?;
         self.source_bytes += source.len();
         let definition = super::parse_definition(source).map_err(|error| {
@@ -566,13 +576,12 @@ impl Compiler<'_> {
         if root == self.bundle.root.as_path() || self.contexts.contains_key(root) {
             return Ok(());
         }
-        let canonical = fs::canonicalize(root).map_err(|error| NativeError::io(root, error))?;
+        let canonical = self.bundle.canonical_root(root)?;
         if canonical == self.bundle.root || self.contexts.contains_key(&canonical) {
             return Ok(());
         }
-        let selected = Bundle::open(&canonical)?;
-        if selected.source_bytes
-            > crate::schema::profile::MAX_SOURCE_BYTES.saturating_sub(self.source_bytes)
+        let (canonical, imports, source_bytes) = self.bundle.load_imports(&canonical)?;
+        if source_bytes > crate::schema::profile::MAX_SOURCE_BYTES.saturating_sub(self.source_bytes)
         {
             return Err(NativeError::new(
                 NativeErrorKind::LimitExceeded,
@@ -580,8 +589,8 @@ impl Compiler<'_> {
             )
             .at_path(canonical.join(super::BUNDLE_MANIFEST)));
         }
-        self.source_bytes += selected.source_bytes;
-        self.contexts.insert(canonical, selected.imports);
+        self.source_bytes += source_bytes;
+        self.contexts.insert(canonical, imports);
         Ok(())
     }
 
@@ -1235,6 +1244,7 @@ impl Compiler<'_> {
         let body = body.as_deref();
         let tag = context.source.get(name.start..name.end).unwrap_or("");
         if let Some(kind) = builtin(tag) {
+            self.builtin_tags.insert(tag.to_owned());
             return self.lower_builtin_tag(
                 expression,
                 tag,
@@ -1245,6 +1255,7 @@ impl Compiler<'_> {
             );
         }
         if tag == "Never" {
+            self.builtin_tags.insert(tag.to_owned());
             if body.is_some() {
                 return Err(NativeError::new(
                     NativeErrorKind::InvalidDefinition,

@@ -1,0 +1,8 @@
+/dist/
+/target/
+node_modules/
+/artifacts/
+/BUILD.json
+/LICENSE
+/SOURCES.md
+/THIRD-PARTY-NOTICES.txt

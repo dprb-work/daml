@@ -1,0 +1,40 @@
+{
+  "case": "dot-relative imports, expected-root defaults, and qualified tag rebasing",
+  "root": ".",
+  "sources": {
+    "daml.bundle": "{\n  current: \".\"\n  sibling: \"./dep/\"\n  app: \"./lib\"\n}",
+    "Config.daml": "!Object {\n  name: !String\n  retries: !Int\n} = { retries: !Int 3 }",
+    "Base.daml": "!String",
+    "dep/daml.bundle": "{}",
+    "dep/Config.daml": "!Object { value: !String } = { value: \"sibling\" }",
+    "lib/daml.bundle": "{}",
+    "lib/Base.daml": "!String",
+    "lib/Host.daml": "!Object {\n  seed: !self.Base\n  marker: !self.Base\n} = { seed: !self.Base \"seed\" }"
+  },
+  "source": "!current.Config { name: \"worker\" }",
+  "taglessSource": "{ name: \"worker\" }",
+  "expected": "current.Config",
+  "expectedValue": {
+    "kind": "map",
+    "tag": { "name": "current.Config" },
+    "entries": [
+      { "key": "name", "value": { "kind": "string", "value": "worker" } },
+      { "key": "retries", "value": { "kind": "number", "value": "3", "tag": { "name": "Int" } } }
+    ]
+  },
+  "defaultOrigin": {
+    "pointer": "/retries",
+    "kind": "default",
+    "schemaPointer": "/default"
+  },
+  "rebaseSource": "!app.Host { marker: !app.Base \"root\" }",
+  "rebaseExpected": "app.Host",
+  "rebaseExpectedValue": {
+    "kind": "map",
+    "tag": { "name": "app.Host" },
+    "entries": [
+      { "key": "marker", "value": { "kind": "string", "value": "root", "tag": { "name": "app.Base" } } },
+      { "key": "seed", "value": { "kind": "string", "value": "seed", "tag": { "name": "app.Base" } } }
+    ]
+  }
+}
