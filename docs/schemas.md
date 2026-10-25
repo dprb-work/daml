@@ -273,8 +273,8 @@ profile. Reference retrieval is explicitly offline, format assertions disabled,
 and regular expressions use a size-bounded linear engine. No custom user Rust
 callbacks, default factories, templates, or environment reads are registered.
 
-The implementation reuses `jsonschema` 0.59.0 (MIT), `serde_json` 1.0.154, and
-`serde` 1.0.228 (both MIT OR Apache-2.0), pinned in Cargo and its lockfile.
+The implementation reuses `jsonschema` 0.60.1 (MIT), `serde_json` 1.0.154, and
+`serde` 1.0.229 (both MIT OR Apache-2.0), pinned in Cargo and its lockfile.
 HTTP/file/async retrieval features are disabled; arbitrary-precision support is
 enabled. This does not imply that
 transitive dependencies contain no unsafe code or that every JSON Schema draft

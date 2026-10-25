@@ -12,7 +12,7 @@ license = "MIT"
 dev = [
     "maturin==1.15.0",
     "pytest>=9,<10",
-    "ruff==0.16.4",
+    "ruff==0.17.2",
 ]
 
 [tool.maturin]

@@ -9,8 +9,8 @@
     "test:vscode:visual": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/visual.mjs"
   },
   "devDependencies": {
-    "@vscode/test-electron": "2.5.2",
+    "@vscode/test-electron": "3.1.0",
     "vscode-oniguruma": "2.0.1",
-    "vscode-textmate": "9.2.0"
+    "vscode-textmate": "9.3.2"
   }
 }

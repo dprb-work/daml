@@ -18,12 +18,12 @@ path = "src/bin/daml-lsp.rs"
 required-features = ["lsp"]
 
 [dependencies]
-jsonschema = { version = "=0.59.0", default-features = false, features = ["arbitrary-precision"] }
+jsonschema = { version = "=0.60.1", default-features = false, features = ["arbitrary-precision"] }
 regex-automata = { version = "=0.4.18", default-features = false, features = ["meta", "perf", "std", "unicode"] }
 lsp-server = { version = "=0.10.0", optional = true }
 lsp-types = { version = "=0.97.0", optional = true }
 pretty = { version = "=0.12.5", default-features = false }
-serde = { version = "=1.0.228", default-features = false, features = ["std"] }
+serde = { version = "=1.0.229", default-features = false, features = ["std"] }
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision", "raw_value"] }
 unicode-general-category = "=1.1.0"
 
