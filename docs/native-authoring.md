@@ -46,7 +46,7 @@ boundaries through filesystem links. This governs ownership, not nominal
 compatibility. A referenced definition remains a structural contract.
 
 Only referenced definitions are loaded: selected root types, explicit data tags,
-constraint references, and references/tags in declared defaults. Unused invalid
+explicit additional types, constraint references, and references/tags in declared defaults. Unused invalid
 files are not scanned. Manifest shape is admitted when the bundle is loaded;
 unreferenced dependency directories are not opened just because their aliases
 are declared. Bundle-import cycles are allowed; definition-reference cycles
@@ -66,6 +66,15 @@ that supplied namespace; absolute paths and namespace escapes are rejected.
 Referenced imports remain private and lazy, and nested manifests still establish
 bundle boundaries. The [browser SDK](../bindings/browser/README.md#resource-table-and-bounds)
 documents table admission and its static browser binding.
+
+`Bundle::compile_with_types(document, expected, additional_types)` explicitly loads
+entry-visible native names needed by a consumer after compilation. It uses the
+same private import graph and does not expose dependency-private aliases.
+Loading an additional type does not apply it as a root contract: select that
+contract explicitly when resolving or adding a staged path expectation.
+Caller-supplied names have no fabricated source span; errors inside a loaded
+definition retain their actual source location. Name count and bytes are bounded,
+including duplicate requests.
 
 ## Definition expressions
 

@@ -29,7 +29,7 @@ if (typeof nativeResult.canonicalSource !== 'string' ||
   throw new Error('Native parity result must contain canonical sources and actual default-origin resource/pointer metadata.');
 }
 const html = `<!doctype html><meta charset="utf-8"><link rel="icon" href="data:,"><title>DAML browser verifier</title><main id="result">Loading SDK</main>`;
-const contentTypes = { '.js': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm' };
+const contentTypes = { '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.wasm': 'application/wasm' };
 const server = createServer(async (request, response) => {
   try {
     const pathname = new URL(request.url, 'http://127.0.0.1').pathname;
@@ -38,8 +38,12 @@ const server = createServer(async (request, response) => {
       response.end(html);
       return;
     }
-    const file = resolve(dist, `.${decodeURIComponent(pathname)}`);
-    if (file !== dist && !file.startsWith(`${dist}${sep}`)) {
+    const verifierModule = pathname === '/staged-checks.mjs' ||
+      pathname === '/review-checks.mjs' || pathname === '/final-review-checks.mjs';
+    const file = verifierModule
+      ? resolve(here, pathname.slice(1))
+      : resolve(dist, `.${decodeURIComponent(pathname)}`);
+    if (!verifierModule && file !== dist && !file.startsWith(`${dist}${sep}`)) {
       response.writeHead(400).end();
       return;
     }
@@ -93,6 +97,12 @@ try {
     const sdk = await import('/daml_browser.js');
     await sdk.default('/daml_browser_bg.wasm');
     window.sdk = sdk;
+    const { runStagedChecks } = await import('/staged-checks.mjs');
+    window.runStagedChecks = runStagedChecks;
+    const { runReviewChecks } = await import('/review-checks.mjs');
+    window.runReviewChecks = runReviewChecks;
+    const { runFinalReviewChecks } = await import('/final-review-checks.mjs');
+    window.runFinalReviewChecks = runFinalReviewChecks;
     document.querySelector('#result').textContent = 'SDK initialized';
   });
   networkDisabled = true;
@@ -381,7 +391,12 @@ try {
     if (resolution.source !== snapshotSource) fail('resolution source must survive freeing inputs/context');
     resolution.free();
     bundle.free();
-    return { nativeParityCase: fixture.case };
+    return {
+      nativeParityCase: fixture.case,
+      ...window.runStagedChecks(sdk),
+      ...window.runReviewChecks(sdk),
+      ...window.runFinalReviewChecks(sdk),
+    };
   }, {
     fixture,
     nativeCanonical: nativeResult.canonicalSource,

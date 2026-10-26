@@ -41,6 +41,9 @@ pub(crate) fn origin(value: Origin<'_>) -> Result<JsValue, JsValue> {
             set(&out, "kind", &JsValue::from_str("input"))?;
             set(&out, "span", &span(value)?)?;
         }
+        Origin::Semantic => {
+            set(&out, "kind", &JsValue::from_str("semantic"))?;
+        }
         Origin::Default(value) => {
             set(&out, "kind", &JsValue::from_str("default"))?;
             set(&out, "resource", &JsValue::from_str(&value.resource))?;
@@ -122,6 +125,9 @@ pub(crate) fn resolve(value: ResolveError, source: &str) -> JsValue {
     let attached = (|| {
         match &value.origin {
             ErrorOrigin::Input(value) => attach_span(&out, *value, Some(source))?,
+            ErrorOrigin::Semantic => {
+                set(&out, "origin", &origin(Origin::Semantic)?)?;
+            }
             ErrorOrigin::Default(value) => {
                 set(&out, "origin", &origin(Origin::Default(value))?)?;
             }

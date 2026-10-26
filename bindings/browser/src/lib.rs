@@ -18,7 +18,8 @@ export type SemanticNode =
   | { kind: 'map'; entries: { key: string; value: SemanticNode }[]; tag?: Tag };
 export type Origin =
   | { kind: 'input'; span: { start: number; end: number } }
-  | { kind: 'default'; resource: string; pointer: string };
+  | { kind: 'default'; resource: string; pointer: string }
+  | { kind: 'semantic' };
 export type NodeOrigin = Origin & { tagOrigin?: Origin };
 export type DamlError = Error & {
   name: 'DamlError'; category: 'parse' | 'native' | 'resolve' | 'semantic' | 'schema';
@@ -26,6 +27,28 @@ export type DamlError = Error & {
   span?: { start: number; end: number };
   range?: { start: { line: number; character: number }; end: { line: number; character: number } };
   origin?: Origin; schema?: Origin;
+};
+export type SummaryValue =
+  | { kind: 'null' }
+  | { kind: 'bool'; value: boolean }
+  | { kind: 'number'; value: string }
+  | { kind: 'string'; value: string }
+  | { kind: 'list' | 'map'; length: number };
+export type NodeSummary = (
+  | Exclude<SummaryValue, { kind: 'list' | 'map' }>
+  | { kind: 'list'; length: number }
+  | { kind: 'map'; length: number; fields: { key: string; summary: SummaryValue }[] }
+) & { tag?: Tag };
+export type StageEdit =
+  | { op: 'replace'; path: string; value: SemanticNode }
+  | { op: 'copy'; path: string; from: string }
+  | { op: 'expect'; path: string; name: string };
+export type CopyEdge = { path: string; from: string };
+export type AdmissionStage = {
+  defer(summary: NodeSummary, path: string): boolean;
+  materialize(value: SemanticNode, copies: CopyEdge[], round: number):
+    undefined | null | Uint8Array | StageEdit[] | Error;
+  numberClass?(lexeme: string): number;
 };
 "#;
 
@@ -42,6 +65,14 @@ extern "C" {
     #[wasm_bindgen(typescript_type = "string")]
     #[derive(Clone)]
     pub type JsSourceString;
+    #[wasm_bindgen(typescript_type = "string[]")]
+    pub type JsAdditionalTypes;
+    #[wasm_bindgen(typescript_type = "AdmissionStage")]
+    pub type JsAdmissionStage;
+    #[wasm_bindgen(typescript_type = "StageEdit[]")]
+    pub type JsStageEdits;
+    #[wasm_bindgen(typescript_type = "Uint8Array | null")]
+    pub type JsMeaning;
 
     #[wasm_bindgen(js_namespace = globalThis, js_name = structuredClone, catch)]
     fn clone_snapshot(value: &JsValue) -> Result<JsValue, JsValue>;
@@ -163,13 +194,20 @@ impl BrowserBundle {
         &self,
         document: &BrowserDocument,
         expected: Option<JsSourceString>,
+        additional_types: Option<JsAdditionalTypes>,
     ) -> Result<BrowserSchemas, JsValue> {
         let expected = expected
             .map(|value| bridge::string(value.as_ref(), 1024 * 1024, &bridge::DataPath::root()))
             .transpose()?;
+        let additional_types =
+            bridge::additional_types(additional_types.as_ref().map(AsRef::as_ref))?;
         let schemas = self
             .bundle
-            .compile(&document.document, expected.as_deref())
+            .compile_with_types(
+                &document.document,
+                expected.as_deref(),
+                additional_types.iter().map(String::as_str),
+            )
             .map_err(diagnostic::native)?;
         Ok(BrowserSchemas { schemas })
     }
@@ -204,6 +242,68 @@ impl BrowserSchemas {
         })
     }
 
+    #[wasm_bindgen(js_name = resolveStaged)]
+    pub fn resolve_staged(
+        &self,
+        document: &BrowserDocument,
+        stage: JsAdmissionStage,
+        expected: Option<JsSourceString>,
+        initial_edits: Option<JsStageEdits>,
+    ) -> Result<BrowserStagedResolution, JsValue> {
+        let mut stage = bridge::Stage::new(stage.into())?;
+        let expected = expected
+            .map(|value| stage.budget.text(value.as_ref(), &bridge::DataPath::root()))
+            .transpose()?;
+        let initial_edits = initial_edits
+            .map(|value| stage.edits(value.as_ref()))
+            .transpose()?
+            .unwrap_or_default();
+        let resolved = self
+            .schemas
+            .resolve_staged(
+                &document.document,
+                expected.as_deref(),
+                &initial_edits,
+                &mut stage,
+            )
+            .map_err(|error| stage_error(error, document.document.source()))?;
+        BrowserStagedResolution::snapshot(
+            resolved.root(),
+            resolved.meaning(),
+            Some(document.source.clone()),
+            &mut stage.budget,
+        )
+    }
+
+    #[wasm_bindgen(js_name = resolveSemanticStaged)]
+    pub fn resolve_semantic_staged(
+        &self,
+        value: JsSemanticNode,
+        stage: JsAdmissionStage,
+        expected: Option<JsSourceString>,
+        initial_edits: Option<JsStageEdits>,
+    ) -> Result<BrowserStagedResolution, JsValue> {
+        let mut stage = bridge::Stage::new(stage.into())?;
+        let value = bridge::decode_with_budget(value.as_ref(), &mut stage.budget)?;
+        let expected = expected
+            .map(|value| stage.budget.text(value.as_ref(), &bridge::DataPath::root()))
+            .transpose()?;
+        let initial_edits = initial_edits
+            .map(|value| stage.edits(value.as_ref()))
+            .transpose()?
+            .unwrap_or_default();
+        let resolved = self
+            .schemas
+            .resolve_semantic_staged(&value, expected.as_deref(), &initial_edits, &mut stage)
+            .map_err(|error| stage_error(error, ""))?;
+        BrowserStagedResolution::snapshot(
+            resolved.root(),
+            resolved.meaning(),
+            None,
+            &mut stage.budget,
+        )
+    }
+
     pub fn write(&self, value: JsSemanticNode, width: Option<JsWidth>) -> Result<String, JsValue> {
         let options = options(width)?;
         let value = bridge::decode(value.as_ref())?;
@@ -234,5 +334,59 @@ impl BrowserResolution {
 
     pub fn origins(&self) -> Result<JsOrigins, JsValue> {
         Ok(clone_snapshot(&self.origins)?.unchecked_into())
+    }
+}
+
+fn stage_error(error: daml::StageError<JsValue>, source: &str) -> JsValue {
+    match error {
+        daml::StageError::Resolve(error) => diagnostic::resolve(error, source),
+        daml::StageError::Callback(error) | daml::StageError::Rejected(error) => error,
+    }
+}
+
+/// Owned staged data. Semantic input has no authored source to expose.
+#[wasm_bindgen(js_name = StagedResolution)]
+pub struct BrowserStagedResolution {
+    value: JsValue,
+    origins: JsValue,
+    source: Option<JsSourceString>,
+    meaning: JsValue,
+}
+
+impl BrowserStagedResolution {
+    fn snapshot(
+        root: &daml::ResolvedNode<'_>,
+        meaning: Option<&[u8]>,
+        source: Option<JsSourceString>,
+        budget: &mut bridge::Budget,
+    ) -> Result<Self, JsValue> {
+        let (value, origins) = bridge::resolution_with_budget(root, budget)?;
+        let meaning = bridge::meaning(meaning, budget)?;
+        Ok(Self {
+            value,
+            origins,
+            source,
+            meaning,
+        })
+    }
+}
+
+#[wasm_bindgen(js_class = StagedResolution)]
+impl BrowserStagedResolution {
+    #[wasm_bindgen(getter)]
+    pub fn source(&self) -> Option<JsSourceString> {
+        self.source.clone()
+    }
+
+    pub fn value(&self) -> Result<JsSemanticNode, JsValue> {
+        Ok(clone_snapshot(&self.value)?.unchecked_into())
+    }
+
+    pub fn origins(&self) -> Result<JsOrigins, JsValue> {
+        Ok(clone_snapshot(&self.origins)?.unchecked_into())
+    }
+
+    pub fn meaning(&self) -> Result<JsMeaning, JsValue> {
+        Ok(clone_snapshot(&self.meaning)?.unchecked_into())
     }
 }

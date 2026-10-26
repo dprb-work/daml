@@ -1,8 +1,8 @@
 use crate::{
     Document, Node, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
-    ResolvedNode, ResolvedValue, SchemaLocation, Schemas, Value,
+    ResolvedNode, ResolvedValue, SchemaLocation, Schemas, SemanticNode, SemanticValue, Value,
     json_backend::equal_resolved,
-    resolved::{ErrorOrigin, ResolvedTag, checked_number},
+    resolved::{ErrorOrigin, ResolvedTag, check_number_limits, checked_number},
     schema::{SchemaId, SchemaView},
 };
 use serde_json::Value as JsonValue;
@@ -11,14 +11,22 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
 };
 
-struct Resolver<'a> {
+#[path = "stage.rs"]
+pub(crate) mod stage;
+
+struct Resolver<'a, 's> {
     schemas: &'a Schemas,
-    budget: Budget,
+    budget: Budget<'s>,
     search: CompletionSearch<'a>,
+    contracts: BTreeMap<String, Vec<SchemaView<'a>>>,
+    // None is initial completion. Continuations scope fresh/resumed preset work
+    // while retaining the completed role of copied subtrees across rounds.
+    pending_defaults: Option<stage::PendingDefaults>,
 }
 
 enum CandidateSource<'a> {
     Document(&'a Document),
+    Semantic(&'a SemanticNode),
     Resolved(ResolvedNode<'a>),
 }
 
@@ -80,10 +88,53 @@ impl Schemas {
                 nodes: 0,
                 bytes: 0,
                 steps: 0,
+                stage: None,
             },
             search: CompletionSearch::default(),
+            contracts: BTreeMap::new(),
+            pending_defaults: None,
         }
         .run(document, expected)
+    }
+
+    /// Completes and validates explicit in-memory semantic input without source conversion.
+    ///
+    /// # Errors
+    ///
+    /// Returns grammar, unknown-tag, schema, ambiguity, numeric, or resource failures.
+    pub fn resolve_semantic<'a>(
+        &'a self,
+        node: &'a SemanticNode,
+        expected: Option<&str>,
+    ) -> Result<ResolvedNode<'a>, ResolveError> {
+        self.resolve_semantic_with_limits(node, expected, ResolutionLimits::default())
+    }
+
+    /// Admits semantic input with cumulative materialization and schema-work budgets.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same failures as [`Self::resolve_semantic`], bounded by `limits`.
+    pub fn resolve_semantic_with_limits<'a>(
+        &'a self,
+        node: &'a SemanticNode,
+        expected: Option<&str>,
+        limits: ResolutionLimits,
+    ) -> Result<ResolvedNode<'a>, ResolveError> {
+        Resolver {
+            schemas: self,
+            budget: Budget {
+                limits,
+                nodes: 0,
+                bytes: 0,
+                steps: 0,
+                stage: None,
+            },
+            search: CompletionSearch::default(),
+            contracts: BTreeMap::new(),
+            pending_defaults: None,
+        }
+        .run_semantic(node, expected)
     }
     pub(crate) fn complete_partial_default<'a>(
         &'a self,
@@ -113,17 +164,23 @@ impl Schemas {
                 nodes: 0,
                 bytes: 0,
                 steps: 0,
+                stage: None,
             },
             search: CompletionSearch::default(),
+            contracts: BTreeMap::new(),
+            pending_defaults: None,
         };
         let result = (|| {
             resolver.known_tags(&node, "")?;
-            resolver.select_candidates(
-                &root_views,
-                None,
-                CandidateSource::Resolved(node),
-                CandidateRequirement::Feasible,
-            )
+            resolver
+                .select_candidates(
+                    &root_views,
+                    None,
+                    CandidateSource::Resolved(node),
+                    CandidateRequirement::Feasible,
+                    &[],
+                )
+                .map(|result| result.expect("nonstaged candidates cannot reject").root)
         })();
         limits.max_nodes = remaining.max_nodes.saturating_sub(resolver.budget.nodes);
         limits.max_bytes = remaining.max_bytes.saturating_sub(resolver.budget.bytes);
@@ -132,7 +189,15 @@ impl Schemas {
     }
 }
 
-impl<'a> Resolver<'a> {
+impl<'a> Resolver<'a, '_> {
+    fn same_values(&self, left: &ResolvedNode<'_>, right: &ResolvedNode<'_>) -> bool {
+        if self.budget.stage.is_some() {
+            same_json(left, right)
+        } else {
+            equal_resolved(left, right, true)
+        }
+    }
+
     fn run(
         &mut self,
         document: &'a Document,
@@ -140,33 +205,57 @@ impl<'a> Resolver<'a> {
     ) -> Result<ResolvedDocument<'a>, ResolveError> {
         let root = from_input(document, document.root(), 0, "", &mut self.budget)?;
         self.known_tags(&root, "")?;
-        let expected_view = if let Some(expected) = expected {
-            Some(self.schemas.type_schema(expected).ok_or_else(|| {
-                failure(
-                    ResolveErrorKind::UnknownExpectedType,
-                    &root,
-                    format!("no schema is bound to expected type {expected:?}"),
-                    None,
-                    "",
-                )
-            })?)
-        } else {
-            None
-        };
-        let mut root_views = Vec::new();
-        if let Some(view) = tag_schema(self.schemas, &root) {
-            root_views.push(view);
-        }
-        if let Some(view) = expected_view {
-            root_views.push(view);
-        }
+        let root_views = self.root_views(&root, expected)?;
         let root = self.select_candidates(
             &root_views,
             Some(root),
             CandidateSource::Document(document),
             CandidateRequirement::Unique,
+            &[],
         )?;
+        let root = root.expect("nonstaged candidates cannot reject").root;
         Ok(ResolvedDocument { document, root })
+    }
+
+    fn run_semantic(
+        &mut self,
+        node: &'a SemanticNode,
+        expected: Option<&str>,
+    ) -> Result<ResolvedNode<'a>, ResolveError> {
+        let root = from_semantic(node, 0, "", &mut self.budget)?;
+        self.known_tags(&root, "")?;
+        let root_views = self.root_views(&root, expected)?;
+        self.select_candidates(
+            &root_views,
+            Some(root),
+            CandidateSource::Semantic(node),
+            CandidateRequirement::Unique,
+            &[],
+        )
+        .map(|result| result.expect("nonstaged candidates cannot reject").root)
+    }
+
+    fn root_views(
+        &self,
+        root: &ResolvedNode<'_>,
+        expected: Option<&str>,
+    ) -> Result<Vec<SchemaView<'a>>, ResolveError> {
+        let mut views = Vec::new();
+        if let Some(view) = tag_schema(self.schemas, root) {
+            views.push(view);
+        }
+        if let Some(expected) = expected {
+            views.push(self.schemas.type_schema(expected).ok_or_else(|| {
+                failure(
+                    ResolveErrorKind::UnknownExpectedType,
+                    root,
+                    format!("no schema is bound to expected type {expected:?}"),
+                    None,
+                    "",
+                )
+            })?);
+        }
+        Ok(views)
     }
 
     fn select_candidates(
@@ -175,16 +264,23 @@ impl<'a> Resolver<'a> {
         mut initial: Option<ResolvedNode<'a>>,
         source: CandidateSource<'a>,
         requirement: CandidateRequirement,
-    ) -> Result<ResolvedNode<'a>, ResolveError> {
-        let mut selected = None;
+        initial_edits: &[stage::StageEdit],
+    ) -> Result<Option<stage::StagedResolution<'a>>, ResolveError> {
+        let mut selected: Option<stage::StagedResolution<'a>> = None;
         let mut first_error = None;
+        let mut rejected = false;
         loop {
             self.search.start();
-            let root = match initial.take() {
+            self.contracts.clear();
+            self.pending_defaults = None;
+            let mut root = match initial.take() {
                 Some(root) => root,
                 None => match &source {
                     CandidateSource::Document(document) => {
                         from_input(document, document.root(), 0, "", &mut self.budget)?
+                    }
+                    CandidateSource::Semantic(node) => {
+                        from_semantic(node, 0, "", &mut self.budget)?
                     }
                     CandidateSource::Resolved(node) => {
                         self.charge_candidate_copy(node, "", 0)?;
@@ -192,40 +288,71 @@ impl<'a> Resolver<'a> {
                     }
                 },
             };
-            let candidate = self
-                .complete(root, root_views, "", CompletionLevel::existing(0))
-                .and_then(|root| self.finish_candidate(root_views, root));
+            let candidate = if self.budget.stage.is_some() {
+                self.known_tags(&root, "")?;
+                self.apply_edits(&mut root, initial_edits, true)?;
+                self.stage_candidate(root, root_views)
+            } else {
+                self.complete(root, root_views, "", CompletionLevel::existing(0))
+                    .and_then(|root| self.finish_candidate(root_views, root))
+                    .map(|root| {
+                        Some(stage::StagedResolution {
+                            root,
+                            meaning: None,
+                        })
+                    })
+            };
             match candidate {
-                Ok(candidate) => {
+                Ok(Some(candidate)) => {
                     if let Some(error) = self.search.conflict.take()
                         && matches!(requirement, CandidateRequirement::Unique)
                     {
                         return Err(error);
                     }
                     if matches!(requirement, CandidateRequirement::Feasible) {
-                        return Ok(candidate);
+                        return Ok(Some(candidate));
                     }
                     if let Some(prior) = &selected {
-                        if !same_json(prior, &candidate) {
+                        if !self.same_values(&prior.root, &candidate.root)
+                            || prior.meaning != candidate.meaning
+                        {
                             let location = self
                                 .search
                                 .branches
                                 .values()
                                 .flat_map(|views| views.values())
                                 .next()
-                                .map(|view| view.location())
-                                .expect("different completions require a union decision");
-                            return Err(ambiguous_completion(prior, &candidate, "", location));
+                                .map(|view| view.location());
+                            return Err(match location {
+                                Some(location) => {
+                                    ambiguous_completion(&prior.root, &candidate.root, "", location)
+                                }
+                                None => failure(
+                                    ResolveErrorKind::AmbiguousDefault,
+                                    &candidate.root,
+                                    "valid candidates have different admission meanings",
+                                    None,
+                                    "",
+                                ),
+                            });
                         }
                     } else {
                         selected = Some(candidate);
                     }
                 }
+                Ok(None) => rejected = true,
                 Err(error)
-                    if matches!(
-                        error.kind,
-                        ResolveErrorKind::LimitExceeded | ResolveErrorKind::NumericLimit
-                    ) =>
+                    if self
+                        .budget
+                        .stage
+                        .as_ref()
+                        .is_some_and(|stage| stage.failed())
+                        || matches!(
+                            error.kind,
+                            ResolveErrorKind::LimitExceeded
+                                | ResolveErrorKind::NumericLimit
+                                | ResolveErrorKind::InvalidStage
+                        ) =>
                 {
                     return Err(error);
                 }
@@ -239,19 +366,28 @@ impl<'a> Resolver<'a> {
                 break;
             }
         }
-        selected
-            .ok_or_else(|| first_error.expect("every unsuccessful candidate records its failure"))
+        if selected.is_some() {
+            Ok(selected)
+        } else if let Some(error) = first_error {
+            Err(error)
+        } else {
+            assert!(
+                rejected,
+                "every unsuccessful candidate records a failure or rejection"
+            );
+            Ok(None)
+        }
     }
     fn finish_candidate(
         &mut self,
         root_views: &[SchemaView<'a>],
-        root: ResolvedNode<'a>,
+        mut root: ResolvedNode<'a>,
     ) -> Result<ResolvedNode<'a>, ResolveError> {
-        self.validate_tags(&root, "", 0)?;
         let asserted = root
             .tag()
             .and_then(|_| tag_schema(self.schemas, &root))
             .map(|view| view.id());
+        self.admit_tags(&mut root, "", 0, true)?;
         for view in root_views {
             if Some(view.id()) != asserted {
                 Self::check_node(&root, view, "", &mut self.budget)?;
@@ -264,6 +400,14 @@ impl<'a> Resolver<'a> {
                 for view in views.values() {
                     Self::check_node(node, view, path, &mut self.budget)?;
                 }
+            } else if self.budget.stage.is_some() {
+                return Err(failure(
+                    ResolveErrorKind::SchemaViolation,
+                    &root,
+                    "a selected-branch obligated value is missing",
+                    None,
+                    path,
+                ));
             }
         }
         Ok(root)
@@ -313,14 +457,39 @@ impl<'a> Resolver<'a> {
 }
 
 fn tag_schema<'a>(schemas: &'a Schemas, node: &ResolvedNode<'_>) -> Option<SchemaView<'a>> {
-    node.tag
-        .as_ref()
-        .and_then(|tag| schemas.type_schema(tag.binding.as_deref().unwrap_or(tag.name.as_ref())))
+    node.tag.as_ref().and_then(|tag| match &tag.binding {
+        Some(binding) if matches!(tag.origin, Origin::Semantic) => {
+            schemas.semantic_binding_schema(binding)
+        }
+        Some(binding) => schemas.binding_schema(binding),
+        None => schemas.type_schema(&tag.name),
+    })
 }
-fn tag_identity<'node>(tag: &'node ResolvedTag<'_>) -> &'node str {
-    tag.binding.as_deref().unwrap_or(tag.name.as_ref())
+fn same_tag_identity(schemas: &Schemas, left: &ResolvedTag<'_>, right: &ResolvedTag<'_>) -> bool {
+    let left_name = left.binding.as_deref().unwrap_or(left.name.as_ref());
+    let right_name = right.binding.as_deref().unwrap_or(right.name.as_ref());
+    if left_name == right_name {
+        return true;
+    }
+    // A staged snapshot may already carry an actual admissible contract ID
+    // while a newly discovered default still names its local alias wrapper.
+    // Keep the original spelling comparison for two unpinned native assertions.
+    if !matches!(left.origin, Origin::Semantic)
+        && !matches!(right.origin, Origin::Semantic)
+        && ![left, right].iter().any(|tag| {
+            tag.binding
+                .as_deref()
+                .is_some_and(|binding| schemas.semantic_binding_schema(binding).is_some())
+        })
+    {
+        return false;
+    }
+    schemas
+        .binding_identity(left_name)
+        .zip(schemas.binding_identity(right_name))
+        .is_some_and(|(left, right)| left == right)
 }
-impl<'a> Resolver<'a> {
+impl<'a> Resolver<'a, '_> {
     fn default_layers(
         &mut self,
         node: &ResolvedNode<'a>,
@@ -387,7 +556,7 @@ impl<'a> Resolver<'a> {
         })
     }
 }
-impl<'a> Resolver<'a> {
+impl<'a> Resolver<'a, '_> {
     fn complete(
         &mut self,
         mut node: ResolvedNode<'a>,
@@ -396,6 +565,13 @@ impl<'a> Resolver<'a> {
         level: CompletionLevel,
     ) -> Result<ResolvedNode<'a>, ResolveError> {
         let depth = level.depth;
+        let mut level = level;
+        if level.revisit
+            && let Some(pending) = &self.pending_defaults
+        {
+            level.apply_node_defaults &=
+                pending.scope(path, &node, &mut self.budget)? != stage::DefaultScope::Skip;
+        }
         self.budget.step(&node, path)?;
         if depth >= 128
             && matches!(
@@ -412,90 +588,13 @@ impl<'a> Resolver<'a> {
             ));
         }
         let mut schemas = schemas.to_vec();
-        if level.apply_node_defaults && matches!(node.value, ResolvedValue::Mapping(_)) {
-            // Native default annotations can introduce a tag whose schema owns
-            // additional defaults. Discover every tag assertion before applying
-            // payloads, so generated values never become supplied precedence.
-            loop {
-                schemas = self.applicable(&schemas, &node, path, false)?;
-                if node.tag().is_some() {
-                    break;
-                }
-                let Some(tag) = self.discover_default_tag(&schemas, Some(&node), path)? else {
-                    break;
-                };
-                node.tag = Some(tag);
-            }
-            schemas = self.applicable(&schemas, &node, path, false)?;
-            let DefaultLayers {
-                tag_owned,
-                tag_branches,
-                branch_fallbacks,
-            } = self.default_layers(&node, path)?;
-            let supplied_tag = node
-                .tag
-                .as_ref()
-                .is_some_and(|tag| matches!(tag.origin, Origin::Input(_)));
-            let mut baseline = None;
-            for schema in &schemas {
-                if tag_owned.contains(&schema.id())
-                    || tag_branches.contains(&schema.id())
-                    || branch_fallbacks.contains(&schema.id())
-                    || supplied_tag
-                {
-                    continue;
-                }
-                let Some(default) = schema.value().get("default") else {
-                    continue;
-                };
-                if !default.is_object() {
-                    continue;
-                }
-                let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
-                if node.tag.as_ref().zip(candidate.tag.as_ref()).is_some_and(
-                    |(current, candidate)| tag_identity(current) != tag_identity(candidate),
-                ) {
-                    continue;
-                }
-                if let Some(prior) = &mut baseline {
-                    self.merge_candidates(prior, candidate, Some(&node), false, path);
-                } else {
-                    baseline = Some(candidate);
-                }
-            }
-            if let Some(default) = baseline {
-                apply_default(&mut node, default, false);
-            }
-            for (owned, fallback_ids) in [
-                (true, tag_owned),
-                (true, tag_branches),
-                (false, branch_fallbacks),
-            ] {
-                let mut fallback = None;
-                for schema in &schemas {
-                    if !fallback_ids.contains(&schema.id()) {
-                        continue;
-                    }
-                    let Some(default) = schema.value().get("default") else {
-                        continue;
-                    };
-                    if !default.is_object() {
-                        continue;
-                    }
-                    let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
-                    if let Some(prior) = &mut fallback {
-                        self.merge_candidates(prior, candidate, Some(&node), owned, path);
-                    } else {
-                        fallback = Some(candidate);
-                    }
-                }
-                if let Some(fallback) = fallback {
-                    apply_default(&mut node, fallback, owned);
-                }
-            }
-        } else {
-            schemas = self.applicable(&schemas, &node, path, false)?;
+        if node.opaque {
+            return Ok(node);
         }
+        if let Some(contracts) = self.contracts.get(path) {
+            schemas.extend_from_slice(contracts);
+        }
+        schemas = self.complete_node_defaults(&mut node, schemas, path, level)?;
 
         if let ResolvedValue::Mapping(fields) = &mut node.value {
             for (key, child) in fields.iter_mut() {
@@ -505,14 +604,11 @@ impl<'a> Resolver<'a> {
                     value: ResolvedValue::Null,
                     tag: None,
                     origin: child.origin,
+                    opaque: false,
+                    number_class: 0,
                 };
                 let owned = std::mem::replace(child, placeholder);
-                *child = self.complete(
-                    owned,
-                    &child_schemas,
-                    &child_path,
-                    CompletionLevel::existing(depth + 1),
-                )?;
+                *child = self.complete(owned, &child_schemas, &child_path, level.child())?;
             }
         }
         if matches!(node.value, ResolvedValue::Mapping(_)) {
@@ -547,17 +643,137 @@ impl<'a> Resolver<'a> {
                     value: ResolvedValue::Null,
                     tag: None,
                     origin: child.origin,
+                    opaque: false,
+                    number_class: 0,
                 };
                 let owned = std::mem::replace(child, placeholder);
-                *child = self.complete(
-                    owned,
-                    &item_schemas,
-                    &child_path,
-                    CompletionLevel::existing(depth + 1),
-                )?;
+                *child = self.complete(owned, &item_schemas, &child_path, level.child())?;
             }
         }
         Ok(node)
+    }
+
+    // Finish node-local preset work before descending. Keeping these candidate
+    // accumulators out of the recursive frame preserves the 128-level contract
+    // on the ordinary caller stack, including unoptimized builds.
+    fn complete_node_defaults(
+        &mut self,
+        node: &mut ResolvedNode<'a>,
+        mut schemas: Vec<SchemaView<'a>>,
+        path: &str,
+        level: CompletionLevel,
+    ) -> Result<Vec<SchemaView<'a>>, ResolveError> {
+        let depth = level.depth;
+        if level.apply_node_defaults && matches!(node.value, ResolvedValue::Mapping(_)) {
+            // Native default annotations can introduce a tag whose schema owns
+            // additional defaults. Discover every tag assertion before applying
+            // payloads, so generated values never become supplied precedence.
+            loop {
+                schemas = self.applicable(&schemas, node, path, false)?;
+                if node.tag().is_some() {
+                    break;
+                }
+                if level.revisit
+                    && let Some(pending) = &self.pending_defaults
+                    && pending.scope(path, node, &mut self.budget)? != stage::DefaultScope::Complete
+                {
+                    break;
+                }
+                let Some(tag) = self.discover_default_tag(&schemas, Some(node), path)? else {
+                    break;
+                };
+                node.tag = Some(tag);
+            }
+            schemas = self.applicable(&schemas, node, path, false)?;
+            let DefaultLayers {
+                tag_owned,
+                tag_branches,
+                branch_fallbacks,
+            } = self.default_layers(node, path)?;
+            let supplied_tag = node.tag.as_ref().is_some_and(|tag| tag.supplied);
+            let mut baseline = None;
+            for schema in &schemas {
+                if tag_owned.contains(&schema.id())
+                    || tag_branches.contains(&schema.id())
+                    || branch_fallbacks.contains(&schema.id())
+                    || supplied_tag
+                {
+                    continue;
+                }
+                let Some(default) = schema.value().get("default") else {
+                    continue;
+                };
+                if !default.is_object() {
+                    continue;
+                }
+                let Some(candidate) = from_default(
+                    default,
+                    *schema,
+                    depth,
+                    &mut self.budget,
+                    path,
+                    Some(node),
+                    self.pending_defaults.as_ref().filter(|_| level.revisit),
+                )?
+                else {
+                    continue;
+                };
+                if node.tag.as_ref().zip(candidate.tag.as_ref()).is_some_and(
+                    |(current, candidate)| !same_tag_identity(self.schemas, current, candidate),
+                ) {
+                    continue;
+                }
+                if let Some(prior) = &mut baseline {
+                    self.merge_candidates(prior, candidate, Some(node), false, path);
+                } else {
+                    baseline = Some(candidate);
+                }
+            }
+            if let Some(default) = baseline {
+                apply_default(self.schemas, node, default, false);
+            }
+            for (owned, fallback_ids) in [
+                (true, tag_owned),
+                (true, tag_branches),
+                (false, branch_fallbacks),
+            ] {
+                let mut fallback = None;
+                for schema in &schemas {
+                    if !fallback_ids.contains(&schema.id()) {
+                        continue;
+                    }
+                    let Some(default) = schema.value().get("default") else {
+                        continue;
+                    };
+                    if !default.is_object() {
+                        continue;
+                    }
+                    let Some(candidate) = from_default(
+                        default,
+                        *schema,
+                        depth,
+                        &mut self.budget,
+                        path,
+                        Some(node),
+                        self.pending_defaults.as_ref().filter(|_| level.revisit),
+                    )?
+                    else {
+                        continue;
+                    };
+                    if let Some(prior) = &mut fallback {
+                        self.merge_candidates(prior, candidate, Some(node), owned, path);
+                    } else {
+                        fallback = Some(candidate);
+                    }
+                }
+                if let Some(fallback) = fallback {
+                    apply_default(self.schemas, node, fallback, owned);
+                }
+            }
+        } else {
+            schemas = self.applicable(&schemas, node, path, false)?;
+        }
+        Ok(schemas)
     }
 
     fn complete_missing(
@@ -604,13 +820,15 @@ impl<'a> Resolver<'a> {
             let Some(default) = schema.value().get("default") else {
                 continue;
             };
-            let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
+            let candidate =
+                from_default(default, *schema, depth, &mut self.budget, path, None, None)?
+                    .expect("a default at an absent destination is retained");
             if probe
                 .tag
                 .as_ref()
                 .zip(candidate.tag.as_ref())
                 .is_some_and(|(current, candidate)| {
-                    tag_identity(current) != tag_identity(candidate)
+                    !same_tag_identity(self.schemas, current, candidate)
                 })
             {
                 continue;
@@ -634,7 +852,18 @@ impl<'a> Resolver<'a> {
                 let Some(default) = schema.value().get("default") else {
                     continue;
                 };
-                let candidate = from_default(default, *schema, depth, &mut self.budget, path)?;
+                let Some(candidate) = from_default(
+                    default,
+                    *schema,
+                    depth,
+                    &mut self.budget,
+                    path,
+                    completed.as_ref(),
+                    None,
+                )?
+                else {
+                    continue;
+                };
                 if let Some(prior) = &mut fallback {
                     self.merge_candidates(prior, candidate, completed.as_ref(), owned, path);
                 } else {
@@ -643,7 +872,7 @@ impl<'a> Resolver<'a> {
             }
             if let Some(fallback) = fallback {
                 if let Some(prior) = &mut completed {
-                    apply_default(prior, fallback, owned);
+                    apply_default(self.schemas, prior, fallback, owned);
                 } else {
                     completed = Some(fallback);
                 }
@@ -668,8 +897,12 @@ impl<'a> Resolver<'a> {
                 value,
                 tag: None,
                 origin: Origin::Default(schema.location()),
+                opaque: false,
+                number_class: 0,
             };
             self.budget.add_node(&implicit, path)?;
+            let mut implicit = implicit;
+            self.budget.classify(&mut implicit, path)?;
             return self
                 .complete(implicit, &schemas, path, CompletionLevel::merged(depth))
                 .map(Some);
@@ -911,6 +1144,8 @@ impl<'a> Resolver<'a> {
                             value,
                             tag: None,
                             origin: node.origin,
+                            opaque: false,
+                            number_class: 0,
                         };
                         if self.has_implicit_branch_work(
                             &common_children,
@@ -1024,11 +1259,12 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    fn validate_tags(
+    fn admit_tags(
         &mut self,
-        node: &ResolvedNode<'_>,
+        node: &mut ResolvedNode<'a>,
         path: &str,
         depth: usize,
+        check_constraints: bool,
     ) -> Result<(), ResolveError> {
         self.budget.step(node, path)?;
         if depth > 128 {
@@ -1050,20 +1286,55 @@ impl<'a> Resolver<'a> {
                     path,
                 )
             })?;
-            Self::check_node(node, &schema, path, &mut self.budget)?;
+            if check_constraints {
+                Self::check_node(node, &schema, path, &mut self.budget)?;
+            }
+            let tag = node.tag.as_ref().expect("checked asserted tag is present");
+            if tag.binding.is_none() || !matches!(tag.origin, Origin::Semantic) {
+                let canonical = self
+                    .schemas
+                    .canonical_binding_schema(tag.binding.as_deref().unwrap_or(tag.name.as_ref()))
+                    .expect("checked tag has a canonical registry contract");
+                let binding = canonical.binding();
+                if binding.len() > crate::semantic::MAX_SCALAR_BYTES {
+                    return Err(failure(
+                        ResolveErrorKind::LimitExceeded,
+                        node,
+                        "canonical tag binding exceeds 1 MiB byte bound",
+                        None,
+                        path,
+                    ));
+                }
+                let previous_bytes = tag.binding.as_ref().map_or(0, |binding| binding.len());
+                self.budget.add_byte_count(
+                    node,
+                    binding.len().saturating_sub(previous_bytes),
+                    path,
+                )?;
+                node.tag
+                    .as_mut()
+                    .expect("checked asserted tag is present")
+                    .binding = Some(binding);
+            }
         }
-        match &node.value {
+        match &mut node.value {
             ResolvedValue::Mapping(fields) => {
                 for (key, child) in fields {
-                    self.validate_tags(child, &crate::pointer::join(path, key), depth + 1)?;
+                    self.admit_tags(
+                        child,
+                        &crate::pointer::join(path, key),
+                        depth + 1,
+                        check_constraints,
+                    )?;
                 }
             }
             ResolvedValue::Sequence(items) => {
-                for (i, child) in items.iter().enumerate() {
-                    self.validate_tags(
+                for (i, child) in items.iter_mut().enumerate() {
+                    self.admit_tags(
                         child,
                         &crate::pointer::join(path, &i.to_string()),
                         depth + 1,
+                        check_constraints,
                     )?;
                 }
             }
@@ -1075,7 +1346,7 @@ impl<'a> Resolver<'a> {
         node: &ResolvedNode<'_>,
         schema: &SchemaView<'a>,
         path: &str,
-        budget: &mut Budget,
+        budget: &mut Budget<'_>,
     ) -> Result<(), ResolveError> {
         budget.charge_work(schema.evaluation_cost(resolved_work(node)), node, path)?;
         if schema.uses_uniqueness() {
@@ -1110,11 +1381,21 @@ impl<'a> Resolver<'a> {
             if supplied.is_some() && !default.is_object() {
                 continue;
             }
+            if supplied.is_some() && self.budget.stage.is_some() {
+                let probe = untagged_placeholder(Origin::Default(schema.location()));
+                let tag = default_tag(default, *schema, &mut self.budget, path)?;
+                if self
+                    .budget
+                    .defer_default(default, tag.as_ref(), &probe, path)?
+                {
+                    continue;
+                }
+            }
             let Some(tag) = default_tag(default, *schema, &mut self.budget, path)? else {
                 continue;
             };
             if let Some(prior) = &mut discovered {
-                if tag_identity(prior) != tag_identity(&tag)
+                if !same_tag_identity(self.schemas, prior, &tag)
                     && self.search.conflicting_default_tag(&tag, path) == 1
                 {
                     *prior = tag;
@@ -1134,30 +1415,35 @@ impl<'a> Resolver<'a> {
         tag_owned: bool,
         path: &str,
     ) {
+        if supplied.is_some_and(|node| node.opaque) {
+            return;
+        }
         if let Some(supplied) = supplied {
-            if !tag_owned
-                && supplied
-                    .tag
-                    .as_ref()
-                    .is_some_and(|tag| matches!(tag.origin, Origin::Input(_)))
-            {
+            if !tag_owned && supplied.tag.as_ref().is_some_and(|tag| tag.supplied) {
                 return;
             }
             if !matches!(supplied.value, ResolvedValue::Mapping(_)) {
+                return;
+            }
+            if incoming.opaque {
+                return;
+            }
+            if target.opaque && matches!(incoming.value, ResolvedValue::Mapping(_)) {
+                *target = incoming;
                 return;
             }
             if !tag_owned && let Some(tag) = supplied.tag.as_ref() {
                 if incoming
                     .tag
                     .as_ref()
-                    .is_some_and(|incoming| tag_identity(incoming) != tag_identity(tag))
+                    .is_some_and(|incoming| !same_tag_identity(self.schemas, incoming, tag))
                 {
                     return;
                 }
                 if target
                     .tag
                     .as_ref()
-                    .is_some_and(|current| tag_identity(current) != tag_identity(tag))
+                    .is_some_and(|current| !same_tag_identity(self.schemas, current, tag))
                 {
                     *target = incoming;
                     return;
@@ -1172,12 +1458,14 @@ impl<'a> Resolver<'a> {
                 _ => return,
             }
         }
-        let both_maps = matches!(
-            (&target.value, &incoming.value),
-            (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_))
-        );
+        let both_maps = !target.opaque
+            && !incoming.opaque
+            && matches!(
+                (&target.value, &incoming.value),
+                (ResolvedValue::Mapping(_), ResolvedValue::Mapping(_))
+            );
         if !both_maps {
-            if !same_json(target, &incoming)
+            if !self.same_values(target, &incoming)
                 && self.search.conflicting_default(&incoming, path) == 1
             {
                 *target = incoming;
@@ -1189,7 +1477,9 @@ impl<'a> Resolver<'a> {
                 .tag
                 .as_ref()
                 .zip(incoming.tag.as_ref())
-                .is_some_and(|(target, incoming)| tag_identity(target) != tag_identity(incoming))
+                .is_some_and(|(target, incoming)| {
+                    !same_tag_identity(self.schemas, target, incoming)
+                })
         {
             if self.search.conflicting_default(&incoming, path) == 1 {
                 target.tag = incoming.tag.take();
@@ -1221,6 +1511,9 @@ impl<'a> Resolver<'a> {
 struct CompletionLevel {
     depth: usize,
     apply_node_defaults: bool,
+    // Newly materialized subtrees need their first completion even when a
+    // continuation suppresses presets on previously completed records.
+    revisit: bool,
 }
 
 impl CompletionLevel {
@@ -1228,6 +1521,7 @@ impl CompletionLevel {
         Self {
             depth,
             apply_node_defaults: true,
+            revisit: true,
         }
     }
 
@@ -1235,6 +1529,15 @@ impl CompletionLevel {
         Self {
             depth,
             apply_node_defaults: false,
+            revisit: false,
+        }
+    }
+
+    const fn child(self) -> Self {
+        Self {
+            depth: self.depth + 1,
+            apply_node_defaults: true,
+            revisit: self.revisit,
         }
     }
 }
@@ -1370,13 +1673,14 @@ impl<'a> CompletionSearch<'a> {
     }
 }
 
-struct Budget {
+struct Budget<'s> {
     limits: ResolutionLimits,
     nodes: usize,
     bytes: usize,
     steps: usize,
+    stage: Option<&'s mut dyn stage::StageHooks>,
 }
-impl Budget {
+impl Budget<'_> {
     fn step(&mut self, node: &ResolvedNode<'_>, path: &str) -> Result<(), ResolveError> {
         self.steps = self.steps.saturating_add(1);
         if self.steps > self.limits.max_steps {
@@ -1427,7 +1731,16 @@ impl Budget {
         text: &str,
         path: &str,
     ) -> Result<(), ResolveError> {
-        self.bytes = self.bytes.saturating_add(text.len());
+        self.add_byte_count(node, text.len(), path)
+    }
+
+    fn add_byte_count(
+        &mut self,
+        node: &ResolvedNode<'_>,
+        bytes: usize,
+        path: &str,
+    ) -> Result<(), ResolveError> {
+        self.bytes = self.bytes.saturating_add(bytes);
         if self.bytes > self.limits.max_bytes {
             return Err(failure(
                 ResolveErrorKind::LimitExceeded,
@@ -1439,6 +1752,142 @@ impl Budget {
         }
         Ok(())
     }
+
+    fn add_semantic_scalar(
+        &mut self,
+        node: &ResolvedNode<'_>,
+        text: &str,
+        path: &str,
+    ) -> Result<(), ResolveError> {
+        if text.len() > crate::semantic::MAX_SCALAR_BYTES {
+            return Err(failure(
+                ResolveErrorKind::LimitExceeded,
+                node,
+                "semantic scalar exceeds 1 MiB byte bound",
+                None,
+                path,
+            ));
+        }
+        self.add_bytes(node, text, path)
+    }
+
+    fn semantic_children(
+        &self,
+        node: &ResolvedNode<'_>,
+        count: usize,
+        path: &str,
+    ) -> Result<(), ResolveError> {
+        if count > self.limits.max_nodes.saturating_sub(self.nodes) {
+            return Err(failure(
+                ResolveErrorKind::LimitExceeded,
+                node,
+                "semantic children exceed remaining node budget",
+                None,
+                path,
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn from_semantic<'a>(
+    node: &'a SemanticNode,
+    depth: usize,
+    path: &str,
+    budget: &mut Budget<'_>,
+) -> Result<ResolvedNode<'a>, ResolveError> {
+    let mut result = untagged_placeholder(Origin::Semantic);
+    budget.add_node(&result, path)?;
+    if depth >= 128
+        && matches!(
+            &node.value,
+            SemanticValue::Sequence(_) | SemanticValue::Mapping(_)
+        )
+    {
+        return Err(failure(
+            ResolveErrorKind::LimitExceeded,
+            &result,
+            "semantic collection nesting exceeds 128",
+            None,
+            path,
+        ));
+    }
+    if let Some(tag) = &node.tag {
+        budget.add_semantic_scalar(&result, &tag.name, path)?;
+        if let Some(binding) = &tag.binding {
+            budget.add_semantic_scalar(&result, binding, path)?;
+        }
+        if !crate::names::valid_tag(&tag.name) {
+            return Err(failure(
+                ResolveErrorKind::InvalidTag,
+                &result,
+                "semantic tag violates the DAML tag grammar",
+                None,
+                path,
+            ));
+        }
+        result.tag = Some(ResolvedTag {
+            name: Cow::Borrowed(&tag.name),
+            binding: tag.binding.as_deref().map(Cow::Borrowed),
+            origin: Origin::Semantic,
+            supplied: true,
+        });
+    }
+    result.value = match &node.value {
+        SemanticValue::Null => ResolvedValue::Null,
+        SemanticValue::Bool(value) => ResolvedValue::Bool(*value),
+        SemanticValue::Number(number) => {
+            let raw = number.as_str();
+            budget.add_semantic_scalar(&result, raw, path)?;
+            check_number_limits(raw).map_err(|message| {
+                failure(ResolveErrorKind::NumericLimit, &result, message, None, path)
+            })?;
+            ResolvedValue::Number(Cow::Borrowed(number))
+        }
+        SemanticValue::String(text) => {
+            budget.add_semantic_scalar(&result, text, path)?;
+            ResolvedValue::String(Cow::Borrowed(text))
+        }
+        SemanticValue::Sequence(items) => {
+            budget.semantic_children(&result, items.len(), path)?;
+            ResolvedValue::Sequence(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(index, child)| {
+                        from_semantic(
+                            child,
+                            depth + 1,
+                            &crate::pointer::join(path, &index.to_string()),
+                            budget,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?,
+            )
+        }
+        SemanticValue::Mapping(fields) => {
+            budget.semantic_children(&result, fields.len(), path)?;
+            let mut resolved = BTreeMap::new();
+            for (key, child) in fields {
+                budget.add_semantic_scalar(&result, key, path)?;
+                let child_path = crate::pointer::join(path, key);
+                if !crate::names::valid_key(key) {
+                    return Err(failure(
+                        ResolveErrorKind::InvalidKey,
+                        &result,
+                        "semantic mapping key violates the DAML key grammar",
+                        None,
+                        &child_path,
+                    ));
+                }
+                let child = from_semantic(child, depth + 1, &child_path, budget)?;
+                resolved.insert(Cow::Borrowed(key.as_str()), child);
+            }
+            ResolvedValue::Mapping(resolved)
+        }
+    };
+    budget.classify(&mut result, path)?;
+    Ok(result)
 }
 
 fn from_input<'a>(
@@ -1446,13 +1895,15 @@ fn from_input<'a>(
     node: &'a Node,
     depth: usize,
     path: &str,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
 ) -> Result<ResolvedNode<'a>, ResolveError> {
     let origin = Origin::Input(node.span);
     let mut result = ResolvedNode {
         value: ResolvedValue::Null,
         tag: None,
         origin,
+        opaque: false,
+        number_class: 0,
     };
     budget.add_node(&result, path)?;
     if depth > 128 {
@@ -1470,6 +1921,7 @@ fn from_input<'a>(
             name: Cow::Borrowed(tag),
             binding: None,
             origin: Origin::Input(node.tag.expect("parser tag name has its span")),
+            supplied: true,
         });
     }
     result.value = match &node.value {
@@ -1526,6 +1978,7 @@ fn from_input<'a>(
             ResolvedValue::Mapping(fields)
         }
     };
+    budget.classify(&mut result, path)?;
     Ok(result)
 }
 
@@ -1533,16 +1986,30 @@ fn from_default<'a>(
     value: &'a JsonValue,
     schema: SchemaView<'a>,
     depth: usize,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
     path: &str,
-) -> Result<ResolvedNode<'a>, ResolveError> {
+    supplied: Option<&ResolvedNode<'_>>,
+    scope: Option<&stage::PendingDefaults>,
+) -> Result<Option<ResolvedNode<'a>>, ResolveError> {
     let location = schema.default_origin().unwrap_or(schema.location());
     let origin = Origin::Default(location);
     let mut node = ResolvedNode {
         value: ResolvedValue::Null,
-        tag: default_tag(value, schema, budget, path)?,
+        tag: None,
         origin,
+        opaque: false,
+        number_class: 0,
     };
+    let scope_kind = match scope {
+        Some(scope) => scope.scope(path, &node, budget)?,
+        None => stage::DefaultScope::Complete,
+    };
+    if scope_kind == stage::DefaultScope::Skip
+        || (scope_kind == stage::DefaultScope::Project && !value.is_object())
+    {
+        return Ok(None);
+    }
+    node.tag = default_tag(value, schema, budget, path)?;
     budget.add_node(&node, path)?;
     if depth >= 128 && (value.is_object() || value.is_array()) {
         return Err(failure(
@@ -1552,6 +2019,19 @@ fn from_default<'a>(
             Some(location.clone()),
             path,
         ));
+    }
+    node.opaque = budget.defer_default(value, node.tag.as_ref(), &node, path)?;
+    // An opaque preset cannot contribute to an existing destination. Discard
+    // it before expanding descendants or accumulating competing baselines.
+    if node.opaque && (supplied.is_some() || scope_kind == stage::DefaultScope::Project) {
+        return Ok(None);
+    }
+    // Keep the raw tag for opacity and supplied-tag compatibility, but a
+    // projection through an already-completed ancestor cannot introduce a tag.
+    if scope_kind == stage::DefaultScope::Project
+        && supplied.and_then(|node| node.tag.as_ref()).is_none()
+    {
+        node.tag = None;
     }
     node.value = match value {
         JsonValue::Null => ResolvedValue::Null,
@@ -1585,7 +2065,10 @@ fn from_default<'a>(
                         depth + 1,
                         budget,
                         &crate::pointer::join(path, &index.to_string()),
+                        None,
+                        None,
                     )
+                    .map(|node| node.expect("absent array items retain atomic defaults"))
                 })
                 .collect::<Result<_, _>>()?,
         ),
@@ -1595,20 +2078,30 @@ fn from_default<'a>(
             for (key, value) in values {
                 let child_path = crate::pointer::join(path, key);
                 budget.add_bytes(&node, key, &child_path)?;
-                fields.insert(
-                    Cow::Borrowed(key.as_str()),
-                    from_default(value, schema, depth + 1, budget, &child_path)?,
-                );
+                let Some(child) = from_default(
+                    value,
+                    schema,
+                    depth + 1,
+                    budget,
+                    &child_path,
+                    supplied.and_then(|node| node.get(key)),
+                    scope,
+                )?
+                else {
+                    continue;
+                };
+                fields.insert(Cow::Borrowed(key.as_str()), child);
             }
             ResolvedValue::Mapping(fields)
         }
     };
-    Ok(node)
+    budget.classify_number(&mut node, path)?;
+    Ok(Some(node))
 }
 fn default_tag<'a>(
     value: &'a JsonValue,
     schema: SchemaView<'a>,
-    budget: &mut Budget,
+    budget: &mut Budget<'_>,
     path: &str,
 ) -> Result<Option<ResolvedTag<'a>>, ResolveError> {
     let Some((name, binding)) = schema.default_tag(value) else {
@@ -1619,6 +2112,8 @@ fn default_tag<'a>(
         value: ResolvedValue::Null,
         tag: None,
         origin: Origin::Default(location),
+        opaque: false,
+        number_class: 0,
     };
     budget.add_bytes(&placeholder, name, path)?;
     if let Some(binding) = binding {
@@ -1628,16 +2123,20 @@ fn default_tag<'a>(
         name: Cow::Borrowed(name),
         binding: binding.map(Cow::Borrowed),
         origin: Origin::Default(location),
+        supplied: false,
     }))
 }
 
-fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>, tag_owned: bool) {
-    if !tag_owned
-        && target
-            .tag
-            .as_ref()
-            .is_some_and(|tag| matches!(tag.origin, Origin::Input(_)))
-    {
+fn apply_default<'a>(
+    schemas: &Schemas,
+    target: &mut ResolvedNode<'a>,
+    default: ResolvedNode<'a>,
+    tag_owned: bool,
+) {
+    if target.opaque || default.opaque {
+        return;
+    }
+    if !tag_owned && target.tag.as_ref().is_some_and(|tag| tag.supplied) {
         return;
     }
     if !matches!(
@@ -1650,7 +2149,7 @@ fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>, t
         .tag
         .as_ref()
         .zip(default.tag.as_ref())
-        .is_some_and(|(target, default)| tag_identity(target) != tag_identity(default))
+        .is_some_and(|(target, default)| !same_tag_identity(schemas, target, default))
     {
         return;
     }
@@ -1662,7 +2161,7 @@ fn apply_default<'a>(target: &mut ResolvedNode<'a>, default: ResolvedNode<'a>, t
     {
         for (key, value) in default {
             if let Some(existing) = target.get_mut(key.as_ref()) {
-                apply_default(existing, value, false);
+                apply_default(schemas, existing, value, false);
             } else {
                 target.insert(key, value);
             }
@@ -1695,11 +2194,29 @@ fn untagged_placeholder(origin: Origin<'_>) -> ResolvedNode<'_> {
         value: ResolvedValue::Null,
         tag: None,
         origin,
+        opaque: false,
+        number_class: 0,
     }
 }
 
 fn same_json(left: &ResolvedNode<'_>, right: &ResolvedNode<'_>) -> bool {
-    equal_resolved(left, right, true)
+    equal_resolved(left, right, true) && same_number_classes(left, right)
+}
+
+fn same_number_classes(left: &ResolvedNode<'_>, right: &ResolvedNode<'_>) -> bool {
+    if left.number_class != right.number_class {
+        return false;
+    }
+    match (&left.value, &right.value) {
+        (ResolvedValue::Mapping(a), ResolvedValue::Mapping(b)) => a.iter().all(|(key, value)| {
+            b.get(key.as_ref())
+                .is_some_and(|other| same_number_classes(value, other))
+        }),
+        (ResolvedValue::Sequence(a), ResolvedValue::Sequence(b)) => {
+            a.iter().zip(b).all(|(a, b)| same_number_classes(a, b))
+        }
+        _ => true,
+    }
 }
 
 fn default_failure(location: &SchemaLocation, path: &str, message: &str) -> ResolveError {

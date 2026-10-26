@@ -135,10 +135,11 @@ struct Compiler<'a> {
     default_validation_steps: usize,
 }
 
-pub(super) fn compile(
+pub(super) fn compile<'names>(
     bundle: &Bundle,
     document: &Document,
     expected: Option<&str>,
+    additional_types: impl IntoIterator<Item = &'names str>,
 ) -> Result<Schemas, NativeError> {
     let mut compiler = Compiler {
         bundle,
@@ -171,8 +172,31 @@ pub(super) fn compile(
         .collect::<HashSet<_>>();
     for &(tag, span) in &roots {
         if !compiler.registrations.contains_key(tag) {
-            let (key, _) = compiler.load_tag(tag, span, &bundle.root)?;
+            let (key, _) = compiler.load_tag(tag, Some(span), &bundle.root)?;
             compiler.registrations.insert(tag.to_owned(), key);
+        }
+    }
+    let scalar_limit = crate::Limits::default().max_scalar_bytes;
+    for (index, tag) in additional_types.into_iter().enumerate() {
+        if index >= crate::schema::profile::MAX_SCHEMA_NODES || tag.len() > scalar_limit {
+            return Err(NativeError::new(
+                NativeErrorKind::LimitExceeded,
+                "additional native type names exceed the compiler input bound",
+            )
+            .at_path(&bundle.root));
+        }
+        admit_copy_cost(
+            &mut compiler.materialized_nodes,
+            &mut compiler.materialized_bytes,
+            1,
+            tag.len(),
+            &bundle.root,
+            None,
+        )?;
+        if !compiler.registrations.contains_key(tag) {
+            let (key, _) = compiler.load_tag(tag, None, &bundle.root)?;
+            compiler.registrations.insert(tag.to_owned(), key);
+            source_tags.insert(tag.to_owned());
         }
     }
     source_tags.extend(compiler.builtin_tags.iter().cloned());
@@ -372,7 +396,7 @@ impl Compiler<'_> {
     fn load_tag(
         &mut self,
         tag: &str,
-        span: Span,
+        span: Option<Span>,
         context_root: &Path,
     ) -> Result<(String, String), NativeError> {
         if let Some(schema) = builtin(tag) {
@@ -526,7 +550,7 @@ impl Compiler<'_> {
     fn locate(
         &mut self,
         tag: &str,
-        span: Span,
+        span: Option<Span>,
         context_root: &Path,
     ) -> Result<(PathBuf, PathBuf), NativeError> {
         let mut parts = tag.split('.');
@@ -1334,7 +1358,7 @@ impl Compiler<'_> {
         let name = *name;
         let body = body.as_deref();
         let SourceContext { source, root, file } = context;
-        let (_, id) = self.load_tag(tag, name, root).map_err(|error| {
+        let (_, id) = self.load_tag(tag, Some(name), root).map_err(|error| {
             if error.path.is_none() {
                 error.at_path(file)
             } else {
@@ -2498,7 +2522,7 @@ impl Compiler<'_> {
             let SourceContext { source, root, file } = context;
             if let Some(span) = node.tag {
                 let tag = source.get(span.start..span.end).unwrap_or("");
-                let (binding, _) = compiler.load_tag(tag, span, root).map_err(|error| {
+                let (binding, _) = compiler.load_tag(tag, Some(span), root).map_err(|error| {
                     if error.path.is_none() {
                         error.at_path(file)
                     } else {
@@ -3103,6 +3127,7 @@ fn resolved_node<'a>(
                 .and_then(Json::as_str)
                 .map(|binding| Cow::Owned(binding.to_owned())),
             origin,
+            supplied: false,
         })
     });
     let resolved = match value {
@@ -3148,6 +3173,8 @@ fn resolved_node<'a>(
         value: resolved,
         tag,
         origin,
+        opaque: false,
+        number_class: 0,
     })
 }
 fn definition_identity(root: &Path, relative: &Path) -> String {
