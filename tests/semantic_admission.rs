@@ -298,7 +298,7 @@ fn exact_numeric_values_and_real_spelling_survive_direct_readmission() {
 }
 
 #[test]
-fn native_int_remains_mathematical_not_an_olaf_spelling_policy() {
+fn native_int_remains_mathematical_not_a_spelling_policy() {
     let bundle = Bundle::from_sources(
         ".",
         vec![

@@ -28,7 +28,7 @@ JSON is a strong choice when consumers need the most direct interchange with exi
 
 JSON Schema lets a consumer validate JSON against a separately authored schema. The ecosystem is broad, but supported drafts, vocabulary, reference behavior, and default handling depend on the implementation and application. The standard `default` keyword is an annotation; it does not require validators to insert values.
 
-DAML's native definitions offer an authoring model tied to DAML's completion and validation rules. DAML also accepts a bounded JSON Schema interchange profile, so existing schemas can be useful without implying full support for every JSON Schema feature. See [schema modules and defaults](schemas.md) and the [dated Draft 2020-12 baseline audit](development/json-schema-2020-12-audit.md).
+DAML's native definitions offer an authoring model tied to DAML's completion and validation rules. DAML also accepts a [bounded JSON Schema interchange profile](schemas.md), so existing schemas can be useful without implying full support for every JSON Schema feature.
 
 ## Choose by the boundary you need
 

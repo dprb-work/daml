@@ -177,9 +177,8 @@ classes apply directly; look-around and backreferences are unsupported. A Regex
 literal is valid only as `String.pattern`, not as an instance-data type.
 
 Unknown constructor metadata is rejected rather than ignored. Broader JSON
-Schema constraints remain available through interchange; the
-[dated Draft 2020-12 baseline audit](development/json-schema-2020-12-audit.md) separates backend
-support from native expressibility.
+Schema constraints remain available through the
+[bounded interchange profile](schemas.md); native syntax exposes a smaller set.
 
 Unqualified names are native built-ins. Loaded definitions use a bundle prefix.
 Low-level explicitly composed interchange bindings remain a separate API.

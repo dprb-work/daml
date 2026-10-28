@@ -35,31 +35,11 @@ valid YAML does not imply that DAML should accept implicit maps, plain strings,
 commas, directives, anchors, or YAML block-scalar syntax. Updates are deliberate;
 there is no automatic upstream synchronization.
 
-## Representative consumer definitions
+## Authored examples
 
-The [derived consumer fixtures](tests/fixtures/consumer/README.md) retain a
-historical conversion manually authored from the ordinary data constraints in
-seven local Olaf schema files. No implementation or original schema files are
-copied, and the fixtures have no consumer-runtime dependency:
-
-```text
-adapter/olaf.ext.questdb.adapter.adapter.json
-adapter/olaf.ext.redis.adapter.adapter.json
-config/olaf.config.ExecutionConfig.json
-config/olaf.config.OptimizeBudget.json
-config/olaf.config.OptimizeConfig.json
-config/olaf.config.Recipe.json
-questdb/olaf.ext.questdb.json_query.json_query.json
-```
-
-Paths are relative to the sampled `schema/` directory. SHA-256 over sorted
-relative UTF-8 paths and original bytes, each followed by NUL, is
-`91946356d04568e21d5103b8921e6742bfe942bd4403fd9a28e4d3d960daa8eb`.
-The local source snapshot has no resolvable Git `HEAD`; the content digest,
-not a fabricated commit, identifies this evidence. The retained fixture record
-documents deliberate marker/protocol and completion differences; it is not a
-whole-corpus conversion. New public examples are authored independently under
-[`examples/tutorial/`](examples/tutorial/README.md).
+The [tutorial examples](examples/tutorial/README.md) are authored for DAML's
+language and API documentation. They are self-contained and have no external
+application or service dependency.
 
 ## Cargo dependencies and fuzz tooling
 
@@ -139,7 +119,7 @@ These package manifests keep crates unpublished. Python wheel and sdist assets
 are not part of the current release route; if added later, they also need generated
 third-party notices in addition to the project license.
 
-## Editor and host integrations
+## Editor integration dependencies
 
 `integrations/vscode/package-lock.json` pins the separate editor-client graph.
 The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
@@ -158,8 +138,6 @@ tools. The Electron test helper requires Node 22 or newer; the editor workflow
 continues to use Node 24.19.0. Its downloaded VS Code runtime remains pinned
 to 1.105.1 in the verifier and is an ignored local test cache, not a redistributed
 part of DAML. Native archives retain their separate Cargo graph and legal payload.
-OMP/DSH integration payloads contain configuration only; Soul owns the native
-DSH client and its dependency graph.
 
 ## Browser boundary and packaging
 

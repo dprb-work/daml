@@ -59,15 +59,14 @@ assert resolved.tags()["/adapter"] == "provider.Http"
 ```
 
 `parse` checks syntax only. `compile` loads reachable definitions; `resolve`
-completes and validates values. These APIs operate on configuration data and
-schemas; they do not construct application-specific objects or invoke callables.
+completes and validates supplied data against the compiled schemas.
 
 Tags are separate metadata. `to_python()` deliberately returns plain values;
 `tags()` returns literal assertions without `!`, keyed by RFC 6901 pointer. The
 root pointer is `""`; a literal key `path/key` appears as `/path~1key`. Resolved
 metadata includes tags introduced by defaults. A private alias keeps its literal
 spelling in its declaring scope; it does not become a root import or a globally
-canonical constructor name.
+visible definition name.
 
 Parsed documents own their Rust source. Resolved documents own one semantic
 snapshot, so they survive deletion of the input and registry. Each export is
@@ -178,7 +177,6 @@ Use `schemas.resolve_staged(document, stage, expected=None, initial_edits=None)`
 or `resolve_semantic_staged(value, stage, ...)` when defaults must be visible
 before a consumer transformation. The [core staged contract](schemas.md#staged-admission)
 owns edit semantics, assertion conservation, candidate selection and bounds.
-DAML does not recognize an application's reference or constructor syntax.
 
 The stage object provides `defer(summary, path) -> bool` and
 `materialize(value, copies, round)`. Optional `number_class(lexeme)` returns a

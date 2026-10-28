@@ -83,10 +83,9 @@ based on the repository's input map, not file extensions.
 
 The binary and VSIX Actions artifacts retain their existing 14-day period. The
 binary workflow preserves the three supported native runners and archive
-verification. Editor verification remains an Ubuntu Electron integration test;
-proprietary OMP RPC and cross-repository DSH checks remain local probes. The
-Linux CI archive is built on Ubuntu 22.04. A Linux run does not prove macOS or
-Windows execution.
+verification. Editor verification runs in an Ubuntu Electron integration test.
+The Linux CI archive is built on Ubuntu 22.04. A Linux run does not prove macOS
+or Windows execution.
 
 The automatic aggregate is `Check / Required`. Keep any existing required checks
 in repository rulesets and require this aggregate there; workflow YAML cannot

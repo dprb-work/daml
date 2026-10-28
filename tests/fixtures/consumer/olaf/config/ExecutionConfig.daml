@@ -1,3 +1,0 @@
-!Object {
-  actor_error_mode: "continue" | "fail_fast"
-} = { actor_error_mode: "fail_fast" }

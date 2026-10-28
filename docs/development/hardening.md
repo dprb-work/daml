@@ -1,9 +1,8 @@
 # Run the hardening tools
 
 DAML's hardening tools exercise the portable data parser, definition syntax and
-reflow formatter, interchange ingestion, and default resolver. They do not execute
-application constructors or import consumer formats. Native filesystem bundle
-loading is covered by bounded integration cases, not a separate fuzz target.
+reflow formatter, interchange ingestion, and default resolver. Native filesystem
+bundle loading is covered by bounded integration cases, not a separate fuzz target.
 
 The [recorded baseline](hardening-baseline.md) retains the bounded campaign
 statistics, measurement samples, environment, and interpretation.

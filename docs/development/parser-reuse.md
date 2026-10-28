@@ -2,7 +2,7 @@
 
 Evidence reviewed on 2026-10-17. This is a source assessment, not an executed
 parser comparison, license opinion, dependency approval, or code import.
-[The implementation plan](plan.md) owns the proposed work and acceptance gates.
+The current [syntax contract](../syntax.md) and [native definition reference](../native-authoring.md) own the implemented grammar; this record explains the parser-reuse assessment.
 
 ## What YAML and KYAML actually provide
 
@@ -18,15 +18,14 @@ A stock YAML parser followed by a shape validator cannot supply these grammar
 changes. [YAML flow collections](https://yaml.org/spec/1.2.2/#74-flow-collection-styles), [flow scalars](https://yaml.org/spec/1.2.2/#73-flow-scalar-styles), [flow nodes](https://yaml.org/spec/1.2.2/#75-flow-nodes)
 
 DAML also requires unquoted, spaceless keys; unlike YAML/KYAML, it has no
-quoted-key fallback. The proposed identifier character set is a separate DAML
-decision recorded in the plan. An upstream parser accepting quoted keys cannot
-serve unchanged as DAML's syntax authority.
+quoted-key fallback. The [syntax contract](../syntax.md) defines DAML's key
+grammar. An upstream parser accepting quoted keys cannot serve unchanged as
+DAML's syntax authority.
 
-Reuse YAML's separation of syntax, tag resolution, and construction as a design
-lesson. Parsing a tag need not recognize its schema or construct an application
-object. YAML's presentation model also distinguishes comments and scalar style
-from values. DAML's actual assertions and source-preservation contract still
-need their own definition. [Processes and models](https://yaml.org/spec/1.2.2/#chapter-3-processes-and-models)
+YAML's presentation model distinguishes comments and scalar style from represented
+values. That separation is useful when designing source-preserving tooling, but
+DAML's assertions and source-preservation contract still need their own definition.
+[Processes and models](https://yaml.org/spec/1.2.2/#chapter-3-processes-and-models)
 
 ## Candidate assessment
 

@@ -8,5 +8,3 @@ DAML's editor support currently includes a VS Code-compatible extension and a ge
 | Other LSP clients | Use `daml-lsp` directly | [Configure a generic LSP client](../docs/lsp.md#build-and-launch) |
 
 The server is distributed separately from editor clients. Follow the public [command-line installation guide](../docs/distribution.md) to install a released executable. No marketplace publication is provided.
-
-The remaining files in this directory document additional host-specific registration payloads. They are not required for the VS Code extension or generic LSP use.

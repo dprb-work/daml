@@ -14,10 +14,8 @@ These records preserve the scope and evidence of earlier investigations. Their d
 
 - [Parser reuse assessment](parser-reuse.md): pinned parser references, corpus review, and reuse decision.
 - [Formatter reuse assessment](formatter-reuse.md): printer references, host comparisons, and selected implementation.
-- [JSON Schema 2020-12 audit](json-schema-2020-12-audit.md): bounded profile analysis and dated consumer-snapshot observations.
 - [Hardening tools](hardening.md): fuzzing, measurement, and dependency-policy commands.
 - [Hardening baseline, 2026-10-18](hardening-baseline.md): recorded bounded campaigns, samples, and exact source revision.
 - [Edge-case record](edge-cases.md) and [raw probe output](edge-cases.json): preserved parser observations and provenance.
-- [Implementation plan](plan.md): historical decisions, sequence, and remaining scope.
 
 See also [source and distribution notices](../../SOURCES.md).

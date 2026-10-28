@@ -60,8 +60,8 @@ fn multiple_entries_keep_required_separators_even_at_large_width() {
 
 #[test]
 fn tags_preserve_binding_and_explicit_empty_container_spelling() {
-    assert_eq!(checked("!olaf.omp.adapter", 1), "!olaf.omp.adapter\n");
-    assert_eq!(checked("!olaf.omp.adapter{}", 80), "!olaf.omp.adapter {}\n");
+    assert_eq!(checked("!tutorial.adapter", 1), "!tutorial.adapter\n");
+    assert_eq!(checked("!tutorial.adapter{}", 80), "!tutorial.adapter {}\n");
     checked("{adapter:!outer {child:!inner [!bare]}}", 12);
 }
 

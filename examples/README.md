@@ -64,5 +64,5 @@ cargo run --locked --example resolve -- examples/application.daml examples/schem
 cargo run --locked --example schema_adapter
 ```
 
-Performance measurements and historical consumer fixtures belong to
-[development records](../docs/development/README.md), not the introductory path.
+For performance measurements and hardening procedures, see
+[development documentation](../docs/development/README.md).

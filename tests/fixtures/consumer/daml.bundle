@@ -1,5 +1,0 @@
-{
-  olaf: "./olaf"
-  questdb: "./questdb"
-  redis: "./redis"
-}

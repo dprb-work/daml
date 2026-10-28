@@ -62,7 +62,7 @@ Archive members, permissions, timestamps, and gzip headers are normalized. Given
 
 ## Verify the installed archive
 
-The project-local [distribution verification skill](../../skills/verify-daml-distribution/SKILL.md) owns repeatable installation and isolated OMP driving. CI reuses existing formatter/LSP process contracts against executables extracted to a new temporary installation, through `DAML_TEST_BIN_DIR`; it does not merely test build-tree binaries.
+The project-local [archive verification guide](../../skills/verify-daml-distribution/features/binary-archive.md) exercises the installed executables. CI runs the existing formatter/LSP process contracts against executables extracted to a temporary installation, through `DAML_TEST_BIN_DIR`; it does not merely test build-tree binaries.
 
 From the repository root, run:
 
@@ -71,14 +71,4 @@ python3 skills/verify-daml-distribution/scripts/archive.py \
   dist/daml-0.1.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
-To drive an installed OMP executable without touching host configuration:
-
-```sh
-python3 skills/verify-daml-distribution/scripts/archive.py \
-  download/daml-0.1.0-x86_64-unknown-linux-gnu.tar.gz \
-  --omp /absolute/path/to/omp --evidence .scratch/distribution/omp
-```
-
-OMP verification uses its real RPC process and bundled built-in LSP tool, not an import from the preserved OMP source checkout. A verification-only temporary extension drives capabilities, Unicode syntax diagnostics, replacement/clearing, formatting, edit application, idempotence, and the installed formatter. It uses an isolated home/config/cache/data tree, disables shared LSP state, omits host credentials, and sends no model prompt. The selected catalog model and non-secret placeholder key only satisfy CLI startup. The probe is not an OMP integration package. Retained evidence states the exact scope and OMP version; no interactive TUI or GUI-editor claim is implied.
-
-The [LSP guide](../lsp.md) describes protocol capabilities. Editor and host integration packages are separate from native archives. The [Python extension](../python.md) has a separate package and build graph; it does not change these archives or add a Python runtime requirement.
+The [LSP guide](../lsp.md) describes protocol capabilities. The VS Code extension is separate from native archives. The [Python extension](../python.md) has a separate package and build graph; it does not change these archives or add a Python runtime requirement.

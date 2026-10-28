@@ -1,9 +1,0 @@
-{
-  "servers": [
-    {
-      "language": "daml",
-      "command": "daml-lsp",
-      "args": []
-    }
-  ]
-}

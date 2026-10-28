@@ -1,99 +1,50 @@
 ---
 name: verify-daml-distribution
-description: Verify a built or downloaded DAML binary archive, install it away from the build tree, and exercise the installed executables through process contracts or an isolated installed OMP instance.
+description: Verify a DAML binary archive, install it away from the build tree, and exercise the installed formatter and LSP process contracts.
 ---
 
 # Verify DAML binary distribution
 
-Use the real archive and installed executable. Do not substitute a Cargo-built
-path, source-imported OMP client, mock LSP response, or model-generated claim.
-The [feature map](features/README.md) owns coverage recipes.
+Use the archive and installed executables. The [feature map](features/README.md)
+describes the covered archive contract.
 
-## Launch
+## Run
 
-Start from this skill directory. Supply an absolute archive path, with its
-matching `.sha256` sidecar. Python 3.11+ is required for these verification helpers.
-
-For existing binary process contracts, Rust/Cargo and the repository's pinned
-toolchain are also required:
+Start in this skill directory. Supply an absolute archive path and its matching
+`.sha256` sidecar. Python 3.11 or later is required:
 
 ```sh
 python3 scripts/archive.py /absolute/path/to/daml-VERSION-TARGET.tar.gz
 ```
 
-For the isolated OMP path, supply the installed OMP executable and a new evidence
-directory. This path uses no Cargo, Rust, Node, or Bun command from PATH:
+The archive target must match the host. The helper needs Rust/Cargo and the
+repository's pinned toolchain to build the existing process-contract tests.
 
-```sh
-python3 scripts/archive.py /absolute/path/to/daml-VERSION-TARGET.tar.gz \
-  --omp /absolute/path/to/omp --evidence /absolute/new/evidence-directory
-```
+## Archive checks
 
-The OMP driver currently targets the local Unix environment. Native archive
-contracts run on Linux, macOS, and Windows through CI. Do not claim OMP coverage
-on an OS where this driver has not run.
+Confirm that the archive and sidecar come from the intended repository workflow
+run and target. The helper verifies the SHA-256, rejects unsafe, special, or
+duplicate members, requires the fixed six-file payload, and checks the archive
+root against `BUILD.json`. The payload includes DAML's MIT `LICENSE`, generated
+third-party notices, and the source inventory. A matching checksum establishes
+integrity, not trust in an unknown publisher.
 
-## Doctor
+The helper refuses an existing installation destination. It extracts the
+archive to a new temporary path and runs the existing formatter and LSP process
+contracts with `DAML_TEST_BIN_DIR` pointing to the archive's executables. Cargo
+may build the test harness, but the subprocesses under test come from the
+archive. A successful build alone does not prove the installed contracts.
 
-Before driving, confirm the archive and sidecar are from the intended repository
-workflow run and target. The helper checks the SHA-256, rejects unsafe/special or
-duplicate members, requires the fixed six-file payload (including DAML's MIT
-`LICENSE` alongside generated third-party notices and source inventory), and
-checks the archive root against `BUILD.json`. It refuses an existing installation
-destination. A matching checksum establishes integrity, not trust in an unknown publisher.
+## Evidence and cleanup
 
-The OMP path records `omp --version`, uses a fresh project/root marker, and
-constructs isolated HOME/config/data/cache/tmp directories. Its environment does
-not inherit host credentials or Cargo/Bun paths. Shared LSP mode is explicitly
-disabled. It selects a catalog model with a non-secret startup key but submits no
-prompt; any observed `agent_start` frame fails verification.
+The command prints the build identity, archive hash, and passing process-contract
+result. Retain that output in CI or the owning review.
 
-The test project name deliberately contains a space, `#`, `?`, and `%20` so the
-probe also exercises filesystem-to-file-URI encoding. On tested OMP 18.11.3, a
-temp base containing the combined `#?%20` failed in OMP's native-addon loader
-before LSP startup. That external startup failure is not a DAML parser defect;
-the helper does not silently rewrite the temp base or borrow the user's HOME.
+The helper owns the temporary installation through a temporary-directory
+context, including failure paths. Keep command or CI evidence outside the
+deleted tree.
 
-## Drive
+## Helper
 
-The default command extracts the archive to a temporary installation and runs the
-existing formatter and LSP process contracts with `DAML_TEST_BIN_DIR` pointing
-there. Cargo may build the test harness, but the subprocess under test comes
-from the archive.
-
-The OMP command moves the extracted bundle again, then starts the actual OMP RPC
-executable. `scripts/omp-probe.mjs` uses OMP's bundled public `LspTool` and real
-isolated settings to drive the same client configuration a user would supply.
-It checks UTF-16 capabilities, the `1:7` diagnostic after supplementary Unicode,
-valid replacement/clearing, one whole-document edit with its correct range,
-client application, idempotence, and `daml-fmt --check` on the resulting file.
-
-## Evidence
-
-OMP evidence retains `summary.json`, `probe.json`, `omp.stdout.jsonl`, and
-`omp.stderr.txt`. The summary identifies archive hash/build, OMP version, exit
-status, zero model turns, exact runtime scope, and removal of isolated state.
-Read the probe's actual tool results and final source; a configured server alone
-is not proof that it ran.
-
-Preserve the named evidence directory after success or failure. The archive
-contract path prints the build/hash and passing process-contract result; retain
-that command output in CI or the owning review.
-
-## Cleanup
-
-Helpers own temporary installations and state through temporary-directory
-contexts, including failure paths. OMP is a finite subprocess with a deadline;
-normal RPC stdin closure/session shutdown disposes its owned runtime. On timeout
-or exceptional exit, including Ctrl-C, the helper sends TERM then bounded KILL to
-its owned process group, reaps it, retains logs, and propagates the original
-exception. Never stop an unrelated OMP process or change user configuration.
-Confirm `isolated_state_removed: true` in successful evidence and keep evidence
-outside the deleted tree. Do not reuse an earlier evidence directory.
-
-## Helpers
-
-- `scripts/archive.py`: checksum, constrained extraction, installed binary
-  contracts, and isolated OMP orchestration. No runtime dependency installer.
-- `scripts/omp-probe.mjs`: verification-only extension loaded explicitly into the
-  installed OMP process; not a shipped editor/host integration.
+- `scripts/archive.py`: checksum verification, constrained extraction, and
+  installed formatter/LSP process contracts. It installs no runtime dependencies.
