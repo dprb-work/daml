@@ -12,28 +12,16 @@ from pathlib import PurePosixPath
 CHECKS = ("docs", "core", "dependencies", "fuzz", "editors", "binaries")
 DOCS = {
     "README.md",
-    "PLAN.md",
-    "docs/ci.md",
     "docs/distribution.md",
-    "docs/edge-cases.md",
-    "docs/formatter-reuse.md",
     "docs/formatting.md",
-    "docs/hardening-baseline.md",
-    "docs/hardening.md",
-    "docs/json-schema-2020-12-audit.md",
-    "docs/language-walkthrough.md",
     "docs/lsp.md",
     "docs/native-authoring.md",
-    "docs/parser-reuse.md",
     "docs/python.md",
     "docs/schemas.md",
     "docs/syntax.md",
     "integrations/README.md",
-    "integrations/dsh/README.md",
-    "integrations/omp/README.md",
     "integrations/vscode/README.md",
     "integrations/verify/README.md",
-    "bindings/python/README.md",
 }
 
 

@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import shutil
-import signal
 import stat
 import subprocess
 import tarfile
@@ -96,108 +95,10 @@ def unpack(archive: Path, destination: Path) -> tuple[Path, dict[str, object]]:
     return installed, {**build, "archive_sha256": digest}
 
 
-def check_omp(archive: Path, omp: Path, evidence: Path) -> None:
-    """Drive the installed OMP executable with isolated state and no model turn."""
-    if os.name != "posix":
-        raise RuntimeError("the isolated OMP driver currently requires a Unix host")
-    evidence = evidence.resolve()
-    evidence.mkdir(parents=True, exist_ok=False)
-    omp = omp.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="daml-isolated-omp-") as temporary:
-        root = Path(temporary)
-        installed, build = unpack(archive, root / "downloaded")
-        prefix = root / "application"
-        _ = shutil.move(str(installed), prefix)
-        project = root / "project #?%20"
-        (project / ".omp").mkdir(parents=True)
-        (project / "daml-smoke.project").touch()
-        _ = (project / "trial.daml").write_text('"😀é" ?', encoding="utf-8")
-        _ = (project / ".omp" / "lsp.json").write_text(json.dumps({"servers": {"daml": {
-            "command": str(prefix / "bin" / "daml-lsp"), "args": [], "fileTypes": [".daml"],
-            "languageId": "daml", "rootMarkers": ["daml-smoke.project"],
-        }}}), encoding="utf-8")
-        overlay = root / "isolated.yml"
-        _ = overlay.write_text("lsp:\n  enabled: true\n  shared: false\n", encoding="utf-8")
-        for directory in ("home", "agent", "config", "dsh", "xdg-config", "xdg-cache", "tmp"):
-            (root / directory).mkdir()
-        env = {
-            "PATH": f"{prefix / 'bin'}:/usr/bin:/bin", "LANG": "C.UTF-8",
-            "HOME": str(root / "home"), "TMPDIR": str(root / "tmp"),
-            "PI_CONFIG_DIR": str(root / "config"), "PI_CODING_AGENT_DIR": str(root / "agent"),
-            "DSH_HOME": str(root / "dsh"), "XDG_CONFIG_HOME": str(root / "xdg-config"),
-            "XDG_CACHE_HOME": str(root / "xdg-cache"), "PI_DISABLE_LSPMUX": "1",
-            "DAML_PROBE_REPORT": str(root / "probe.json"),
-            "DAML_PROBE_FORMATTER": str(prefix / "bin" / "daml-fmt"),
-        }
-        version = subprocess.run([str(omp), "--version"], env=env, check=True, capture_output=True, text=True, encoding="utf-8", timeout=15).stdout.strip()
-        # A selected catalog model satisfies startup, but no prompt is sent and
-        # no real credential is provided or inherited.
-        command = [
-            str(omp), "--mode", "rpc", "--no-session", "--no-skills", "--no-rules",
-            "--no-extensions", "-e", str(Path(__file__).with_name("omp-probe.mjs")),
-            "--cwd", str(project), "--config", str(overlay), "--no-title", "--no-ui",
-            "--model", "openai/gpt-4o", "--api-key", "verification-no-model-requests", "--max-time", "90s",
-        ]
-        failure: BaseException | None = None
-        stdout = stderr = ""
-        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              text=True, encoding="utf-8", env=env, cwd=project, start_new_session=True) as run:
-            try:
-                stdout, stderr = run.communicate("", timeout=120)
-            except BaseException as error:
-                # Ctrl-C does not reach the child's new session. Settle the same
-                # owned group on every exceptional exit, then preserve the error.
-                failure = error
-                try:
-                    try:
-                        os.killpg(run.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        stdout, stderr = run.communicate(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(run.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        stdout, stderr = run.communicate(timeout=10)
-                except Exception as cleanup_error:
-                    error.add_note(f"OMP cleanup also failed: {cleanup_error}")
-        _ = (evidence / "omp.stdout.jsonl").write_text(stdout, encoding="utf-8")
-        _ = (evidence / "omp.stderr.txt").write_text(stderr, encoding="utf-8")
-        report_path = root / "probe.json"
-        if report_path.exists():
-            _ = shutil.copyfile(report_path, evidence / "probe.json")
-        if failure is not None:
-            raise failure
-        frames = [json.loads(line) for line in stdout.splitlines() if line.strip()]
-        if any(frame.get("type") == "agent_start" for frame in frames):
-            raise RuntimeError("unexpected model-backed agent turn during the probe")
-        if run.returncode != 0:
-            raise RuntimeError(f"isolated OMP exited {run.returncode}; inspect retained stderr")
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-        if not report.get("passed"):
-            raise RuntimeError(f"isolated OMP verification failed: {report.get('error')}")
-        summary = {"passed": True, "omp_version": version, "omp_exit": run.returncode,
-                   "model_turns": 0, "build": build, "scope": "installed OMP RPC process and built-in LSP tool"}
-    summary["isolated_state_removed"] = not root.exists()
-    _ = (evidence / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(evidence / "summary.json")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("archive", type=Path)
-    _ = parser.add_argument("--omp", type=Path, help="installed OMP executable; select isolated OMP verification")
-    _ = parser.add_argument("--evidence", type=Path, help="new evidence directory for OMP verification")
     args = parser.parse_args()
-    if args.omp is not None:
-        if args.evidence is None:
-            parser.error("--omp requires --evidence")
-        check_omp(Path(args.archive), Path(args.omp), Path(args.evidence))
-        return
-    if args.evidence is not None:
-        parser.error("--evidence requires --omp")
     repo = Path(__file__).resolve().parents[3]
     with tempfile.TemporaryDirectory(prefix="daml-distribution-contracts-") as temporary:
         installed, build = unpack(args.archive, Path(temporary) / "install")

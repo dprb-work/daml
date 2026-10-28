@@ -35,30 +35,11 @@ valid YAML does not imply that DAML should accept implicit maps, plain strings,
 commas, directives, anchors, or YAML block-scalar syntax. Updates are deliberate;
 there is no automatic upstream synchronization.
 
-## Representative consumer definitions
+## Authored examples
 
-The [standalone consumer example](examples/olaf/README.md) is manually authored
-from the ordinary data constraints in seven local Olaf schema files. No Olaf
-implementation or original schema files are copied, and the example has no
-Olaf runtime dependency:
-
-```text
-adapter/olaf.ext.questdb.adapter.adapter.json
-adapter/olaf.ext.redis.adapter.adapter.json
-config/olaf.config.ExecutionConfig.json
-config/olaf.config.OptimizeBudget.json
-config/olaf.config.OptimizeConfig.json
-config/olaf.config.Recipe.json
-questdb/olaf.ext.questdb.json_query.json_query.json
-```
-
-Paths are relative to the sampled `schema/` directory. SHA-256 over sorted
-relative UTF-8 paths and original bytes, each followed by NUL, is
-`91946356d04568e21d5103b8921e6742bfe942bd4403fd9a28e4d3d960daa8eb`.
-The local source snapshot has no resolvable Git `HEAD`; the content digest,
-not a fabricated commit, identifies this evidence. The example documents the
-deliberate marker/protocol and completion differences; it is not a whole-corpus
-conversion or an integration with the consumer.
+The [tutorial examples](examples/tutorial/README.md) are authored for DAML's
+language and API documentation. They are self-contained and have no external
+application or service dependency.
 
 ## Cargo dependencies and fuzz tooling
 
@@ -78,7 +59,7 @@ runtime lockfiles with default features disabled. Its normal dependencies are
 `arrayvec` 0.5.2, `typed-arena` 2.0.2, and `unicode-width` 0.2.2. No printer
 source was copied into DAML; the formatter uses the library's document API.
 See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.toml)
-and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
+and [reuse assessment](docs/development/formatter-reuse.md) for the selection and evidence.
 
 The shared key/tag classifier directly uses pinned `unicode-general-category`
 1.1.0 (Apache-2.0), already present in the validator's dependency graph. Its
@@ -102,11 +83,11 @@ it introduces no second policy or runtime dependency. The owned plaintext templa
 uses the tool's documented output schema; no generator source is copied. See the
 [tool documentation](https://embarkstudios.github.io/cargo-about/) and
 [published manifest](https://docs.rs/crate/cargo-about/0.9.2/source/Cargo.toml).
-Native private-release archives carry the canonical root `LICENSE`, generated
+Native release archives carry the canonical root `LICENSE`, generated
 `THIRD-PARTY-NOTICES.txt`, and this source inventory. The upstream YAML fixture
 license remains separately retained at `tests/fixtures/yaml/LICENSE`.
-The [distribution guide](docs/distribution.md) owns the archive and verification
-contract.
+The [installation guide](docs/distribution.md) owns user installation;
+[developer distribution](docs/development/distribution.md) owns packaging and verification.
 
 ## Python boundary and packaging
 
@@ -138,7 +119,7 @@ These package manifests keep crates unpublished. Python wheel and sdist assets
 are not part of the current release route; if added later, they also need generated
 third-party notices in addition to the project license.
 
-## Editor and host integrations
+## Editor integration dependencies
 
 `integrations/vscode/package-lock.json` pins the separate editor-client graph.
 The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
@@ -157,8 +138,6 @@ tools. The Electron test helper requires Node 22 or newer; the editor workflow
 continues to use Node 24.19.0. Its downloaded VS Code runtime remains pinned
 to 1.105.1 in the verifier and is an ignored local test cache, not a redistributed
 part of DAML. Native archives retain their separate Cargo graph and legal payload.
-OMP/DSH integration payloads contain configuration only; Soul owns the native
-DSH client and its dependency graph.
 
 ## Browser boundary and packaging
 
@@ -176,10 +155,10 @@ The independent verifier pins Playwright 1.64.1 (Apache-2.0) and TypeScript
 6.0.3 (Apache-2.0) in `bindings/browser/verify/package-lock.json`; neither is
 included in the browser package.
 
-Private local SDK tarballs carry the canonical MIT license and this inventory.
+SDK tarballs carry the canonical MIT license and this inventory.
 `cargo-about` 0.9.2 generates the WASM Cargo graph's notices using the same
 `deny.toml` policy and plaintext template as native packaging.
 `bindings/browser/scripts/package.mjs` records legal-payload hashes alongside
 the build source/output provenance. The [SDK guide](bindings/browser/README.md)
 owns exact values, resource admission, lifecycle, build, and package contracts.
-Registry publication and promotion to a clean private release are separate actions.
+Registry publication and promotion to a versioned release are separate actions.

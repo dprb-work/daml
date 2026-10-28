@@ -10,9 +10,9 @@ metadata; it writes no generated schema files.
 JSON Schema's standard `default` is an annotation, not a command to mutate an
 instance. DAML's completion step applies defaults before full validation. See
 [standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default).
-The [Draft 2020-12 baseline audit](json-schema-2020-12-audit.md) separates
-backend validation, DAML completion, and native expressibility. Interchange is a
-bounded Draft 2020-12 profile, not an unqualified conformance claim.
+Interchange is a bounded Draft 2020-12 profile, not an unqualified conformance
+claim. Native authoring exposes a smaller constraint language; completion is a
+separate DAML operation rather than standard JSON Schema annotation behavior.
 
 ## Supply an interchange module
 
@@ -146,10 +146,6 @@ request ID; and prints completed JSON data. It does not invoke an adapter.
   are ambiguous and rejected rather than choosing the first branch. `oneOf`
   still requires exactly one valid branch; `anyOf` may accept several branches
   only when completion yields the same value.
-- Union branches complete isolated candidates. Different valid completed values
-  are ambiguous and rejected, rather than choosing the first branch. `oneOf`
-  still requires exactly one valid branch; `anyOf` may accept several branches
-  only when completion yields the same value.
 
 Default completion supports structural `properties`, `additionalProperties`
 (without pattern selection), `items`/`prefixItems`, `$ref`, `allOf`, and
@@ -250,8 +246,7 @@ bound identifier must already name its canonical contract in that registry;
 resolving a local alias wrapper to another contract is not an acceptable fallback.
 Pure aliases share meaning when comparing completed candidates. An alias with
 additional constraints remains distinct even when one value satisfies both.
-Literal tag spellings remain available separately and do not identify Python
-constructors.
+Literal tag spellings remain available separately from canonical binding identity.
 
 Contextual semantic writing still refuses an assertion that has no equivalent
 entry-visible spelling. Exact value export is not permission to discard private
@@ -330,10 +325,8 @@ preset precedence.
 Ready declares the host transformation finished, not the data valid. All native
 root, tag, selected-branch, expectation and conserved constraints must still
 hold. An opaque value may remain only if it passes those checks unchanged.
-Application reference syntax, constructor selection, runtime-reference timing
-and object-sharing policy remain consumer-owned.
 
-An optional Ready meaning key further distinguishes domain construction plans
+An optional Ready meaning key distinguishes caller-defined meanings associated
 with equal native data. `StagedResolution::root()` and `meaning()` return the
 winning checked data and its matching key, not a key from an invalid candidate.
 The key is invocation-local meaning, not a replacement for deployment hashes.

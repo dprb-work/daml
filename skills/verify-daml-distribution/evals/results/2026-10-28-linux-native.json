@@ -1,0 +1,36 @@
+{
+  "scope": "Portable native archive verification",
+  "date": "2026-10-28",
+  "candidate_parent_commit": "87e80e89fe363604fc886d1a307eaea466d9cb65",
+  "candidate_files_sha256": {
+    "SKILL.md": "732fbe319005ae08b9d8c11da80312d982dc4a3c825a54fec9c0f8163525bca8",
+    "features/README.md": "5cbe132fe177ebcd470851ef18bee37035ace439ca6d759830a5ba6ffad8fedf",
+    "features/binary-archive.md": "f9176075e2be50fa18d835c85d48f42303afbc83965e7fc6f91eeb8b28bef232",
+    "scripts/archive.py": "c71a84ee5387190fb47e0690b73d7beb10e811f6bd023680cc4ca9fca1962098"
+  },
+  "input": {
+    "release": "v0.1.0",
+    "asset": "daml-0.1.0-x86_64-unknown-linux-gnu.tar.gz",
+    "archive_sha256": "01c400988cadcdfbb5ce2beec3285c6d1f920dd08f239710da96451ad65ca437",
+    "build_commit": "a75ae1ef881180c1c684ee0f68710091e23c650f",
+    "build_dirty": false,
+    "target": "x86_64-unknown-linux-gnu"
+  },
+  "runtime": {
+    "helper": "scripts/archive.py",
+    "CARGO_BUILD_JOBS": 1,
+    "installed_formatter_contracts_passed": 4,
+    "installed_lsp_contracts_passed": 5,
+    "checksum_and_fixed_payload_validation": "passed",
+    "bad_checksum_rejected": true,
+    "unsupported_option_exit": 2,
+    "temporary_installation": "removed by helper context"
+  },
+  "result": "passed",
+  "model_trials": 0,
+  "limitations": [
+    "Linux runtime only",
+    "Deterministic bundled-runtime regression evidence; no activation or instruction-quality claim",
+    "No release asset publication or installed-host changes"
+  ]
+}

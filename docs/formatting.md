@@ -140,9 +140,6 @@ data parser and formatter share one whitespace/comment scanner in
 `src/parser.rs`; comments are read only from AST-delimited source gaps. No
 second data grammar or parser is introduced.
 
-The CLI accepts both data expressions and native definitions through the same
-native syntax and formatter path. It remains a thin input/output adapter. See the
-[reuse assessment](formatter-reuse.md) for alternatives and the
-[edge-case record](edge-cases.md) for confirmed rules and historical
-observations. The existing PLAN remains the implementation ledger; this guide
-owns the formatter contract rather than introducing a parallel task system.
+The CLI accepts data expressions and native definitions through the shared
+syntax and formatting path. See the [syntax contract](syntax.md) for language
+rules and the [native authoring guide](native-authoring.md) for bundle behavior.

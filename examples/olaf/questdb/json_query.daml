@@ -1,9 +1,0 @@
-!contracts.Step {
-  query: !String
-  quest?: !contracts.Adapter
-  filter_timestamp: !Bool
-  unpack: !List { items: !String | !Int } | null
-} = {
-  filter_timestamp: true
-  unpack: null
-}

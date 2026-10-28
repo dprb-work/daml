@@ -1,9 +1,10 @@
 # DAML language server
 
 `daml-lsp` provides native-definition syntax diagnostics and whole-document
-formatting over stdio. It uses the native definition parser and formatter, but
-does not resolve aliases, load bundles, or validate bundle semantics. It does
-not apply defaults, discover schemas, read source files, or write editor buffers.
+formatting over stdio. Install a released executable using the [command-line
+installation guide](distribution.md), or build it from a source checkout below.
+The server does not resolve aliases, load bundles, validate bundle semantics,
+apply defaults, or discover schemas.
 
 ## Build and launch
 
