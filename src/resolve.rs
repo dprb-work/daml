@@ -419,7 +419,13 @@ impl<'a> Resolver<'a, '_> {
         depth: usize,
     ) -> Result<(), ResolveError> {
         self.budget.add_node(node, path)?;
-        if depth > 128 {
+        if depth > 128
+            || (depth == 128
+                && matches!(
+                    node.value,
+                    ResolvedValue::Sequence(_) | ResolvedValue::Mapping(_)
+                ))
+        {
             return Err(failure(
                 ResolveErrorKind::LimitExceeded,
                 node,

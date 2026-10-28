@@ -722,6 +722,12 @@ candidate pass baseline/staged/review checks in real Chromium with zero
 post-preload requests. Native and WASM browser Clippy gates pass. Final
 independent review and clean committed SDK promotion remain separate gates.
 
+Follow-up admission regressions reject noncanonical sequence indices before
+atomic edits or Copy-source checks, without restricting literal mapping keys.
+Copy imports enforce the same collection nesting bound even below deferred
+ancestors. Static browser deployments publish the complete generated `dist/`
+tree, preserving helper-module paths and same-build provenance.
+
 The published `browser-sdk-v0.1.0` asset is unchanged and does not gain these APIs
 from source edits. A new immutable source pin and separately authorized versioned
 SDK promotion are required for a supported native/browser dependency pair.

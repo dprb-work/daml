@@ -1220,7 +1220,7 @@ fn validate_pointer(root: &ResolvedNode<'_>, path: &str) -> Result<(), ResolveEr
                 None => break,
             },
             ResolvedValue::Sequence(items) => {
-                if part != "0" && part.starts_with('0') {
+                if part != "0" && !matches!(part.as_bytes().first(), Some(b'1'..=b'9')) {
                     return Err(invalid(root, path, "noncanonical sequence index"));
                 }
                 let index = part

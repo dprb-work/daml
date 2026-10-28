@@ -7,9 +7,11 @@ or a second JavaScript implementation of the language.
 
 ## Load and edit
 
-Serve `dist/daml_browser.js` and `dist/daml_browser_bg.wasm` as static assets.
-Serve WASM with `Content-Type: application/wasm`. The generated JavaScript module
-and WASM must come from the same build. Initialize once before calling the SDK:
+Publish the complete generated `dist/` tree as static assets, preserving its
+relative paths, including `snippets/` and any helper modules imported by
+`daml_browser.js`. The JavaScript, WASM and helper modules must come from the same
+build. Serve WASM with `Content-Type: application/wasm`. Initialize once before
+calling the SDK:
 
 ```js
 import init, { parse, Bundle } from './dist/daml_browser.js';
@@ -233,7 +235,8 @@ sha256sum -c dprb-work-daml-browser-0.1.0.tgz.sha256
 tar -xzf dprb-work-daml-browser-0.1.0.tgz
 ```
 
-Retrieve through an authenticated build environment, then serve the selected
-JS/WASM as static application assets. Do not embed repository credentials in a
-browser bundle or make runtime requests to private GitHub release endpoints.
+Retrieve through an authenticated build environment, then publish the complete
+generated `dist/` tree as static application assets, including its `snippets/`
+paths. Do not embed repository credentials in a browser bundle or make runtime
+requests to private GitHub release endpoints.
 Inspect `package/BUILD.json` for source revision and clean-build provenance.
