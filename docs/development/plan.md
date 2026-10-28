@@ -686,7 +686,52 @@ hashes, and a SHA-256 sidecar. An injected unrecorded `dist` file is rejected
 before packaging. Only a clean committed build may be promoted as a release;
 building and verifying a private local tarball does not publish it.
 The [verifier guide](../../bindings/browser/verify/README.md) owns repeatable commands.
-CI optimization remains blocked here because another agent owns it.
+The current source includes the optimized applicability planner and guarded
+workflows; no separate broad workflow dispatch is required for local feedback.
+
+### Semantic and staged admission for the Olaf prerequisite
+
+The core now admits editable semantic values directly, retaining literal tags,
+canonical private bindings, exact numbers and honest semantic/default/input
+provenance. Python owns one semantic snapshot rather than separate value/tag
+copies and exposes value editing, contextual writing and direct re-admission.
+Explicit native type roots and bounded Python virtual resources reuse the
+existing compiler without changing root policy or exposing private aliases.
+
+An opt-in bounded stage extends the same completion/search/validation path for
+source and semantic input. It supplies shallow classification, frozen initial
+edits, exact Copy, conjunctive Replace/Expect obligations and winning meaning
+keys. Canonical bindings are portable into callback edits before strict Ready
+validation. New descendants complete normally without replaying contextual
+presets into completed copied records. Candidate mathematics remains separate
+from exact edit progress and host numeric classes.
+
+Python and browser adapters own foreign representation admission, cumulative
+budgets, original callback failures and fresh exports. The browser's private
+static helper owns caught array classification and intrinsic byte-view copying;
+it adds no network/backend dependency. Olaf reference, constructor, factory,
+runtime-timing and import policy remains outside DAML.
+
+Independently frozen regressions cover continuation scope projection, deferred
+descendants within copies, destination-path classification, restored assertions,
+binding identity, Copy-source eligibility and exact progress, bounded expected
+names, callback container failures, normal handle cleanup and independent
+ordinary provenance caps. `./scripts/check` passes, including all native feature
+tests/docs and 86 Python tests. Optimized WASM and the extracted local SDK
+candidate pass baseline/staged/review checks in real Chromium with zero
+post-preload requests. Native and WASM browser Clippy gates pass. Final
+independent review and clean committed SDK promotion remain separate gates.
+
+Follow-up admission regressions reject noncanonical sequence indices before
+atomic edits or Copy-source checks, without restricting literal mapping keys.
+Copy imports enforce the same collection nesting bound even below deferred
+ancestors. Static browser deployments publish the complete generated `dist/`
+tree, preserving helper-module paths and same-build provenance.
+
+The published `browser-sdk-v0.1.0` asset is unchanged and does not gain these APIs
+from source edits. A new immutable source pin and separately authorized versioned
+SDK promotion are required for a supported native/browser dependency pair.
+This prerequisite is not an Olaf runtime or editor cutover.
 
 ### Conversion agenda
 

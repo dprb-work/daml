@@ -1,6 +1,6 @@
 # Browser SDK verifier
 
-This isolated package drives the built static SDK in a real Chromium browser and type-checks a small consumer against the generated declarations. It requires Node.js 20 or newer, uses pinned Playwright 1.64.1 and TypeScript 6.0.3, and does not import the SDK's Cargo/package manifest or use a mock parser/compiler. The verifier serves only `dist/daml_browser.js` and `dist/daml_browser_bg.wasm` from the adjacent binding package; it allows the static preload, then blocks and reports every subsequent browser request.
+This isolated package drives the built static SDK in a real Chromium browser and type-checks a small consumer against the generated declarations. It requires Node.js 20 or newer, uses pinned Playwright 1.64.1 and TypeScript 6.0.3, and does not import the SDK's Cargo/package manifest or use a mock parser/compiler. The verifier serves the complete generated `dist/` tree from the adjacent binding package, including `snippets/` helper modules imported by `daml_browser.js`, plus its own verification modules. It allows the static preload, then blocks and reports every subsequent browser request.
 
 From the repository root, first produce the canonical source through the explicit native probe using the shared fixture, then install the pinned local development dependency and run the browser scenario:
 

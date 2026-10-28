@@ -190,6 +190,14 @@ impl<'a> SchemaView<'a> {
     pub(crate) fn location(self) -> &'a SchemaLocation {
         &self.entry().location
     }
+    pub(crate) fn binding(self) -> std::borrow::Cow<'a, str> {
+        let location = self.location();
+        if location.pointer.is_empty() {
+            std::borrow::Cow::Borrowed(&location.resource)
+        } else {
+            std::borrow::Cow::Owned(canonical_reference(&location.resource, &location.pointer))
+        }
+    }
     pub(crate) fn default_origin(self) -> Option<&'a SchemaLocation> {
         self.entry().default_origin.as_ref()
     }
@@ -296,6 +304,7 @@ struct SchemaEntry {
 pub struct Schemas {
     entries: Vec<SchemaEntry>,
     by_type: HashMap<String, SchemaId>,
+    by_binding: HashMap<String, SchemaId>,
     by_address: HashMap<usize, SchemaId>,
     references: HashMap<SchemaId, SchemaId>,
     source_tags: Option<HashSet<String>>,
@@ -422,6 +431,18 @@ impl Schemas {
         for (uri, value) in resources {
             append_schema_entries(value, &uri, &options, &mut entries, &mut total)?;
         }
+        let by_binding = entries
+            .iter()
+            .enumerate()
+            .map(|(id, entry)| {
+                let binding = if entry.location.pointer.is_empty() {
+                    entry.location.resource.clone()
+                } else {
+                    canonical_reference(&entry.location.resource, &entry.location.pointer)
+                };
+                (binding, SchemaId(id))
+            })
+            .collect();
         let lookup = entries
             .iter()
             .enumerate()
@@ -529,6 +550,7 @@ impl Schemas {
         Ok(Self {
             entries,
             by_type,
+            by_binding,
             by_address,
             references,
             source_tags: None,
@@ -557,7 +579,9 @@ impl Schemas {
             };
             match tag.binding.as_deref() {
                 Some(binding) => {
-                    let Some(binding_id) = self.binding_identity(binding) else {
+                    let Some(binding_id) =
+                        self.semantic_binding_schema(binding).map(SchemaView::id)
+                    else {
                         return Err(crate::semantic::unrepresentable_tag(path));
                     };
                     if tag.name.len() <= crate::semantic::MAX_SCALAR_BYTES
@@ -589,29 +613,12 @@ impl Schemas {
             }
         })
     }
-    fn binding_identity(&self, name: &str) -> Option<SchemaId> {
-        let mut current = self.by_type.get(name).copied().or_else(|| {
-            self.entries.iter().enumerate().find_map(|(index, entry)| {
-                (entry.location.pointer.is_empty() && entry.location.resource == name)
-                    .then_some(SchemaId(index))
-            })
-        })?;
+    pub(crate) fn binding_identity(&self, name: &str) -> Option<SchemaId> {
+        let mut current = self.binding_schema(name)?.id();
         let mut steps = 0;
-        while let Some(next) = self.references.get(&current).copied() {
-            let entry = &self.entries[current.0];
-            let pure_alias = entry.value.as_object().is_some_and(|object| {
-                object.get("$ref").and_then(Value::as_str).is_some()
-                    && object.keys().all(|key| key == "$ref" || key == "$id")
-                    && (object.len() == 1
-                        || (object.len() == 2
-                            && object.get("$id").and_then(Value::as_str)
-                                == Some(entry.location.resource.as_str())))
-            });
+        while let Some(next) = self.alias_target(current) {
             if steps >= self.entries.len() {
                 return None;
-            }
-            if !pure_alias {
-                return Some(current);
             }
             current = next;
             steps += 1;
@@ -619,8 +626,39 @@ impl Schemas {
         Some(current)
     }
 
+    fn alias_target(&self, id: SchemaId) -> Option<SchemaId> {
+        let next = self.references.get(&id).copied()?;
+        let entry = &self.entries[id.0];
+        let pure_alias = entry.value.as_object().is_some_and(|object| {
+            object.get("$ref").and_then(Value::as_str).is_some()
+                && object.keys().all(|key| key == "$ref" || key == "$id")
+                && (object.len() == 1
+                    || (object.len() == 2
+                        && object.get("$id").and_then(Value::as_str)
+                            == Some(entry.location.resource.as_str())))
+        });
+        pure_alias.then_some(next)
+    }
+
     pub(crate) fn type_schema(&self, tag: &str) -> Option<SchemaView<'_>> {
         self.by_type.get(tag).copied().map(|id| self.view(id))
+    }
+    pub(crate) fn binding_schema(&self, binding: &str) -> Option<SchemaView<'_>> {
+        self.by_binding
+            .get(binding)
+            .copied()
+            .map(|id| self.view(id))
+            .or_else(|| self.type_schema(binding))
+    }
+    pub(crate) fn semantic_binding_schema(&self, binding: &str) -> Option<SchemaView<'_>> {
+        let schema = self.binding_schema(binding)?;
+        // An opaque supplied identity must name its actual contract, not a local
+        // alias wrapper whose target could differ in another registry.
+        self.alias_target(schema.id()).is_none().then_some(schema)
+    }
+
+    pub(crate) fn canonical_binding_schema(&self, binding: &str) -> Option<SchemaView<'_>> {
+        self.binding_identity(binding).map(|id| self.view(id))
     }
     fn view(&self, id: SchemaId) -> SchemaView<'_> {
         SchemaView { registry: self, id }

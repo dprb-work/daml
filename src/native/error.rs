@@ -63,8 +63,8 @@ impl NativeError {
         self
     }
 
-    pub(crate) fn at_span(mut self, span: Span) -> Self {
-        self.span = Some(span);
+    pub(crate) fn at_span(mut self, span: impl Into<Option<Span>>) -> Self {
+        self.span = span.into();
         self
     }
 

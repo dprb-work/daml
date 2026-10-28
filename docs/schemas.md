@@ -232,6 +232,115 @@ names and the nested settings type with regular `$ref`s. It then composes the
 module and resolves a tagged input. No consumer-specific adapter or callback
 framework belongs in DAML.
 
+## Programmatic semantic admission
+
+`Schemas::resolve_semantic` and `resolve_semantic_with_limits` accept an editable
+`SemanticNode` directly. They use the same completion search, assertion checks,
+expected-root constraints and cumulative limits as document resolution. They do
+not print and parse source as a validation shortcut. Supplied values have
+`Origin::Semantic`; newly inserted defaults retain their schema provenance.
+An error at programmatic input has an instance pointer, not an invented byte span.
+
+Resolved assertions export canonical binding identity where needed. An incoming
+bound identifier must already name its canonical contract in that registry;
+resolving a local alias wrapper to another contract is not an acceptable fallback.
+Pure aliases share meaning when comparing completed candidates. An alias with
+additional constraints remains distinct even when one value satisfies both.
+Literal tag spellings remain available separately and do not identify Python
+constructors.
+
+Contextual semantic writing still refuses an assertion that has no equivalent
+entry-visible spelling. Exact value export is not permission to discard private
+bindings, and an editable snapshot is not an admission certificate. See the
+[Python semantic API](python.md#edit-and-re-admit-exact-values) for host wire
+representation, ownership and error handling.
+
+## Staged admission
+
+`Schemas::resolve_staged` and `resolve_semantic_staged` accept an explicit
+`AdmissionStage` visitor and frozen initial edits. Their `_with_limits` variants
+use caller-selected cumulative limits. They extend the same completion/search
+and strict validator; they do not expose an unchecked result or a second
+permissive registry. Existing resolution methods do not invoke a stage.
+
+The visitor has three responsibilities:
+
+- `defer(summary, path)` classifies an application-opaque payload before ancestor
+  defaults can merge into it. `NodeSummary` borrows only its own scalar/tag and
+  direct field scalar/container shapes. Raw defaults expose their own optional
+  tag, not a contextual tag borrowed from another preset.
+- `materialize(root, copies, round)` sees one completed, not-yet-validated
+  candidate per round. Return `StageOutcome::Ready`, `Edits`, or `Reject`.
+  Round starts at zero on every candidate replay. `copies` is complete applied
+  operation history, not a mutable-object alias guarantee; reset host-local
+  construction plans on round zero. Full snapshots carry admissible canonical
+  binding identities even though value validation is still pending.
+- Optional `number_class(lexeme)` supplies a pure, path-independent `u32` class.
+  Its default is zero. Classes only refine native candidate/default equality;
+  they never change JSON Schema mathematics such as `const` or `uniqueItems`.
+
+The bounded edit vocabulary uses explicit RFC 6901 instance pointers:
+
+| Edit | Effect |
+|---|---|
+| `Replace { path, value }` | Admit exact semantic data at a root or existing-parent leaf |
+| `Copy { path, from }` | Import a completed nondeferred source root with its real provenance |
+| `Expect { path, name }` | Conjoin a preloaded named contract for completion and validation |
+
+Initial edits allow Replace and Expect only. A mapping leaf can be inserted;
+sequence indices must already exist. The caller supplies the first missing
+subtree rather than asking the core to guess map/list parents. Data destinations
+cannot overlap, and a batch cannot modify its Copy sources. Empty/nonprogressing
+edits fail with `InvalidStage`. Repeated identical expectations neither count as
+progress nor resume completion, even alongside a progressing Copy or Replace.
+An expectation's freshness is determined before the batch; conserving a Copy's
+assertions in that batch cannot make its behavior depend on edit order.
+Progress distinguishes exact numeric representation, imported Copy provenance
+and genuinely new constraints from mathematical candidate equality. Merely
+reimporting an identical replacement with a different origin is not progress.
+Imported roots are classified using their effective destination assertions,
+including a restored supplied tag, before progress comparison or completion.
+Affected ancestors are refreshed from the final atomic batch, deepest first.
+Fresh replacements and newly undeferred subtrees recover relevant ancestor
+presets without replaying those presets into unrelated siblings. Ancestors
+visited only to project those presets do not acquire new local tags or atomic
+scalar/sequence defaults.
+Copy source paths cannot cross a deferred ancestor. A completed source record
+may still contain valid opaque descendants.
+
+Copies do not replay contextual record presets into an already completed value.
+Opacity is reclassified throughout a copy at its destination paths; `defer`
+need not be path-independent. Newly available descendants still receive their
+first completion, whether exposed by Copy itself or a later edit inside it.
+Replacement and new expectations resume affected completion work. The nearest
+active subtree or completed-copy boundary controls preset eligibility, so a
+resumed child can complete inside a copy while deeper copied branches and
+completed siblings remain protected. Nonmerging opaque presets are excluded
+before default-conflict selection rather than expanded and discarded.
+Explicit destination assertions, displaced descendant assertions, and copied source
+assertions remain conjunctive obligations, even through later edits; a missing
+obligated value fails. Different compatible bindings may both hold. Copy retains
+the source/default origin while treating copied assertions as supplied for
+preset precedence.
+
+Ready declares the host transformation finished, not the data valid. All native
+root, tag, selected-branch, expectation and conserved constraints must still
+hold. An opaque value may remain only if it passes those checks unchanged.
+Application reference syntax, constructor selection, runtime-reference timing
+and object-sharing policy remain consumer-owned.
+
+An optional Ready meaning key further distinguishes domain construction plans
+with equal native data. `StagedResolution::root()` and `meaning()` return the
+winning checked data and its matching key, not a key from an invalid candidate.
+The key is invocation-local meaning, not a replacement for deployment hashes.
+Distinct successful native/class/key meanings remain ambiguous.
+
+Callback errors are fatal and preserve their original cause. Explicit Reject
+rejects a candidate; it is not an exception-retry policy. Limits are cumulative
+across rounds and candidate replays, including SDK-owned summaries, snapshots,
+edits, copies, obligations, histories and keys. This bounds SDK work, not arbitrary
+code inside a caller-supplied callback.
+
 ## Diagnostics and bounds
 
 Syntax errors, schema loading/composition errors, and resolution errors remain
