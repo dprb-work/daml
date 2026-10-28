@@ -1,0 +1,10 @@
+{
+  instructions: '''
+    Read the configuration.
+    Report any missing values.
+  '''
+  template: """
+    service:
+      name: demo
+  """
+}

@@ -37,10 +37,10 @@ there is no automatic upstream synchronization.
 
 ## Representative consumer definitions
 
-The [standalone consumer example](examples/olaf/README.md) is manually authored
-from the ordinary data constraints in seven local Olaf schema files. No Olaf
-implementation or original schema files are copied, and the example has no
-Olaf runtime dependency:
+The [derived consumer fixtures](tests/fixtures/consumer/README.md) retain a
+historical conversion manually authored from the ordinary data constraints in
+seven local Olaf schema files. No implementation or original schema files are
+copied, and the fixtures have no consumer-runtime dependency:
 
 ```text
 adapter/olaf.ext.questdb.adapter.adapter.json
@@ -56,9 +56,10 @@ Paths are relative to the sampled `schema/` directory. SHA-256 over sorted
 relative UTF-8 paths and original bytes, each followed by NUL, is
 `91946356d04568e21d5103b8921e6742bfe942bd4403fd9a28e4d3d960daa8eb`.
 The local source snapshot has no resolvable Git `HEAD`; the content digest,
-not a fabricated commit, identifies this evidence. The example documents the
-deliberate marker/protocol and completion differences; it is not a whole-corpus
-conversion or an integration with the consumer.
+not a fabricated commit, identifies this evidence. The retained fixture record
+documents deliberate marker/protocol and completion differences; it is not a
+whole-corpus conversion. New public examples are authored independently under
+[`examples/tutorial/`](examples/tutorial/README.md).
 
 ## Cargo dependencies and fuzz tooling
 
@@ -78,7 +79,7 @@ runtime lockfiles with default features disabled. Its normal dependencies are
 `arrayvec` 0.5.2, `typed-arena` 2.0.2, and `unicode-width` 0.2.2. No printer
 source was copied into DAML; the formatter uses the library's document API.
 See the [published manifest](https://docs.rs/crate/pretty/0.12.5/source/Cargo.toml)
-and [reuse assessment](docs/formatter-reuse.md) for the selection and evidence.
+and [reuse assessment](docs/development/formatter-reuse.md) for the selection and evidence.
 
 The shared key/tag classifier directly uses pinned `unicode-general-category`
 1.1.0 (Apache-2.0), already present in the validator's dependency graph. Its
@@ -102,11 +103,11 @@ it introduces no second policy or runtime dependency. The owned plaintext templa
 uses the tool's documented output schema; no generator source is copied. See the
 [tool documentation](https://embarkstudios.github.io/cargo-about/) and
 [published manifest](https://docs.rs/crate/cargo-about/0.9.2/source/Cargo.toml).
-Native private-release archives carry the canonical root `LICENSE`, generated
+Native release archives carry the canonical root `LICENSE`, generated
 `THIRD-PARTY-NOTICES.txt`, and this source inventory. The upstream YAML fixture
 license remains separately retained at `tests/fixtures/yaml/LICENSE`.
-The [distribution guide](docs/distribution.md) owns the archive and verification
-contract.
+The [installation guide](docs/distribution.md) owns user installation;
+[developer distribution](docs/development/distribution.md) owns packaging and verification.
 
 ## Python boundary and packaging
 
@@ -176,10 +177,10 @@ The independent verifier pins Playwright 1.64.1 (Apache-2.0) and TypeScript
 6.0.3 (Apache-2.0) in `bindings/browser/verify/package-lock.json`; neither is
 included in the browser package.
 
-Private local SDK tarballs carry the canonical MIT license and this inventory.
+SDK tarballs carry the canonical MIT license and this inventory.
 `cargo-about` 0.9.2 generates the WASM Cargo graph's notices using the same
 `deny.toml` policy and plaintext template as native packaging.
 `bindings/browser/scripts/package.mjs` records legal-payload hashes alongside
 the build source/output provenance. The [SDK guide](bindings/browser/README.md)
 owns exact values, resource admission, lifecycle, build, and package contracts.
-Registry publication and promotion to a clean private release are separate actions.
+Registry publication and promotion to a versioned release are separate actions.

@@ -10,7 +10,7 @@ escaping. Error wording below is copied from stderr; it is not translated into
 an inferred `ErrorKind`.
 
 The current key/tag grammar is specified in the [syntax
-contract](syntax.md#structure-and-names). The historical measurements and JSON
+contract](../syntax.md#structure-and-names). The historical measurements and JSON
 results below remain unchanged.
 
 ## Confirmed decisions
@@ -22,7 +22,7 @@ results below remain unchanged.
 - Inline triple-double form is invalid. Existing triple-single wrapped-string behavior remains.
 - Multiple collection entries require physical newlines. A tag's explicit payload must start on the same physical line. Quoted keys remain rejected.
 
-These are user decisions, not conclusions inferred from parser output at the historical baseline. The triple-string boundary rule is also described in [syntax.md](syntax.md#triple-string-boundaries).
+These are user decisions, not conclusions inferred from parser output at the historical baseline. The triple-string boundary rule is also described in the [syntax contract](../syntax.md#triple-string-boundaries).
 
 ## Observed string cases
 
@@ -84,9 +84,9 @@ The historical baseline token/name rules were implemented in `src/parser.rs`
 The historical baseline used a broad non-whitespace/nonstructural-character
 rule for names. Its acceptance of `@`, punctuation, dotted/slashed names, and
 Unicode punctuation does not define the current grammar. Current data keys and
-tags follow the [syntax contract](syntax.md#structure-and-names); native
+tags follow the [syntax contract](../syntax.md#structure-and-names); native
 definition syntax is a tooling superset, as described in the [native authoring
-contract](native-authoring.md).
+contract](../native-authoring.md).
 
 Blank-only whitespace in `s09` and `s10` is a historical observation superseded
 by the current all-blank normalization rule. Tab behavior on nonblank lines

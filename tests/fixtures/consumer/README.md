@@ -1,15 +1,15 @@
-# Representative Olaf conversion
+# Derived consumer regression fixtures
 
-This is a standalone native-definition example, not an Olaf integration. It
-needs only DAML and its checked-in files; it never imports Olaf, opens a database,
-constructs an adapter, or invokes a callable. Provenance is recorded in
-[Sources](../../SOURCES.md#representative-consumer-definitions).
+These files retain a historical consumer-schema conversion for regression
+coverage. They are test inputs, not the introductory DAML example.
+See [source provenance](../../../SOURCES.md#representative-consumer-definitions)
+for their origin and [the tutorial](../../../docs/tutorial.md) for a
+self-contained introduction.
 
-Run from the DAML repository:
+Run from the repository root:
 
 ```sh
-cargo run --locked --example native -- examples/olaf examples/olaf/data/recipe.daml
-cargo test --locked --test olaf_example
+cargo test --locked --test consumer_fixtures
 ```
 
 ## What was converted

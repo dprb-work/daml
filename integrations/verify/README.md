@@ -100,7 +100,7 @@ build dependencies; draft pull requests skip it. `.github/workflows/editors.yml`
 remains a manual entrypoint. The heavy workflow installs both npm lockfiles with scripts
 disabled, audits dependencies, typechecks and packages the extension, builds
 `daml-lsp` with the locked Rust dependency graph, then runs the installed VSIX in
-Xvfb-backed Electron and retains the private VSIX artifact for 14 days. OMP's
+Xvfb-backed Electron and retains the VSIX artifact for 14 days. OMP's
 proprietary RPC host and the cross-repository native DSH package remain explicit
 local probes; neither is represented by an editor CI substitute. See the
-[CI path map](../../docs/ci.md) for all selected boundaries.
+[CI path map](../../docs/development/ci.md) for all selected boundaries.

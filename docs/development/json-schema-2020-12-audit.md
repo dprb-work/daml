@@ -254,8 +254,8 @@ map/object property counts, exclusive numeric bounds, and exact positive
 corpus. `contains`, conditionals, general negation, and callable metadata remain
 deliberately outside native DAML.
 
-The [representative native conversion](../examples/olaf/README.md) now exercises
+The [representative native conversion](../../tests/fixtures/consumer/README.md) now exercises
 that boundary without changing Olaf or retaining callable metadata in DAML.
-The [Python API](python.md) exposes native bundles and low-level interchange
+The [Python API](../python.md) exposes native bundles and low-level interchange
 separately, preserving validation versus completion. This does not add official
 JSON Schema Test Suite coverage or change the bounded-profile assessment.

@@ -5,9 +5,9 @@ validation and completion, hardening, reflow formatting, the minimal stdio LSP,
 binary distribution proof, and the isolated Python extension are implemented.
 The standalone browser SDK also passes focused local acceptance for Olaf's
 browser-authoring prerequisite. Private publication is a separate delivery step.
-[Syntax](docs/syntax.md), [native authoring](docs/native-authoring.md),
-[interchange](docs/schemas.md), the [Python API](docs/python.md), and the
-[browser SDK](bindings/browser/README.md) own the current contracts.
+[Syntax](../syntax.md), [native authoring](../native-authoring.md),
+[interchange](../schemas.md), the [Python API](../python.md), and the
+[browser SDK](../../bindings/browser/README.md) own the current contracts.
 
 ## Target result
 
@@ -42,7 +42,7 @@ AST skeleton, forwarding API, or passing empty test suite is not a milestone.
   partial objects recursively, followed by full validation of required fields.
 
 DAML is its own grammar, not a YAML/KYAML subset. The
-[reuse assessment](docs/parser-reuse.md) explains the mismatches, pinned sources,
+[reuse assessment](parser-reuse.md) explains the mismatches, pinned sources,
 and license lineage.
 
 ## Key and tag policy boundary
@@ -138,7 +138,7 @@ different original source spans.
 
 **Result:** an implementer can write the parser without inventing language rules.
 
-The initial native implementation now has a [syntax contract](docs/syntax.md)
+The initial native implementation now has a [syntax contract](../syntax.md)
 and executable acceptance cases. It consulted the reuse research but copied no
 upstream code/tests and introduced no dependency.
 
@@ -200,7 +200,7 @@ schema registry is required just to parse. `./scripts/check` passes.
 containing `{ uri: ..., schema: ... }`. Ordinary JSON Schema constraints and
 registered references define compatibility structurally. There are no
 contract-membership declarations or DAML-specific tag/slot validator keywords.
-See [the schema guide](docs/schemas.md) for runnable examples and exact limits.
+See [the schema guide](../schemas.md) for runnable examples and exact limits.
 
 - A containing schema's constraints and a data tag's selected schema both apply.
 - Untagged values may satisfy structural requirements. Unknown explicit tags
@@ -221,7 +221,7 @@ remain covered by consumer examples and checks.
 
 ## Native authoring and bundle loading
 
-**Implemented:** the [native authoring contract](docs/native-authoring.md) owns
+**Implemented:** the [native authoring contract](../native-authoring.md) owns
 definition syntax, one-type files, `daml.bundle`, local alias maps, private
 imports, canonical-root identity, nested bundle boundaries, default replacement,
 and completion. The executable corpus is `examples/native/cases.json`.
@@ -339,8 +339,8 @@ complete native JSON Schema coverage, or semantic workspace LSP integration.
 **Implemented hardening baseline:** retained parse/schema/resolve fuzz targets,
 bounded AddressSanitizer campaigns, licensed YAML/DAML corpus cases,
 cumulative-budget regressions, and release time/process-RSS measurements.
-See [the measured evidence](docs/hardening-baseline.md) and
-[reproduction commands](docs/hardening.md). The private native release uses the
+See [the measured evidence](hardening-baseline.md) and
+[reproduction commands](hardening.md). The native release uses the
 MIT license and complete native legal payload; registry `publish = false` remains.
 
 **Result:** an adversarial document cannot turn routine parsing/validation into
@@ -378,7 +378,7 @@ failure behavior, not a decorative percentage or test count.
 **Result:** a contributor formats a real DAML document without changing its
 meaning, comments, or string content.
 
-**Implemented:** the [formatter API and command](docs/formatting.md) reuse
+**Implemented:** the [formatter API and command](../formatting.md) reuse
 `pretty` 0.12.5 for width-sensitive layout. Parsing and formatting share the
 existing source/AST and one trivia scanner; no second grammar is introduced.
 
@@ -401,7 +401,7 @@ helper in isolation.
 **Result:** an editor receives current-document syntax diagnostics and formatting
 from the same library used by ordinary consumers.
 
-**Implemented:** the optional [stdio LSP](docs/lsp.md) reuses synchronous
+**Implemented:** the optional [stdio LSP](../lsp.md) reuses synchronous
 `lsp-server` transport and `lsp-types`, with versioned full-document state,
 syntax diagnostics, negotiated Unicode ranges, and native reflow formatting.
 
@@ -447,17 +447,17 @@ The standalone library has a retained hardening baseline, native bundle
 authoring/loading, reflow formatter, and minimal stdio language server.
 Schema resolution remains independent of application construction/execution.
 
-The [edge-case record](docs/edge-cases.md) retains 45 historical runtime probes.
+The [edge-case record](edge-cases.md) retains 45 historical runtime probes.
 Triple-double boundary framing and mandatory dedent remain confirmed; the
 current syntax contract supersedes provisional name-policy observations.
 
-The [formatter reuse assessment](docs/formatter-reuse.md) records the selection
+The [formatter reuse assessment](formatter-reuse.md) records the selection
 of `pretty` after proving source-sensitive literal and comment fixtures. Host
 integration remains separate; no formatter platform or style framework is added.
 
 ## Next sequence
 
-The [JSON Schema Draft 2020-12 audit](docs/json-schema-2020-12-audit.md)
+The [JSON Schema Draft 2020-12 audit](json-schema-2020-12-audit.md)
 separates backend validation, native expressibility, completion, and deliberate
 profile limits. It found no sampled delegated-assertion defect and does not
 justify another validator or blanket native parity.
@@ -482,7 +482,7 @@ owner and canonical property/item selectors; common work cannot activate inert
 unions. Positional narrowing preserves item-schema defaults without promoting
 replaced whole-array data into element fallbacks.
 
-The [representative native conversion](examples/olaf/README.md) retains a recipe,
+The [representative native conversion](../../tests/fixtures/consumer/README.md) retains a recipe,
 execution/optimizer definitions, a query, and independently scoped providers.
 Three executable cases cover completed values/tags, five invalid shapes,
 structural acceptance, and private-alias rejection. This is not an Olaf
@@ -490,7 +490,7 @@ integration: no consumer source/configuration changes, constructors, callable
 dispatch, or runtime dependencies. Callable `parameters`/`returns` metadata
 stays consumer-owned.
 
-The [Python extension](docs/python.md) uses a separate PyO3/maturin package,
+The [Python extension](../python.md) uses a separate PyO3/maturin package,
 preserving the core, CLI, and fuzz dependency boundaries. Immutable Rust documents
 and a resolved snapshot expose plain data and separate tag exports. One numeric
 conversion seam uses Python integers and `decimal.Decimal`, never float. Parsed
@@ -607,7 +607,7 @@ visibility remains private; crate/PyPI publication remains disabled.
 
 ### Editor and host integrations
 
-The [integration packages](integrations/README.md) follow the published core:
+The [integration packages](../../integrations/README.md) follow the published core:
 an installable VS Code/Cursor VSIX and mergeable OMP/DSH registrations. They use
 the existing syntax/formatting LSP, not schema-aware editor features. The VSIX
 uses `vscode-languageclient`, a distinct language ID, a machine-scoped executable
@@ -642,7 +642,7 @@ installation/configuration is changed.
 
 ### Standalone browser SDK
 
-The [private browser SDK](bindings/browser/README.md) implements
+The [browser SDK](../../bindings/browser/README.md) implements
 [DAML issue 16](https://github.com/dprb-work/daml/issues/16), the standalone
 browser-authoring prerequisite for [Olaf issue 387](https://github.com/dprb-work/Olaf/issues/387).
 Olaf adoption remains a separate change; no Olaf code, hosted CI, active host
@@ -685,7 +685,7 @@ Local packaging includes canonical MIT/dependency notices, source/output/legal
 hashes, and a SHA-256 sidecar. An injected unrecorded `dist` file is rejected
 before packaging. Only a clean committed build may be promoted as a release;
 building and verifying a private local tarball does not publish it.
-The [verifier guide](bindings/browser/verify/README.md) owns repeatable commands.
+The [verifier guide](../../bindings/browser/verify/README.md) owns repeatable commands.
 CI optimization remains blocked here because another agent owns it.
 
 ### Conversion agenda

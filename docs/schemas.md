@@ -10,7 +10,7 @@ metadata; it writes no generated schema files.
 JSON Schema's standard `default` is an annotation, not a command to mutate an
 instance. DAML's completion step applies defaults before full validation. See
 [standard annotation semantics](https://json-schema.org/understanding-json-schema/reference/annotations#default).
-The [Draft 2020-12 baseline audit](json-schema-2020-12-audit.md) separates
+The [dated Draft 2020-12 baseline audit](development/json-schema-2020-12-audit.md) separates
 backend validation, DAML completion, and native expressibility. Interchange is a
 bounded Draft 2020-12 profile, not an unqualified conformance claim.
 
@@ -144,10 +144,6 @@ request ID; and prints completed JSON data. It does not invoke an adapter.
   last-module-wins rule. Explicit supplied data at that path takes precedence.
 - Union branches complete isolated candidates. Different valid completed values
   are ambiguous and rejected rather than choosing the first branch. `oneOf`
-  still requires exactly one valid branch; `anyOf` may accept several branches
-  only when completion yields the same value.
-- Union branches complete isolated candidates. Different valid completed values
-  are ambiguous and rejected, rather than choosing the first branch. `oneOf`
   still requires exactly one valid branch; `anyOf` may accept several branches
   only when completion yields the same value.
 

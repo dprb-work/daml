@@ -1,0 +1,4 @@
+!app.Service {
+  name: "demo"
+  adapter: { endpoint: 42 }
+}

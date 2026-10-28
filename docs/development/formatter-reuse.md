@@ -12,7 +12,7 @@ The user confirmed the triple-string framing below. The
 Its name-alphabet observations predate the current syntax contract. Formatter
 work preserves language meanings rather than selecting parser rules.
 
-The current [syntax contract](syntax.md#triple-string-boundaries) requires a line
+The current [syntax contract](../syntax.md#triple-string-boundaries) requires a line
 ending after either triple opener, allowing only spaces/tabs before it. The
 opening line ending and one line ending immediately before the closing line
 are framing, not string data. For example:
@@ -35,7 +35,7 @@ The decoded value is `"hello"`, without a leading or trailing newline. A rebuilt
 | Empty block, opener immediately followed by its closing line | `""` |
 
 The user confirmed these framing rules. The [syntax
-contract](syntax.md#triple-string-boundaries) owns later decisions; formatter
+contract](../syntax.md#triple-string-boundaries) owns later decisions; formatter
 presentation does not select parser behavior.
 
 ## What can actually be reused
@@ -64,7 +64,7 @@ nonblank literal content independent of surrounding structural indentation and
 aligning the closing delimiter. Replacing the selected printer would add churn
 without removing a demonstrated responsibility.
 
-The [formatter guide](formatting.md) owns the public API and presentation rules.
+The [formatter guide](../formatting.md) owns the public API and presentation rules.
 
 Two DAML constraints must survive any engine adapter:
 
@@ -73,7 +73,7 @@ Two DAML constraints must survive any engine adapter:
 - A tag's payload starts on the same physical line. Moving that payload to the
   next line changes the parse; strings also have their own newline/dedent rules.
 
-These follow from [the syntax contract](syntax.md#structure-and-names), not the
+These follow from [the syntax contract](../syntax.md#structure-and-names), not the
 printer's preferred style. YAML/JSON formatting followed by comma removal or
 quote substitution is not a valid adaptation strategy.
 

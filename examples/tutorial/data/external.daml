@@ -1,0 +1,4 @@
+!app.Service {
+  name: "demo"
+  adapter: !extra.Custom { endpoint: "https://example.com" }
+}

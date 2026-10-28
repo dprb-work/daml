@@ -5,12 +5,12 @@ use serde_json::json;
 use std::path::Path;
 
 fn bundle() -> Bundle {
-    Bundle::open(Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/olaf")).unwrap()
+    Bundle::open(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/consumer")).unwrap()
 }
 
 #[test]
 fn recipe_completes_across_private_bundles_and_retains_nested_assertions() {
-    let input = parse(include_str!("../examples/olaf/data/recipe.daml")).unwrap();
+    let input = parse(include_str!("fixtures/consumer/data/recipe.daml")).unwrap();
     let schemas = bundle().compile(&input, None).unwrap();
     let resolved = schemas.resolve(&input).unwrap();
     assert_eq!(

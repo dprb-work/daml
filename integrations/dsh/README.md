@@ -1,14 +1,13 @@
 # DSH DAML language server
 
-Configure the native Soul DSH LSP extension with the released `daml-lsp` executable. The extension owns process lifecycle and document synchronization; DAML owns syntax diagnostics and formatting.
+Register `daml-lsp` with the native DSH LSP extension. The server provides
+native-definition syntax diagnostics and formatting.
 
-Prerequisite: Soul's native client must include `lsp_format` from
-`runtime/dsh/extensions/src/lsp.ts`. Build that canonical package with
-`npm --prefix runtime/dsh/extensions run build` in a prepared Soul checkout;
-if using the assembled Soul bundle, rebuild it through Soul's documented build
-procedure as well. This DAML configuration payload neither ships a second DSH
-client nor upgrades or activates an installed host. Older clients can provide
-syntax diagnostics but do not acquire formatting merely by adding this entry.
+The client must include `lsp_format` from `runtime/dsh/extensions/src/lsp.ts`.
+Build that package with `npm --prefix runtime/dsh/extensions run build` in a
+prepared Soul checkout, or rebuild the assembled Soul bundle through its
+documented procedure. Older clients can provide syntax diagnostics but not
+formatting.
 
 The complete native extension configuration template is `lsp.json` in this directory:
 

@@ -1,0 +1,4 @@
+!app.Service {
+  name: "demo"
+  adapter: !providers.Http { endpoint: "https://example.com" }
+}

@@ -1,0 +1,4 @@
+!app.Worker {
+  name: "demo"
+  retries: "many"
+}

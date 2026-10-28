@@ -1,0 +1,6 @@
+closed !Object {
+  endpoint: !String
+  label: !String
+} = {
+  label: "external"
+}

@@ -123,7 +123,7 @@ graph also reports the intentionally unused fuzz-only license exception.
 Dependency IDs, edges, and unified features reachable from DAML match across
 both lockfiles (87 dependencies); the fuzz runtime does not alter the library
 graph. YAML fixture blob IDs and full MIT notice are retained in
-[SOURCES.md](../SOURCES.md). No upstream parser code was copied.
+[SOURCES.md](../../SOURCES.md). No upstream parser code was copied.
 
 Initial unconstrained build attempts failed to allocate compiler/tool worker
 threads. CPU affinity and one Cargo build job allowed the subsequent checks,

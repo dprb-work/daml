@@ -1,22 +1,24 @@
 # Python API
 
 The optional `daml` Python package delegates parsing, formatting, bundle loading,
-completion, and validation to the Rust library. It is separate from the native
+completion, and validation to the Rust library. Install it from a source checkout;
+no PyPI package or release wheel is provided. It is separate from the native
 `daml-fmt` and `daml-lsp` archives. Neither the Rust library nor those executables
 requires Python at runtime.
 
-## Checkout and verification
+## Install from source
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the pinned
-Rust toolchain, then run from the repository root:
+Install [Rust through rustup](https://rustup.rs/) and
+[uv](https://docs.astral.sh/uv/getting-started/installation/). From a repository
+checkout, build the extension into its locked Python 3.12 environment:
 
 ```sh
-./scripts/check-python
+uv sync --project bindings/python --locked --python 3.12 --group dev --reinstall-package daml
 ```
 
-The command provisions a Python 3.12 project environment, installs locked development
-tools, rebuilds the extension, and runs binding Clippy, formatting, Ruff, and Pytest.
-`./scripts/check` includes this gate after the Rust checks.
+This uses the repository's pinned Rust toolchain and includes development tools.
+For installation plus binding Clippy, formatting, Ruff, and behavioral checks,
+run `./scripts/check-python`. The aggregate `./scripts/check` includes that gate.
 
 Rerun the gate after changing Rust source. uv's default editable cache does not
 track the Rust dependency graph; the gate re-enters maturin with
@@ -56,9 +58,9 @@ assert value["adapter"]["timeout"] == 45
 assert resolved.tags()["/adapter"] == "provider.Http"
 ```
 
-`parse` checks syntax only. Unknown tags remain inspectable without importing
-anything. `compile` loads reachable definitions; `resolve` completes and validates
-values. Neither constructs an application object or invokes a callable.
+`parse` checks syntax only. `compile` loads reachable definitions; `resolve`
+completes and validates values. These APIs operate on configuration data and
+schemas; they do not construct application-specific objects or invoke callables.
 
 Tags are separate metadata. `to_python()` deliberately returns plain values;
 `tags()` returns literal assertions without `!`, keyed by RFC 6901 pointer. The
@@ -172,6 +174,4 @@ interpreter and platform libraries.
 The ABI floor is CPython 3.12 (`cp312-abi3`). Local Linux checks do not establish
 Windows, macOS, PyPy, or free-threaded compatibility. No Python wheel or sdist
 release assets are currently provided; any future redistribution needs generated
-third-party notices in addition to DAML's license. No PyPI publication,
-cross-platform wheel pipeline, consumer construction, editor integration,
-YAML/JSON conversion, or Helm integration is implied.
+third-party notices in addition to DAML's MIT license.

@@ -2,7 +2,7 @@
 
 Evidence reviewed on 2026-10-17. This is a source assessment, not an executed
 parser comparison, license opinion, dependency approval, or code import.
-[The implementation plan](../PLAN.md) owns the proposed work and acceptance gates.
+[The implementation plan](plan.md) owns the proposed work and acceptance gates.
 
 ## What YAML and KYAML actually provide
 

@@ -1,13 +1,12 @@
 # DAML syntax contract
 
-This contract owns syntax-to-document parsing. [Schema completion and
-validation](schemas.md) are separate passes. The [formatter](formatting.md)
-supports data expressions and native definitions; the optional [language
-server](lsp.md) provides syntax-only diagnostics and formatting. The governing
-rule is **one parse, no guessing**: data parsing never infers nesting, string
-types, or missing values and never falls back to YAML. Native definition parsing
-is a separate tooling grammar; see the [native authoring
-contract](native-authoring.md).
+This reference defines data and native-definition syntax. [Schema completion
+and validation](schemas.md) are separate passes. The [formatter](formatting.md)
+supports both grammars; the [language server](lsp.md) provides native syntax
+diagnostics and formatting only. Data parsing never infers nesting, string
+types, or missing values and does not fall back to YAML. See the [native
+authoring contract](native-authoring.md) for definition expressions and
+bundles.
 
 ## Structure and names
 
@@ -73,8 +72,8 @@ YAML document markers/directives, anchors, aliases, block collections, `|`/`>`
 scalars, and ordinary single-quoted strings are not accepted.
 
 `#`, braces, tag markers, and other syntax characters inside strings are data.
-There is no interpolation, include mechanism, environment lookup, schema import,
-or application execution during parsing.
+String contents have no interpolation or environment substitution; the escape
+and continuation rules below define their decoding.
 
 ## Ordinary double-quoted strings
 
@@ -167,8 +166,6 @@ The complete source, including comments, stays available for later tooling.
 Errors have a structured category and a half-open original byte span. Parsing
 fails at the first error and consumes the complete root on success. Checked
 source slicing returns `None` for out-of-bounds or non-character-boundary spans.
-There are no source references into sibling owned fields, and parsing does not
-construct application types based on tags.
 
 Default bounds are 8 MiB input, 1 MiB per scalar token/key/tag, 100,000 value
 nodes, and 128 nested mappings/sequences. Tags do not add wrapper nodes. Custom
@@ -179,7 +176,7 @@ not a stack overflow or a fabricated partial document.
 ## Scope and source reuse
 
 The small native parser implements this contract directly. Upstream YAML/KYAML
-and Rust parser sources were consulted through the [reuse assessment](parser-reuse.md),
+and Rust parser sources were consulted through the [reuse assessment](development/parser-reuse.md),
 but this syntax implementation does not copy or vendor upstream code or tests
 and needs no YAML parser dependency. YAML's full acceptance corpus is not the
 DAML grammar.

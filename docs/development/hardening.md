@@ -61,7 +61,7 @@ from an empty literal. The later bounded campaign completed without a finding.
 Human-authored seeds live in `fuzz/seeds/`. Parse and format also read the
 licensed originals and native adaptations under `tests/fixtures/yaml/`; format
 additionally reuses the canonical parse seeds. See
-[provenance and distribution boundaries](../SOURCES.md). Corpus inputs include
+[provenance and distribution boundaries](../../SOURCES.md). Corpus inputs include
 intentional syntax and schema errors: structured rejection is a valid outcome.
 Mutable corpora, artifacts, coverage, and build outputs remain ignored.
 

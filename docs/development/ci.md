@@ -52,13 +52,13 @@ malformed changes take the normal full classification path.
 
 ## Positive documentation map
 
-Only these Markdown files qualify for the docs tier: `README.md`, `PLAN.md`,
-`docs/*.md` files listed in `scripts/ci-plan.py`, `integrations/README.md`, the
-integration subdirectory `README.md` files, and `bindings/python/README.md`.
-`SOURCES.md` is excluded because native archives package it; it selects only the
-binary build and installed archive proof. Other Markdown, YAML outside the
-bounded examples map, JSON/schema files, fixtures, fuzz seeds, workflows, source
-code, manifests, locks, and generated inputs are not docs-only changes.
+The planner's documentation allowlist is owned by `scripts/ci-plan.py`, not by
+this document. At the recorded revision, its positive map contains selected root
+and integration README files and listed `docs/*.md` paths. The moved
+`docs/development/` tree is not added to that map; those paths fall through to
+the planner's full-verification tier. Check the script for the exact current
+allowlist. `SOURCES.md` is excluded from docs-only changes because native
+archives package it; it selects binary build and installed archive proof.
 
 ## Check applicability
 

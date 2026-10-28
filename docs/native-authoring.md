@@ -1,10 +1,10 @@
 # Native definitions and bundles
 
 This contract describes native authoring, separate from the JSON-compatible
-[interchange module](schemas.md). The [implementation plan](../PLAN.md#next-sequence)
-records implementation and verification status. Native compilation produces
-in-memory JSON Schema constraints and DAML completion metadata, not generated
-JSON Schema files or application objects.
+[interchange module](schemas.md). Native compilation produces in-memory JSON
+Schema constraints and DAML completion metadata, not generated schema files or
+application objects. The [component status](components.md) summarizes the
+available tooling and maturity.
 
 ## Files and bundle roots
 
@@ -169,7 +169,7 @@ literal is valid only as `String.pattern`, not as an instance-data type.
 
 Unknown constructor metadata is rejected rather than ignored. Broader JSON
 Schema constraints remain available through interchange; the
-[Draft 2020-12 baseline audit](json-schema-2020-12-audit.md) separates backend
+[dated Draft 2020-12 baseline audit](development/json-schema-2020-12-audit.md) separates backend
 support from native expressibility.
 
 Unqualified names are native built-ins. Loaded definitions use a bundle prefix.
@@ -316,34 +316,22 @@ composition, cumulative resolution, definition/reference traversal, and compiler
 materialization bounds remain active. Schema/default/preset copies are charged
 before allocation; reuse cannot amplify a source-sized default without limit.
 
-## Acceptance examples
+## Executable examples
 
-`examples/native/` is a complete entry context with separate application,
-network-contract, and provider bundles. Its data cases cover:
+The canonical [tutorial fixtures](../examples/tutorial/) demonstrate a root
+bundle importing application, contract, provider, and third-party definition
+bundles. The independent provider and third-party definitions illustrate
+structural compatibility without importing the contract bundle.
 
-| Case | Expected result |
-|---|---|
-| `patched.daml` | Untagged partial object retains the contextual preset and private provider assertion |
-| `omitted.daml` | Root presets, private tagged provider default, item completion, empty required map |
-| `supplied.daml` | Tagged field-preset replacement, provider defaults, list replacement, Unicode/dotted/slashed/numeric keys |
-| `untagged-nested.daml` | Nested assertions apply without inventing a whole-document root contract |
-| `missing-worker-name.daml` | Missing required element member; no index merging |
-| `empty-range.daml` | Exact-length tuple validation; no position synthesis |
-| `forbidden-field.daml` | Never rejects a present field |
-| `inherited-invalid-default.daml` | Narrowing excludes an inherited fallback; definition compilation fails |
-| `private-alias.daml` | Entry cannot use a dependency's private alias |
-| `boundary-crossing.daml` | Explicit import required at a nested bundle boundary |
-
-The runnable native example loads this entry context and resolves a data file:
+Resolve a provider-tagged configuration with the native executable:
 
 ```sh
-cargo run --locked --example native -- examples/native examples/native/data/omitted.daml
+cargo run --locked --example native -- examples/tutorial examples/tutorial/data/provider.daml
 ```
 
-The [representative consumer conversion](../examples/olaf/README.md) exercises
-the same loader without importing its source application's runtime. The
-[Python API](python.md) wraps this path without adding another grammar or
-completion engine.
+The [tutorial](tutorial.md) explains the example in sequence. The [syntax
+contract](syntax.md) covers data and definition syntax; the [schema guide](schemas.md)
+documents the separate JSON Schema interchange API.
 
 Formatting and syntax-only LSP diagnostics share the native/data syntax reader;
 formatting does not resolve definitions, fetch bundles, or apply defaults.
