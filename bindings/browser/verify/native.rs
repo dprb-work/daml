@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "resource": location.resource,
             "pointer": location.pointer,
         }),
-        Origin::Input(_) => {
+        Origin::Input(_) | Origin::Semantic => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "fixture retries value must come from a schema default",
@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .into());
         }
     };
-    let semantic = SemanticNode::from_resolved(&resolved.root());
+    let semantic = SemanticNode::from_resolved(resolved.root());
     let canonical_source = schemas.format_semantic(&semantic, FormatOptions::default())?;
 
     let tagless_canonical_source =
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             let tagless_document = parse(source)?;
             let tagless_resolved = schemas.resolve_as(&tagless_document, expected)?;
-            let tagless_semantic = SemanticNode::from_resolved(&tagless_resolved.root());
+            let tagless_semantic = SemanticNode::from_resolved(tagless_resolved.root());
             Some(schemas.format_semantic(&tagless_semantic, FormatOptions::default())?)
         } else {
             None
@@ -104,7 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rebase_document = parse(rebase_source)?;
     let rebase_schemas = bundle.compile(&rebase_document, Some(rebase_expected))?;
     let rebase_resolved = rebase_schemas.resolve_as(&rebase_document, rebase_expected)?;
-    let rebase_semantic = SemanticNode::from_resolved(&rebase_resolved.root());
+    let rebase_semantic = SemanticNode::from_resolved(rebase_resolved.root());
     let rebase_canonical_source =
         rebase_schemas.format_semantic(&rebase_semantic, FormatOptions::default())?;
 
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let re_admitted_schemas = bundle.compile(&re_admitted_document, Some(rebase_expected))?;
     let re_admitted_resolved =
         re_admitted_schemas.resolve_as(&re_admitted_document, rebase_expected)?;
-    let re_admitted_semantic = SemanticNode::from_resolved(&re_admitted_resolved.root());
+    let re_admitted_semantic = SemanticNode::from_resolved(re_admitted_resolved.root());
     let daml::SemanticValue::Mapping(before_entries) = &rebase_semantic.value else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

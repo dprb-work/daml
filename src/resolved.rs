@@ -16,6 +16,8 @@ pub struct SchemaLocation {
 pub enum Origin<'a> {
     /// Bytes in the original supplied DAML document.
     Input(Span),
+    /// An explicit in-memory semantic value, without a source byte span.
+    Semantic,
     /// Declared schema default; no input byte span is fabricated for it.
     Default(&'a SchemaLocation),
 }
@@ -42,6 +44,7 @@ pub(crate) struct ResolvedTag<'a> {
     pub(crate) name: Cow<'a, str>,
     pub(crate) binding: Option<Cow<'a, str>>,
     pub(crate) origin: Origin<'a>,
+    pub(crate) supplied: bool,
 }
 
 /// A completed value with retained tag and origin metadata.
@@ -50,6 +53,8 @@ pub struct ResolvedNode<'a> {
     pub(crate) value: ResolvedValue<'a>,
     pub(crate) tag: Option<ResolvedTag<'a>>,
     pub(crate) origin: Origin<'a>,
+    pub(crate) opaque: bool,
+    pub(crate) number_class: u32,
 }
 
 impl<'a> ResolvedNode<'a> {
@@ -67,12 +72,12 @@ impl<'a> ResolvedNode<'a> {
         self.tag.as_ref()?.binding.as_deref()
     }
 
-    /// Returns the input/default provenance of the asserted tag, when present.
+    /// Returns supplied-source, semantic-input, or default provenance of the tag.
     pub fn tag_origin(&self) -> Option<Origin<'a>> {
         self.tag.as_ref().map(|tag| tag.origin)
     }
 
-    /// Returns supplied-input or declared-default provenance.
+    /// Returns supplied-source, semantic-input, or declared-default provenance.
     pub fn origin(&self) -> Origin<'a> {
         self.origin
     }
@@ -138,6 +143,22 @@ impl<'a> ResolvedNode<'a> {
         }
         Some(node)
     }
+
+    pub(crate) fn at_pointer_mut(&mut self, pointer: &str) -> Option<&mut Self> {
+        if pointer.is_empty() {
+            return Some(self);
+        }
+        let mut node = self;
+        for part in pointer.strip_prefix('/')?.split('/') {
+            let key = pointer::decode_segment(part)?;
+            node = match &mut node.value {
+                ResolvedValue::Mapping(fields) => fields.get_mut(key.as_ref())?,
+                ResolvedValue::Sequence(items) => items.get_mut(part.parse::<usize>().ok()?)?,
+                _ => return None,
+            };
+        }
+        Some(node)
+    }
 }
 
 /// Completed and schema-checked data, borrowing its input and schema registry.
@@ -192,6 +213,12 @@ pub enum ResolveErrorKind {
     UnknownTag,
     /// A requested root schema was not composed.
     UnknownExpectedType,
+    /// A supplied semantic mapping key violates the DAML key grammar.
+    InvalidKey,
+    /// A supplied semantic tag violates the DAML tag grammar.
+    InvalidTag,
+    /// A staged callback supplied an invalid pointer, conflicting edits, or no progress.
+    InvalidStage,
     /// Completed data violates a schema constraint.
     SchemaViolation,
     /// Applicable defaults lead to more than one different completed value.
@@ -207,6 +234,8 @@ pub enum ResolveErrorKind {
 pub enum ErrorOrigin {
     /// Original supplied-source bytes.
     Input(Span),
+    /// Explicit in-memory semantic input, without a fabricated source position.
+    Semantic,
     /// A schema default rather than a fabricated supplied-source position.
     Default(SchemaLocation),
 }
@@ -215,6 +244,7 @@ impl From<Origin<'_>> for ErrorOrigin {
     fn from(origin: Origin<'_>) -> Self {
         match origin {
             Origin::Input(span) => Self::Input(span),
+            Origin::Semantic => Self::Semantic,
             Origin::Default(location) => Self::Default(location.clone()),
         }
     }
@@ -245,6 +275,7 @@ impl fmt::Display for ResolveError {
         write!(out, "{} at {path}", self.message)?;
         match &self.origin {
             ErrorOrigin::Input(span) => write!(out, " (bytes {}..{})", span.start, span.end),
+            ErrorOrigin::Semantic => write!(out, " (semantic input)"),
             ErrorOrigin::Default(location) => {
                 write!(out, " (default {}#{})", location.resource, location.pointer)
             }
@@ -254,8 +285,8 @@ impl fmt::Display for ResolveError {
 
 impl Error for ResolveError {}
 
-pub(crate) fn checked_number(raw: &str) -> Result<Number, &'static str> {
-    if raw.bytes().filter(u8::is_ascii_digit).count() > 512 {
+pub(crate) fn check_number_limits(raw: &str) -> Result<(), &'static str> {
+    if raw.bytes().filter(u8::is_ascii_digit).nth(512).is_some() {
         return Err("number exceeds the exact-validation limit of 512 digits");
     }
     if let Some((_, exponent)) = raw.split_once(['e', 'E']) {
@@ -264,5 +295,10 @@ pub(crate) fn checked_number(raw: &str) -> Result<Number, &'static str> {
             return Err("number exponent exceeds the exact-validation bound of 512");
         }
     }
+    Ok(())
+}
+
+pub(crate) fn checked_number(raw: &str) -> Result<Number, &'static str> {
+    check_number_limits(raw)?;
     raw.parse().map_err(|_| "invalid decimal number")
 }

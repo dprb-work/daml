@@ -257,7 +257,20 @@ impl Bundle {
         document: &Document,
         expected: Option<&str>,
     ) -> Result<Schemas, NativeError> {
-        super::compiler::compile(self, document, expected)
+        self.compile_with_types(document, expected, std::iter::empty())
+    }
+
+    /// Compiles reachable definitions plus explicitly selected entry-visible types.
+    ///
+    /// Additional types are loaded but do not impose a root resolution policy.
+    /// Their caller-supplied names have no configuration source span.
+    pub fn compile_with_types<'names>(
+        &self,
+        document: &Document,
+        expected: Option<&str>,
+        additional_types: impl IntoIterator<Item = &'names str>,
+    ) -> Result<Schemas, NativeError> {
+        super::compiler::compile(self, document, expected, additional_types)
     }
 }
 

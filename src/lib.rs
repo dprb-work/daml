@@ -70,6 +70,10 @@ pub use native::{
     BUNDLE_MANIFEST, Bundle, Definition, NativeError, NativeErrorKind, format_definition,
     parse_definition, parse_definition_with_limits,
 };
+pub use resolve::stage::{
+    AdmissionStage, CopyEdge, NodeSummary, StageEdit, StageError, StageOutcome, StagedResolution,
+    SummaryFields, SummaryValue,
+};
 pub use resolved::{
     ErrorOrigin, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
     ResolvedNode, ResolvedValue, SchemaLocation,

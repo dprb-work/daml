@@ -181,7 +181,6 @@ fn schema_writer_rejects_a_constrained_alias_but_uses_its_visible_target() {
         .and_then(|tag| tag.binding.as_deref())
         .expect("default keeps native binding")
         .to_owned();
-    assert_eq!(binding, "private.Text");
     payload.value = SemanticValue::String("too-long".to_owned());
 
     let source = schemas.format_semantic(&semantic, options(80)).unwrap();
@@ -206,6 +205,13 @@ fn schema_writer_rejects_a_constrained_alias_but_uses_its_visible_target() {
         panic!("re-resolved Host must be a mapping");
     };
     let rebound_payload = rebound_entries.get("payload").expect("re-resolved payload");
+    assert_eq!(
+        rebound_payload
+            .tag
+            .as_ref()
+            .and_then(|tag| tag.binding.as_deref()),
+        Some(binding.as_str())
+    );
     assert_eq!(
         rebound_payload.tag.as_ref().map(|tag| tag.name.as_str()),
         Some("private.Text")

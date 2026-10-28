@@ -28,8 +28,14 @@ from .daml import (
     Schemas as Schemas,
 )
 from .daml import (
+    SemanticError as SemanticError,
+)
+from .daml import (
     format_definition as format_definition,
 )
 from .daml import (
     parse as parse,
+)
+from .daml import (
+    write as write,
 )

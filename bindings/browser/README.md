@@ -7,9 +7,11 @@ or a second JavaScript implementation of the language.
 
 ## Load and edit
 
-Serve `dist/daml_browser.js` and `dist/daml_browser_bg.wasm` as static assets.
-Serve WASM with `Content-Type: application/wasm`. The generated JavaScript module
-and WASM must come from the same build. Initialize once before calling the SDK:
+Publish the complete generated `dist/` tree as static assets, preserving its
+relative paths, including `snippets/` and any helper modules imported by
+`daml_browser.js`. The JavaScript, WASM and helper modules must come from the same
+build. Serve WASM with `Content-Type: application/wasm`. Initialize once before
+calling the SDK:
 
 ```js
 import init, { parse, Bundle } from './dist/daml_browser.js';
@@ -65,13 +67,17 @@ The generated `dist/daml_browser.d.ts` is the type contract.
 | `document.format(width?)` | Reflowed source without completion |
 | `formatDefinition(source, width?)` | Reflowed native definition source |
 | `new Bundle(root, sources)` | Explicit in-memory definition resources |
-| `bundle.compile(document, expected?)` | Reachable assertion context |
+| `bundle.compile(document, expected?, additionalTypes?)` | Reachable and explicitly loaded assertion context |
 | `schemas.resolve(document, expected?)` | Validated completed `Resolution` |
+| `schemas.resolveStaged(document, stage, expected?, initialEdits?)` | Strict checked staged result from source |
+| `schemas.resolveSemanticStaged(value, stage, expected?, initialEdits?)` | Same core stage from an editable semantic tree |
 | `resolution.source` | Original input source |
 | `resolution.value()` | Owned editable completed tree |
 | `resolution.origins()` | Owned RFC 6901 pointer-to-origin map |
 | `write(value, width?)` | Canonical source for unqualified assertions |
 | `schemas.write(value, width?)` | Canonical source retaining known binding identity |
+| `staged.meaning()` | Fresh selected `Uint8Array`, or `null` |
+| `staged.source` | Exact original source, or `undefined` for semantic input |
 
 Widths default to 80 and must be integers from 1 through 16384. Output uses LF
 and ends with a newline. Canonical semantic writing does not preserve comments,
@@ -113,10 +119,49 @@ otherwise uses a deterministic root-visible equivalent name. Private bindings
 without such a name fail with `UnrepresentableTag`; same-shaped or constrained
 schemas are not interchangeable. Writing a tag never grants access to resources.
 
-Origins distinguish input UTF-8 byte spans from definition defaults identified
-by resource and schema pointer. `tagOrigin` records assertion provenance when
-present. Default resource identifiers are logical diagnostic identities, not
-URLs to fetch or authorization to open files.
+Origins distinguish input UTF-8 byte spans, definition defaults identified by
+resource/schema pointer, and programmatic `semantic` input without a source span.
+`tagOrigin` records assertion provenance independently when present. Default
+resource identifiers are diagnostic identities, not URLs to fetch or file access.
+
+## Staged consumer transformations
+
+The [core staged contract](../../docs/schemas.md#staged-admission) owns candidate
+completion, edits, retained assertions and strict validation. Browser stages use
+that same resolver; they do not enable network lookup or recognize application
+reference syntax.
+
+Supply an object with `defer(summary, path)` and
+`materialize(value, copies, round)`, plus optional `numberClass(lexeme)`.
+Callbacks retain their `this` object. `defer` returns a boolean; the optional
+numeric classifier returns an exact integer from 0 through 4,294,967,295.
+Numbers remain strings in summaries and semantic trees.
+
+Summaries expose only their own scalar/tag and direct field shapes. Containers
+carry `kind` and `length`; map roots add `fields: [{ key, summary }]`. Field
+containers have no descendants. Raw defaults may have no own tag even when
+another assertion applies at the same path.
+
+`materialize` receives fresh owned semantic values and complete applied Copy
+history. `undefined`/`null` means Ready; `Uint8Array` means Ready with a meaning
+key; an edit array continues; a returned `Error` rejects that candidate. Any
+thrown value is fatal and propagates unchanged. Promises and malformed wire
+values are rejected; the API is synchronous.
+Foreign-container access failures propagate the original thrown value through the
+same fatal boundary, with normal Rust handle cleanup. Meaning keys use the byte
+view's intrinsic size and contents, not a shadowing `length` property.
+
+Edits are `{ op: 'replace', path, value }`, `{ op: 'copy', path, from }`, or
+`{ op: 'expect', path, name }`. Optional initial edits allow Replace and Expect
+only. Load named expectations using `bundle.compile`'s additional-type array.
+Every candidate replay starts at round zero; reset host-local construction
+plans there rather than interpreting Copy history as an active alias graph.
+
+`StagedResolution` owns its value, origins and selected meaning after input or
+schema handles are freed. Its source is present only for source admission.
+Existing `Resolution.source` stays a string. Free staged handles as usual.
+Meaning keys refine invocation-local candidate identity, not persistent revision
+hashes or JavaScript object-sharing semantics.
 
 ## Resource table and bounds
 
@@ -132,13 +177,15 @@ manifests are not parsed eagerly.
 The resource table is limited to 10,000 entries, 8 MiB of UTF-8 source, and
 4096 UTF-8 bytes per resource path. Source and semantic admission also enforce
 8 MiB aggregate budgets, 100,000 nodes, depth 128, and 1 MiB scalars where
-applicable. Canonical output and resolution provenance each have an 8 MiB cap.
+applicable. Canonical output and ordinary resolution provenance each have an
+independent 8 MiB cap. Staged work shares its invocation budget across inputs,
+summaries, snapshots, edits, histories, keys and final value/provenance export.
 Budget failures are errors, not partial successful results. These bounds do not
 replace application-level scheduling or a host's smaller resource limits.
 
 ## Errors
 
-Errors are JavaScript `Error` objects named `DamlError`. They expose `category`
+SDK-generated errors are JavaScript `Error` objects named `DamlError`. They expose `category`
 and stable `kind`, with `pointer`, `path`, `reference`, `span`, `range`, `origin`,
 or `schema` when available. Categories are `parse`, `native`, `resolve`,
 `semantic`, and `schema`. Pointers use RFC 6901; the root pointer is empty.
@@ -188,7 +235,8 @@ sha256sum -c dprb-work-daml-browser-0.1.0.tgz.sha256
 tar -xzf dprb-work-daml-browser-0.1.0.tgz
 ```
 
-Retrieve through an authenticated build environment, then serve the selected
-JS/WASM as static application assets. Do not embed repository credentials in a
-browser bundle or make runtime requests to private GitHub release endpoints.
+Retrieve through an authenticated build environment, then publish the complete
+generated `dist/` tree as static application assets, including its `snippets/`
+paths. Do not embed repository credentials in a browser bundle or make runtime
+requests to private GitHub release endpoints.
 Inspect `package/BUILD.json` for source revision and clean-build provenance.
