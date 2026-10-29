@@ -1,26 +1,19 @@
 # Structural composition
 
-Start with [data and schema](data-and-schema.md) if the distinction between
-a supplied value and its requirements is new to you. This page builds on that
-distinction: independent definitions can constrain the same value.
+You've configured an HTTP adapter. Later, another package offers a different
+provider. Do you have to teach the service's schema the name of every provider
+it might ever accept?
 
-DAML checks whether a value satisfies its constraints. It does not require a consumer to declare that a provider implements a named protocol. This is an open-world structural protocol: the contract is the required shape and constraints, and an independently authored definition can satisfy it without ancestry or a membership declaration.
+Not if the service describes what it needs rather than listing who may supply
+it. That is the useful idea behind DAML's structural contracts. Start with
+[data and schema](data-and-schema.md) if values and requirements are still new;
+[the tutorial](tutorial.md) runs the examples below.
 
-Follow the [tutorial](tutorial.md) for the runnable example. The [native authoring contract](native-authoring.md#composition-records-and-positions) owns definition syntax and record rules; [schema validation](schemas.md#compose-independently-owned-definitions) describes the interchange path.
+## Ask for what the service needs
 
-## A consumer defines the required shape
-
-The canonical example uses `examples/tutorial/app/Service.daml` to require a contract named `Adapter`:
-
-```daml
-closed !Object {
-  name: !String
-  adapter: !contracts.Adapter
-  retries: !Int
-}
-```
-
-`examples/tutorial/contracts/Adapter.daml` defines the adapter contract:
+The service's `adapter` field refers to `contracts.Adapter`. That definition,
+[`Adapter.daml`](../examples/tutorial/contracts/Adapter.daml), asks for a string
+endpoint:
 
 ```daml
 !Object {
@@ -28,11 +21,18 @@ closed !Object {
 }
 ```
 
-Here `Adapter` is open because it has no `closed` modifier. A value may contain additional fields and still satisfy the adapter's requirements. The `Service` record itself is closed, independently of the openness of the nested adapter.
+It doesn't ask which package defined the value. It also doesn't forbid settings
+that a particular provider needs in addition to the endpoint. The contract is
+open because it has no `closed` modifier.
 
-## Independent implementations can satisfy the contract
+[`Service.daml`](../examples/tutorial/app/Service.daml) uses that contract for
+its adapter field. Its own record is closed: extra service fields are errors.
+That doesn't close the nested adapter. The two definitions answer different
+questions at different levels of the configuration.
 
-`examples/tutorial/providers/Http.daml` is an independent provider definition:
+## Let each provider describe its own settings
+
+[`Http.daml`](../examples/tutorial/providers/Http.daml) adds a timeout:
 
 ```daml
 closed !Object {
@@ -43,7 +43,12 @@ closed !Object {
 }
 ```
 
-It does not reference or inherit from `contracts.Adapter`. Its records are structurally compatible: the provider requires an endpoint, permits the required service value to carry `timeout`, and supplies a default timeout. `examples/tutorial/third-party/Custom.daml` is another independent definition:
+It doesn't reference `contracts.Adapter` or declare that it implements it.
+A completed HTTP value fits because it has the required string endpoint. Its
+extra timeout field is allowed by the service's open adapter contract.
+
+[`Custom.daml`](../examples/tutorial/third-party/Custom.daml) makes a different
+choice:
 
 ```daml
 closed !Object {
@@ -54,9 +59,19 @@ closed !Object {
 }
 ```
 
-Both providers have their own closed records. Closing a provider's record does not stop its value from satisfying the open `Adapter` constraint: the extra fields are allowed by the parent constraint. `examples/tutorial/data/provider.daml` and `external.daml` show these choices in the full service configuration.
+That can fit too. Its completed value has the endpoint the service requires,
+plus a provider-specific label. Both provider records are closed, yet both can
+satisfy the open `Adapter` contract. Closing a provider's own fields is not the
+same as closing the world of compatible providers.
 
-The consumer's entry manifest binds aliases to bundle directories. To make a provider selectable at an entry, add or change an alias in that entry's `daml.bundle`, for example:
+This is an **open-world structural protocol**: another provider can meet the
+contract without joining a central list. DAML has no separate `protocol`
+declaration; an ordinary structural definition plays that role.
+
+## Make a provider available, then choose it
+
+The entry's [`daml.bundle`](../examples/tutorial/daml.bundle) makes names
+available through imports:
 
 ```daml
 {
@@ -66,29 +81,68 @@ The consumer's entry manifest binds aliases to bundle directories. To make a pro
 }
 ```
 
-Adding a provider changes the entry's import table and the tag spelling available through that binding, such as `!providers.Http` or `!extra.Custom`. It does not change the `Service` definition or its `adapter` contract. A consumer can select an independently authored provider as the adapter value without editing the consumer's contract. Bundle bindings are local to each bundle; see [bundle roots and bindings](native-authoring.md#files-and-bundle-roots). The `contracts` binding belongs to the nested app bundle, not this entry manifest.
+The data chooses a provider:
 
-## Keep three axes separate
+```daml
+!app.Service {
+  name: "demo"
+  adapter: !providers.Http { endpoint: "https://example.com" }
+}
+```
 
-Structural compatibility and record openness answer different questions. Nominal systems add declared identity or ancestry as another compatibility rule; DAML references reuse constraints structurally and do not introduce nominal membership.
+The [other version](../examples/tutorial/data/external.daml) uses `!extra.Custom`.
+Changing the provider means making its bundle available and selecting its tag.
+It does not require adding that provider's name to `Service.daml` or
+`Adapter.daml`.
 
-- **Structural compatibility** asks whether a value satisfies all applicable constraints. The parent contract and an explicit tag's selected definition both constrain the value.
-- **Record openness** controls whether a record constraint permits undeclared fields. Records are open by default; `closed` rejects additional fields for that constraint, including fields not declared by a referenced base.
+Imports are local. The app bundle has its own `contracts` binding; that name
+isn't exposed at the entry just because `app` imports it. See
+[bundle scope](native-authoring.md#files-and-bundle-roots) for exact lookup rules.
 
-Inheritance is not inherently closed-world in systems that have inheritance. A derived record may remain open unless its constraints close it. In DAML, referencing or narrowing a definition does not by itself create nominal ancestry. An unrelated closed record can satisfy an open parent structurally. See [composition and record modifiers](native-authoring.md#composition-records-and-positions).
+## A provider choice doesn't waive the requirements
 
-## Explicit tags add assertions, not escape hatches
+Selecting `!providers.Http` means the value must satisfy the HTTP definition
+**and** the service's adapter requirement. A known tag isn't a pass around
+validation.
 
-An untagged adapter value is checked against the `Adapter` constraint. A tagged value such as `!providers.Http` is checked against both the parent `Adapter` constraint and the explicitly selected `Http` definition. DAML does not ignore either constraint because the other passed.
+An endpoint of `42` fails the string requirement. A supplied timeout of `"slow"`
+fails the HTTP definition. Omitting the timeout is different: its default supplies
+`30`. And an extra field forbidden by a closed provider record still fails even
+though the outer adapter contract is open.
 
-If a value violates either constraint, resolution fails. For example, a missing or non-string `endpoint` violates the parent contract even if the provider tag is recognized. A string supplied for `timeout` violates the provider definition; when `timeout` is omitted, the provider's default supplies `30`. A field forbidden by a closed constraint also fails. Tags therefore preserve a useful explicit assertion without turning definitions into a mandatory protocol registry.
+The same adapter can be untagged and still meet the service's structural
+requirement. A tag is useful when you want that additional definition, including
+its constraints and defaults; it isn't proof of a nominal ancestry relationship.
 
-## Use an enumerated union when the set is closed by design
+## What about inheritance and closed alternatives?
 
-Some consumers intentionally accept only a fixed set of alternatives. Express that choice with a union:
+If you're used to nominal types, compatibility often comes from declared
+membership or ancestry. DAML definition references reuse constraints and defaults;
+they don't introduce that kind of membership. Inheritance is not inherently
+closed-world in languages that support it, either.
+
+Keep three questions apart:
+
+- **Does this value fit?** Structural compatibility checks its fields and values.
+- **May it have more fields?** Record openness decides that for each constraint.
+- **Which alternatives do we intend to accept?** A consumer may deliberately
+  restrict the accepted shapes rather than admit anything meeting one shared
+  minimum contract.
+
+For the last choice, a definition can use a union:
 
 ```daml
 !providers.Http | !extra.Custom
 ```
 
-This is an alternative between structural shapes, not an allowlist of provider identities. A value tagged with another definition can still pass if it satisfies a branch's constraints. Adding a provider whose shape fits an existing branch does not require changing the union; a shape outside all branches does. True provider or tag allowlisting is a separate consumer policy. Use a union when the listed shapes are the intended alternatives; use a shared structural requirement when independent implementations should qualify by satisfying one contract. DAML's union completion and validation rules are described in [composition and defaults](native-authoring.md#composition-records-and-positions).
+That lists alternative **shapes**, not permitted provider identities. Another
+tagged definition can still pass if its value satisfies one branch. Adding a
+shape outside both branches requires changing the union; adding a new provider
+that already fits does not. Exact provider or tag allowlisting is a separate
+consumer policy.
+
+Use a shared structural contract when independent providers should qualify by
+meeting common requirements. Use alternatives when the shapes themselves are the
+choices you intend to support. The [native reference](native-authoring.md#composition-records-and-positions)
+defines composition and record rules; [schema interchange](schemas.md#compose-independently-owned-definitions)
+describes the low-level API path.

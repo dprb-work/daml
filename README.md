@@ -1,14 +1,27 @@
 # DAML
 
-**Definitively Asserted Markup Language** is an experimental language for
-human-authored configuration with structural contracts, explicit defaults, and
-readable multiline text.
+**Configuration with structural contracts, explicit defaults, and room to grow.**
 
-## Values and requirements
+Your program needs configuration. You want people to supply the values that
+matter, leave routine choices to defaults, and get useful errors when something
+doesn't fit. When another package adds a compatible implementation, you shouldn't
+have to edit a central list just to describe it.
 
-The **data layer** supplies a particular configuration. The **schema layer**
-describes which configurations are valid. A definition such as
-[`app/Worker.daml`](examples/tutorial/app/Worker.daml) states the requirements:
+DAML—**Definitively Asserted Markup Language**—is an experimental language for
+that kind of human-authored configuration.
+
+## Say what you want to configure
+
+Here is a worker configuration:
+
+```daml
+!app.Worker {
+  name: "demo"
+}
+```
+
+The file names a worker and leaves its retry count to the definition. That
+[definition](examples/tutorial/app/Worker.daml) says what a worker needs:
 
 ```daml
 closed !Object {
@@ -19,15 +32,7 @@ closed !Object {
 }
 ```
 
-The separate [data document](examples/tutorial/data/worker.daml) supplies values:
-
-```daml
-!app.Worker {
-  name: "demo"
-}
-```
-
-Completion supplies the omitted retry count, then validation checks the result:
+Complete and validate the configuration, and you get:
 
 ```json
 {
@@ -36,51 +41,55 @@ Completion supplies the omitted retry count, then validation checks the result:
 }
 ```
 
-Supplying `retries: "many"` instead fails at `/retries`; the default does not
-replace an invalid supplied value. The tag selects a definition for the data to
-satisfy, rather than turning that data into a schema.
+Want five retries? Supply `retries: 5`. Supply `retries: "many"` instead and the
+same check rejects it at `/retries`; a default doesn't hide an invalid choice.
 
-If you know programming-language types, think **type versus value**, with the
-additional step of default completion. Otherwise, read the distinction simply
-as **requirements versus supplied contents**.
-[Data and schema](docs/data-and-schema.md) explains both layers and the limits
-of the analogy; [the tutorial](docs/tutorial.md) then adds nested contracts and
-independent providers.
+The definition is the **schema**: requirements that many configurations can
+share. The configuration is **data**: one set of concrete values. If you know
+programming-language types, think *type versus value*, with defaults as an
+additional step. [Data and schema](docs/data-and-schema.md) walks through the
+example without assuming that background.
 
-## Why DAML?
+## Add a provider without rewriting the consumer
 
-- **Explicit structure and scalar values.** Braces and brackets own nesting;
-  strings are quoted, and words do not become dates or booleans implicitly.
-- **Text that fits the task.** Triple-double quotes preserve multiline layout
-  after dedent; triple-single quotes join wrapped prose into one logical line.
-- **Definitions alongside configuration.** Express constraints and defaults in
-  DAML, and validate completed values against every applicable assertion.
-- **Independent composition.** Bundle-local imports and structural contracts let
-  separately authored definitions work together without a central provider list.
-- **Practical authoring tools.** A formatter, language server, and VS Code extension
-  support editing; Rust, Python, and browser bindings support consumers.
+A larger configuration might choose an adapter:
 
-The tradeoffs are deliberate: DAML is not YAML-compatible, cannot represent every
-arbitrary JSON object key, and has a much smaller ecosystem than either format.
-Read the [design principles](docs/design-principles.md) and
-[YAML/JSON comparison](docs/comparison.md), including when not to use DAML.
+```daml
+!app.Service {
+  name: "demo"
+  adapter: !providers.Http { endpoint: "https://example.com" }
+}
+```
 
-## Try it
+In the [tutorial](docs/tutorial.md), the service requires an adapter with a string
+endpoint. The HTTP definition adds a timeout and supplies its default. Another
+bundle supplies a different adapter with the same required endpoint and its own
+settings. Both can fit without the service definition enumerating their names.
 
-Start with [installation and formatting](docs/getting-started.md). Native
-[release archives](https://github.com/dprb-work/daml/releases/tag/v0.1.0) contain
-`daml-fmt` and `daml-lsp` for Linux x64, macOS Apple Silicon, and Windows x64.
-They do not require Rust or Python to run.
+This is **structural compatibility**: the chosen value has to meet the consumer's
+requirements as well as its own definition. Imports make providers available;
+the tag makes the choice explicit. [Structural composition](docs/structural-composition.md)
+explains why that matters, and when deliberately limiting the alternatives is a
+better choice.
 
-For definitions, defaults, and independent providers, follow the
-[configuration tutorial](docs/tutorial.md). Its files live in
-[`examples/tutorial/`](examples/tutorial/README.md); validation uses the existing
-Rust example consumer or a language binding, not an advertised validation CLI.
+## Try the language
 
-## Consume it from a program
+- **See it work:** [follow the configuration tutorial](docs/tutorial.md). Run a
+  worker, change a value, then add defaults and independent providers.
+- **Just try editing:** [install the formatter and language server](docs/getting-started.md).
+  Native archives run without Rust or Python; the VS Code extension is a separate
+  source-built VSIX.
+- **Understand the choices:** read the [design principles](docs/design-principles.md)
+  and [YAML/JSON comparison](docs/comparison.md).
 
-With the source text in `source`, these operations parse it, select a bundle,
-load the asserted definitions, and resolve a completed, validated value:
+DAML uses explicit braces and brackets rather than indentation to decide nesting.
+It also has distinct multiline forms for preserved layout and wrapped prose.
+Those choices help with authoring, but the main reason to choose it is the
+combination of readable values, reusable constraints, defaults, and composition.
+
+## Use the result in your program
+
+Given configuration text in `source`, the Rust API does the work in four steps:
 
 ```rust
 let document = daml::parse(source)?;
@@ -89,49 +98,47 @@ let schemas = bundle.compile(&document, None)?;
 let resolved = schemas.resolve(&document)?;
 ```
 
-The excerpt uses `?` inside a function returning `Result`. See
-[the complete Rust example](docs/tutorial.md#consume-it-from-a-program),
-[Python](docs/python.md#parse-complete-and-inspect), or
-[browser JavaScript](bindings/browser/README.md#load-and-edit). The
-[examples catalogue](examples/README.md#consumer-code) links runnable consumers.
+The excerpt belongs inside a function returning `Result`. The tutorial has a
+[complete Rust consumer](docs/tutorial.md#consume-it-from-a-program); there are
+also [Python](docs/python.md#parse-complete-and-inspect) and
+[browser JavaScript](bindings/browser/README.md#load-and-edit) examples.
 
-## Available components
+The longer-term workflow we want is **define configuration types in code, derive
+the schema, then author concrete values in DAML**. Automatic type-to-schema
+generation is not a shipped DAML tool today. The examples use handwritten DAML
+definitions; they demonstrate the configuration side of that workflow without
+pretending a generator already exists.
 
-| Component | Current delivery |
+## What can I use today?
+
+| Component | Availability |
 |---|---|
 | Rust library | Source; parsing, definitions, completion, validation, formatting |
-| Formatter and language server | Native release archives; LSP provides syntax diagnostics and formatting |
+| Formatter and language server | [Native releases](docs/distribution.md); syntax diagnostics and formatting |
 | VS Code extension | Build and install a VSIX; not published to a marketplace |
 | Python bindings | Build from source; not published to PyPI |
 | Browser/WASM SDK | Separate GitHub release archive; not published to npm |
-| YAML/JSON converters | Not implemented; see [conversion limits](docs/conversion.md) |
+| YAML/JSON converters | Not implemented; see [interoperability limits](docs/conversion.md) |
 
-See [components and availability](docs/components.md) for installation links and
-capability boundaries. Source on `main` and the separately versioned release
-archives need not expose identical APIs; select the documented version you use.
+[Components and availability](docs/components.md) links the installation guides.
+Source on `main` and versioned archives can expose different APIs; use the
+reference for the version you select. Editor support does not yet include
+schema-aware completion, hover, or semantic diagnostics.
 
-## Documentation
+## Is DAML a good fit?
 
-- [Documentation index](docs/README.md): reading paths and exact references.
-- [Data and schema](docs/data-and-schema.md): values versus requirements, the
-  type/value analogy, and connections to familiar programming concepts.
-- [Design principles](docs/design-principles.md): choices and tradeoffs.
-- [Structural composition](docs/structural-composition.md): open-world providers,
-  structural contracts, and deliberately closed alternatives.
-- [Examples](examples/README.md): configuration, strings, bundles, and consumers.
-- [Contributing](CONTRIBUTING.md): development setup, checks, and engineering notes.
+Consider it when people maintain configuration with meaningful defaults and
+independently developed components. For ordinary data interchange, JSON is often
+a better choice. If existing tools require YAML, DAML won't replace that ecosystem:
+it is not YAML-compatible and cannot represent every arbitrary JSON object key.
 
-## Project status
-
-DAML is experimental and pre-1.0. Syntax, APIs, and packaging may change; do not
-assume backward compatibility across revisions. Pin a source revision or release
-when embedding it, and check the corresponding documentation. Current editor
-support does not include schema-aware completion, hover, or semantic diagnostics.
-General YAML/JSON conversion is not available.
-
-This project is unrelated to Digital Asset's Daml smart-contract language.
+DAML is experimental and pre-1.0. Syntax, APIs, and packaging may change; pin a
+revision or release when embedding it. Use the [documentation index](docs/README.md)
+for the learning path and exact references, or [Contributing](CONTRIBUTING.md) to
+work on the project. This project is unrelated to Digital Asset's Daml
+smart-contract language.
 
 ## License
 
-DAML is [MIT licensed](LICENSE). Dependency and fixture notices are recorded in
-[SOURCES.md](SOURCES.md); distributed packages retain their required notices.
+DAML is [MIT licensed](LICENSE). [SOURCES.md](SOURCES.md) records the dependency
+and fixture notices retained in distributed packages.

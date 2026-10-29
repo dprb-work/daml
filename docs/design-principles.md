@@ -1,47 +1,100 @@
 # Design principles
 
-DAML is a configuration language with explicit structure, predictable values, readable text, structural contracts, and deliberate defaults. These choices make documents easier to read and validate consistently, but they also make DAML less terse and less interoperable with tools that expect YAML or JSON. Choose it when those tradeoffs fit; it is not a universal replacement for either format.
+A configuration file is something people read, change, review, and get wrong.
+DAML's design starts from those activities: make the choices visible, describe
+what is required, and turn an incomplete file into a value a program can check.
 
-Start with [data versus schema](data-and-schema.md): one supplies values, the other describes requirements and defaults. Its optional type/value analogy and familiar programming concepts provide a vocabulary for these principles. Follow the [tutorial](tutorial.md) for runnable examples. The [syntax contract](syntax.md), [native authoring contract](native-authoring.md), and [schema completion and validation reference](schemas.md) define exact behavior.
+These choices have costs. DAML asks you to learn a new format and use its tools;
+it isn't a universal replacement for YAML or JSON. The [tutorial](tutorial.md)
+shows the choices at work. This page explains why they are there.
 
-## Make structure visible
+## Let indentation help the reader, not decide ownership
 
-Mappings use `{}` and sequences use `[]`. Newlines separate entries, but indentation does not decide which collection owns a value:
+When you move a field in an editor, changing its indentation shouldn't silently
+move it into another object. DAML uses braces and brackets to show ownership:
 
 ```daml
 {
   service: {
-    endpoint: "https://api.example.test"
+    endpoint: "https://example.com"
   }
 }
 ```
 
-Braces and brackets add visual punctuation, especially in large files. In return, indentation changes cannot silently change which collection owns an entry. Commas and multiple same-line entries are not allowed, which keeps entry boundaries uniform but rules out common JSON-style formatting.
+The endpoint belongs to `service` because of the braces, not its column. Newlines
+separate entries, and indentation makes the structure easier to scan.
 
-## Keep scalar forms predictable
+The cost is visible punctuation. DAML also rules out commas and multiple entries
+on one line. That is less flexible than JSON-style layout, but gives entries one
+consistent boundary rule. See [collection syntax](syntax.md#structure-and-names).
 
-Strings, numbers, booleans, and `null` have explicit forms. Numbers use JSON decimal syntax; strings use double quotes or DAML's triple-quoted forms. A date-looking token is not silently converted to a date, and a word such as `yes` is not a boolean. The parser does not guess a scalar's type from its spelling.
+## Make the supplied value mean what it says
 
-This reduces parser-dependent surprises and makes values portable as JSON-compatible data. It also means more quoting than YAML, and DAML accepts a narrower set of scalar conveniences. See [scalar and string syntax](syntax.md#scalars-and-input).
+If a setting contains a word, it should be clear whether you meant text or a
+boolean. DAML uses `true` and `false` for booleans and quotes for strings:
+`"yes"` stays text. A date-looking string doesn't silently become a date.
 
-## Give multiline text a readable form
+This removes implicit scalar interpretations, at the cost of more quoting than
+YAML and fewer shorthand forms. Numbers follow JSON decimal syntax; detailed
+constraints belong to definitions rather than guessed scalar meanings. See
+[values and strings](syntax.md#scalars-and-input).
 
-Triple double quotes preserve internal layout after a defined dedent. Triple single quotes join wrapped lines with spaces. Both forms end their opening line and place the closing delimiter on its own line, making boundaries visible in a configuration file.
+## Let text look like the text you are writing
 
-The two forms have distinct rules, so readers must learn which one preserves layout and which one wraps prose. Use ordinary quoted strings for short values. The [triple-string rules](syntax.md#triple-string-boundaries) define boundaries, dedent, and line joining.
+A message and a template have different needs. A paragraph should be free to
+wrap in the editor; a template may depend on its line breaks and indentation.
+DAML gives them distinct multiline forms:
 
-## Use structure as the contract
+- Triple-single-quoted text joins wrapped prose into one logical line.
+- Triple-double-quoted text preserves layout after a defined dedent.
 
-Native definitions describe the shape and constraints of values. A record can remain open to additional fields or use the `closed` modifier when extra fields should fail. Definitions compose through intersections and alternatives; an explicit tag records a definition assertion, while structural constraints still determine whether the value fits.
+You have to learn the distinction, and neither form replaces ordinary quoted
+strings for short values. The [text example](../examples/tutorial/data/text.daml)
+shows both; the [string reference](syntax.md#triple-string-boundaries) owns the
+exact delimiter, escape, dedent, and joining rules.
 
-This lets independently authored definitions constrain the same value without requiring a declared membership graph. It also means a reader must distinguish structural compatibility from record openness. Nominal systems use declared identity or ancestry for compatibility; DAML definition references reuse structural constraints and do not introduce nominal membership. See [structural composition](structural-composition.md) and [native definition expressions](native-authoring.md#composition-records-and-positions).
+## Ask for a contract instead of a catalogue
 
-## Make defaults deliberate
+Suppose a service needs an adapter with a string endpoint. It can ask for that
+shape rather than name every provider it will ever accept. A separately authored
+provider can add its own settings and defaults while still meeting the shared
+requirement.
 
-Defaults are explicit data attached to definitions. Completion applies defaults to missing values; supplied values win, and the completed result is then validated. DAML does not invent scalar values or guess which implementation to select.
+That is why structural composition matters more than syntax alone. You still
+need to make a provider's bundle available and choose it in the data, but adding
+one needn't mean rewriting the consumer's contract.
 
-Defaults reduce repeated configuration and provide a clear baseline. They can also obscure where a value came from if used carelessly, so keep them close to the definition that owns them and document meaningful choices. Exact merge and replacement rules are in [defaults and completion](native-authoring.md#defaults-and-completion).
+The cost is a distinction worth learning: *fits the required shape* isn't the
+same as *may have extra fields*. A closed provider record can satisfy an open
+adapter contract. [Structural composition](structural-composition.md) explains
+that with the working examples, including alternatives and nominal typing.
 
-## Choose with the tradeoffs in view
+## Let defaults shorten a file without hiding bad choices
 
-DAML favors one explicit syntax and one defined interpretation over broad compatibility with YAML conventions. That choice supports predictable configuration and structural validation, at the cost of requiring DAML-specific tooling and more visible punctuation. [DAML and neighboring formats](comparison.md) compares those choices with YAML, JSON, and JSON plus JSON Schema.
+Most workers might use three retries. Put that baseline in the definition and
+let each configuration supply a different integer when it needs one. A supplied
+string such as `"many"` should fail, not disappear behind the default.
+
+When you ask DAML to resolve a configuration, it completes missing values and
+validates the result. Defaults can be composed, but they are not an arbitrary
+merge convention: different valid completions can be ambiguous rather than an
+excuse to pick one silently. The result also retains input/default origins so a
+consumer can inspect where values came from.
+
+Keep meaningful defaults near the definition that owns them. They reduce
+repetition, but a reader can still miss important behavior hidden behind too
+many layers. Start with [data and schema](data-and-schema.md), then use
+[the default rules](native-authoring.md#defaults-and-completion) when you need
+the precise precedence and replacement behavior.
+
+## Prefer an honest fit over a universal-format claim
+
+Choose DAML when readable configuration, constraints, defaults, and independently
+developed components belong in one workflow. JSON remains a strong choice for
+ordinary interchange. YAML's ecosystem can matter more than DAML's narrower,
+more explicit syntax.
+
+DAML is not YAML-compatible, doesn't support every arbitrary JSON object key,
+and needs its own tooling. The [comparison](comparison.md) weighs those tradeoffs.
+The [syntax](syntax.md), [native definitions](native-authoring.md), and
+[resolution reference](schemas.md) remain the authority for exact behavior.

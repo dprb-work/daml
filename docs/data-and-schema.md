@@ -1,20 +1,25 @@
 # Data and schema: values and requirements
 
-A configuration supplies values. A schema describes which values are acceptable.
-DAML uses its own notation for both, but the two layers have different roles:
+You want to configure a worker. It needs a name, and three retries is usually a
+good starting point. The person configuring it should be able to choose a name
+without repeating that retry count in every file.
 
-- **Data layer:** here are the values for this particular configuration.
-- **Schema layer:** here are the fields, constraints, and defaults that define a
-  valid configuration. A native DAML definition expresses such a schema.
+Here is what that person writes in
+[`data/worker.daml`](../examples/tutorial/data/worker.daml):
 
-You can understand this distinction without knowing a programming language's type
-system. The type/value analogy below is an optional bridge, not a prerequisite.
+```daml
+!app.Worker {
+  name: "demo"
+}
+```
 
-## A definition describes; data supplies
+That is **data**: one particular configuration. It says which values this worker
+supplies. It doesn't describe every possible worker.
 
-The canonical definition
-[`app/Worker.daml`](../examples/tutorial/app/Worker.daml) describes worker
-configurations:
+## Where the requirements live
+
+The tag points to a definition,
+[`app/Worker.daml`](../examples/tutorial/app/Worker.daml):
 
 ```daml
 closed !Object {
@@ -25,44 +30,34 @@ closed !Object {
 }
 ```
 
-`name: !String` requires a string. `retries: !Int` requires an integer. These are
-constraints, not the name and retry count of a particular worker. `closed`
-rejects fields not declared by this record.
+This is the **schema layer**. It says a worker needs a string name and an integer
+retry count. `closed` rejects unexpected fields. The data after `=` supplies a
+default of three retries.
 
-The preset after `=` is data embedded in the definition: it supplies a default
-retry count. It does not make the `retries` field optional in the completed value.
+Now the two layers have separate jobs:
 
-The separate data file
-[`data/worker.daml`](../examples/tutorial/data/worker.daml) supplies a worker:
+- The definition describes what worker configurations must contain.
+- The data document supplies the choices for this worker.
 
-```daml
-!app.Worker {
-  name: "demo"
-}
-```
+Many data documents can use the same definition. Putting `!app.Worker` on a value
+selects a requirement for that value to satisfy; it doesn't turn the data into a
+schema.
 
-Here `name: "demo"` is a value, not a constraint declaration. The root tag
-`!app.Worker` selects the definition that this object must satisfy; it does not
-turn the data document into a schema. The entry bundle binds `app` to the
-folder containing `Worker.daml`.
+Both files use `.daml`, but their roles come from how they are used. A bundle
+loads the definition as constraints and presets; the consumer supplies the data
+to check. In the definition, `retries: !Int` describes a field. In the data,
+`retries: 3` gives that field a value.
 
-Both files have the `.daml` extension. Their role comes from how they are used:
-configuration is supplied as data; the bundle loader reads definition files as
-constraints and presets. A field constraint such as `!Int` belongs to a
-schema position, while `3` is a data value. Sharing notation does not make the
-two grammars interchangeable.
+## See the default become a value
 
-## Complete the value, then validate it
-
-Run the existing library consumer from a source checkout with the
-[pinned Rust toolchain](development/building.md):
+With a source checkout and [the pinned Rust toolchain](development/building.md),
+run this from the repository root:
 
 ```sh
 cargo run --locked --example native -- examples/tutorial examples/tutorial/data/worker.daml
 ```
 
-The supplied configuration omits `retries`. Completion applies the preset, and
-validation checks the completed value against the definition. The command prints:
+The consumer prints:
 
 ```json
 {
@@ -71,57 +66,62 @@ validation checks the completed value against the definition. The command prints
 }
 ```
 
-This is the resolved value, not a rewrite of the input file. The command prints
-plain JSON, so assertion metadata is not included in that output.
+DAML fills the omitted retry count, then validates the completed value. The
+original file stays as you wrote it. This consumer prints plain JSON, so the
+output shows values rather than assertion metadata.
 
-Now try the deliberately invalid
-[`invalid/retries.daml`](../examples/tutorial/invalid/retries.daml), which
-supplies `retries: "many"`:
+If you supply `retries: 5`, five wins over the default. If you supply
+`retries: "many"`, the definition rejects it. Try the checked-in bad example:
 
 ```sh
 cargo run --locked --example native -- examples/tutorial examples/tutorial/invalid/retries.daml
 ```
 
-It fails at `/retries`. A supplied string is not replaced by the default integer.
-The source is syntactically valid; it does not satisfy the selected definition.
-See [the tutorial](tutorial.md) to continue with nested definitions and providers.
+It fails at `/retries`: the string is valid syntax, but not a valid retry count.
+A default fills a missing choice; it doesn't repair an invalid supplied one.
+[The tutorial](tutorial.md) lets you make those changes yourself before adding
+nested configuration and independent providers.
 
-## The programming-language analogy: type versus value
+## If you know types, think type versus value
 
-A type describes acceptable values; a value is one particular instance. Reading
-`retries: !Int` as a field's type constraint and `retries: 3` as its value is a
-useful first approximation.
+A type describes acceptable values. A value is one particular instance. That is
+a useful way to read the two layers: `Worker` describes the shape, while the file
+supplies one worker's contents.
 
-| Programming-language idea | DAML counterpart | Limit of the analogy |
-|---|---|---|
-| A record type describes fields | A definition describes configuration shape and constraints | Definitions can also express value bounds, alternatives, and presets. |
-| A value supplies particular contents | A data document supplies a particular configuration | The authored value may still need completion and validation. |
-| A type annotation states a requirement | An assertion tag selects an additional definition the value must satisfy | It does not cast away the containing field's constraints or require nominal ancestry. |
-| A value is checked against a type | A completed value is validated against all applicable constraints | Completion applies defaults first; ordinary type checking does not imply that behavior. |
+The analogy has limits. A DAML definition can include detailed value constraints
+and default data, not just field types. Completion is an extra step; ordinary
+type checking doesn't imply that missing values will be supplied. And choosing
+an assertion tag doesn't cast away the surrounding requirements.
 
-The analogy is not an identity. A DAML definition combines constraints with
-optional default data. Its completion rules are specified by DAML, not inherited
-from a host programming language or inferred as arbitrary deep merging.
+You don't need type-system vocabulary to use this model. *Requirements versus
+supplied contents* describes the same distinction.
 
-## Further connections
+## Where types in code could fit
 
-Once values and requirements are distinct, these familiar concepts help explain
-the rest of the language:
+The workflow we'd like to support starts with configuration types in a program:
+expose that model as a schema, then let people author concrete values in DAML.
+That would avoid maintaining a second, disconnected description by hand.
 
-| Familiar concept | Connection in DAML | Where to go next |
-|---|---|---|
-| Structural typing | A value qualifies by satisfying the required fields and constraints, without a declared ancestry relationship. | [Structural composition](structural-composition.md) |
-| Intersection and union types | `A & B` requires both constraints; `A \| B` accepts alternative structural shapes. A union is not a whitelist of provider identities. | [Definition composition](native-authoring.md#composition-records-and-positions) |
-| Elaboration of concise source | Resolution turns partial authored data into a completed, validated value under explicit default rules. | [Completion and defaults](native-authoring.md#defaults-and-completion) |
-| Module-local names | Each bundle has its own imports; aliases do not leak through dependencies. | [Bundle scope](native-authoring.md#files-and-bundle-roots) |
-| Concrete syntax and semantic values | Source-preserving formatting and canonical semantic writing preserve different information. | [Formatting and writing](formatting.md) |
+DAML does not currently ship an automatic code-type-to-schema generator. Today's
+examples use handwritten native definitions. The existing
+[JSON Schema interchange API](schemas.md) admits a bounded profile, but it isn't
+a general host-language type exporter. Treat type-derived schemas as a direction
+for the project, not a hidden prerequisite or a tool these guides already ship.
 
-These are explanations, not additional language features or syntax. In particular,
-there is no separate `protocol` declaration: an ordinary structural definition
-can serve as the contract for independently authored providers.
+## A few connections for later
 
-Continue in this order: [the runnable tutorial](tutorial.md),
-[structural compatibility](structural-composition.md), then
-[bundle-local names](native-authoring.md#files-and-bundle-roots). Use
-[the examples catalogue](../examples/README.md#consumer-code) for Rust, Python,
-and browser consumer code.
+Once the two layers make sense, other familiar ideas become useful:
+
+| Familiar idea | How it helps you read DAML |
+|---|---|
+| Structural typing | A provider qualifies by meeting the required fields and constraints, not by declaring ancestry. |
+| Intersection and union types | `A & B` requires both; `A \| B` accepts alternative shapes, not a whitelist of provider names. |
+| Elaboration | Resolution turns concise, partial input into a completed, validated value under explicit default rules. |
+| Module-local names | Bundle imports make names available locally; they don't leak through dependencies. |
+| Source versus semantic values | Formatting preserves authored details; semantic writing produces canonical DAML from values. |
+
+Start with [the tutorial](tutorial.md). Then [structural composition](structural-composition.md)
+explains independent providers, and [native definitions](native-authoring.md)
+supply the exact composition and default rules. The [formatter guide](formatting.md)
+explains what source information each writing operation preserves. For consumer
+code, use [the examples catalogue](../examples/README.md#consumer-code).
