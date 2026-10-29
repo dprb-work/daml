@@ -22,6 +22,6 @@
 ## 4. Verification and handoff
 
 - [x] Run independently frozen behavioral checks and actual native/Python/browser temporal scenarios, including precision and exceptional labels.
-- [ ] Run repository aggregate and affected binding/editor verification plus strict OpenSpec validation on the exact candidate.
-- [ ] Obtain independent whole-change and contract review, repair retained findings and re-review the verified head.
-- [ ] Publish the verified temporal change with explicit result-acceptance, CI and merge/release authority boundaries.
+- [x] Run repository aggregate and affected binding/editor verification plus strict OpenSpec validation on the exact candidate.
+- [x] Obtain independent whole-change and contract review, repair retained findings and re-review the verified head.
+- [x] Publish the verified temporal change with explicit result-acceptance, CI and merge/release authority boundaries.
