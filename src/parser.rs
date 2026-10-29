@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 const HARD_MAX_DEPTH: usize = 128;
 
-fn check_input(source: &str, limits: Limits) -> Result<(), ParseError> {
+pub(crate) fn check_input(source: &str, limits: Limits) -> Result<(), ParseError> {
     if limits.max_depth > HARD_MAX_DEPTH {
         return Err(ParseError::new(ErrorKind::InvalidLimits, 0, 0));
     }

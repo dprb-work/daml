@@ -28,6 +28,58 @@ fn intrinsic_values_are_distinct_from_strings_and_keep_authored_format() {
 }
 
 #[test]
+fn temporal_access_rejects_nodes_from_other_documents() {
+    let source = parse("!Date \"2024-02-29\"").unwrap();
+    let unrelated = parse("\"xxxxxxxxxxxxxxxxxxxx\"").unwrap();
+    assert_eq!(
+        source.temporal(source.root()).unwrap().as_str(),
+        "2024-02-29"
+    );
+    assert!(unrelated.temporal(source.root()).is_none());
+
+    let canonicalized = parse("!Time \"09:30\"").unwrap();
+    assert_eq!(
+        canonicalized
+            .temporal(canonicalized.root())
+            .unwrap()
+            .as_str(),
+        "09:30:00"
+    );
+    assert!(unrelated.temporal(canonicalized.root()).is_none());
+
+    let decoded = parse(r#"!Time "09\u003A30""#).unwrap();
+    assert_eq!(
+        decoded.temporal(decoded.root()).unwrap().as_str(),
+        "09:30:00"
+    );
+    assert!(unrelated.temporal(decoded.root()).is_none());
+
+    let equal_source = parse("!Date \"2024-02-29\"").unwrap();
+    assert_eq!(source, equal_source);
+    assert_eq!(
+        equal_source.temporal(equal_source.root()).unwrap().as_str(),
+        "2024-02-29"
+    );
+    assert!(equal_source.temporal(source.root()).is_none());
+    let nested = parse("{\n  value: !Time \"09:30:00.123456789123\"\n}").unwrap();
+    let nested_value = nested.get(nested.root(), "value").unwrap();
+    assert_eq!(
+        nested.temporal(nested_value).unwrap().as_str(),
+        "09:30:00.123456789123"
+    );
+
+    let document = parse("!DateTime \"2026-10-29T09:30Z\"").unwrap();
+    let moved_document = document;
+    assert_eq!(
+        moved_document
+            .temporal(moved_document.root())
+            .unwrap()
+            .as_str(),
+        "2026-10-29T09:30:00Z"
+    );
+}
+
+#[test]
 fn profile_preserves_fraction_offset_presence_and_exceptional_labels() {
     let precision = TemporalValue::parse(TemporalKind::Time, "09:30:00,123456789123").unwrap();
     assert_eq!(precision.as_str(), "09:30:00.123456789123");

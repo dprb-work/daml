@@ -174,11 +174,38 @@ fn equality_parts(text: &str) -> (&str, &str, &str) {
     )
 }
 
+// Only the retained source allocation may lend bytes to an admitted payload.
+// Store an address for identity comparison, never for dereferencing. Moving a
+// String keeps its allocation; public document/definition access cannot mutate it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceIdentity {
+    address: usize,
+    len: usize,
+}
+impl SourceIdentity {
+    fn new(source: &str) -> Self {
+        Self {
+            address: source.as_ptr() as usize,
+            len: source.len(),
+        }
+    }
+}
+
 /// An admitted source-backed temporal payload. Its private fields prevent unchecked construction.
-#[derive(Debug, PartialEq)]
+///
+/// Access is bound to the retained source allocation, including when canonical
+/// text is owned. Moving the source owner preserves this binding. Equality
+/// compares the parsed representation and metadata, not the allocation identity.
+#[derive(Debug)]
 pub struct ParsedTemporal {
     text: StringValue,
     metadata: TemporalMetadata,
+    source: SourceIdentity,
+}
+impl PartialEq for ParsedTemporal {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text && self.metadata == other.metadata
+    }
 }
 impl ParsedTemporal {
     pub(crate) fn parse(
@@ -186,6 +213,7 @@ impl ParsedTemporal {
         text: StringValue,
         source: &str,
     ) -> Result<Self, TemporalError> {
+        let source_identity = SourceIdentity::new(source);
         match text {
             StringValue::Source(span) => {
                 let admitted = TemporalValue::parse(kind, &source[span.start..span.end])?;
@@ -194,18 +222,26 @@ impl ParsedTemporal {
                     Cow::Borrowed(_) => StringValue::Source(span),
                     Cow::Owned(text) => StringValue::Decoded(text),
                 };
-                Ok(Self { text, metadata })
+                Ok(Self {
+                    text,
+                    metadata,
+                    source: source_identity,
+                })
             }
             StringValue::Decoded(text) => {
                 let admitted = TemporalValue::parse(kind, text)?;
                 Ok(Self {
                     metadata: admitted.metadata,
                     text: StringValue::Decoded(admitted.text.into_owned()),
+                    source: source_identity,
                 })
             }
         }
     }
     pub(crate) fn value<'a>(&'a self, source: &'a str) -> Option<TemporalValue<'a>> {
+        if self.source != SourceIdentity::new(source) {
+            return None;
+        }
         let text = match &self.text {
             StringValue::Source(Span { start, end }) => source.get(*start..*end)?,
             StringValue::Decoded(text) => text,

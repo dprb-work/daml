@@ -88,9 +88,10 @@ pub use temporal::{ParsedTemporal, TemporalError, TemporalKind, TemporalValue};
 
 /// Parses one complete DAML value with default resource bounds.
 ///
-/// Passing a `String` transfers its ownership; passing `&str` copies validated
-/// source once. Unchanged string contents, keys, tags, and numbers retain spans.
-/// The document owns its source so it may outlive the caller's input variable.
+/// Passing a `String` transfers its ownership; passing `&str` copies source once,
+/// after checking input bounds and before parsing. Unchanged string contents,
+/// keys, tags, numbers and canonical temporal payloads retain spans. The document
+/// owns its source so it may outlive the caller's input variable.
 ///
 /// # Errors
 ///
@@ -111,7 +112,8 @@ pub fn parse_with_limits<'a>(
     limits: Limits,
 ) -> Result<Document, ParseError> {
     let source = source.into();
-    let root = parser::parse(source.as_ref(), limits)?;
+    parser::check_input(source.as_ref(), limits)?;
     let source = source.into_owned();
+    let root = parser::parse(&source, limits)?;
     Ok(Document { source, root })
 }

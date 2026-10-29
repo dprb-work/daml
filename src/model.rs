@@ -58,6 +58,10 @@ pub struct Entry {
 }
 
 /// An owned source and its parsed root, without self-referential borrows.
+///
+/// Moving a document preserves its source-backed temporal access. Equality
+/// compares source and parsed content, not the source allocation's identity;
+/// nodes from independently parsed equal documents are not interchangeable.
 #[derive(Debug, PartialEq)]
 pub struct Document {
     pub(crate) source: String,
@@ -92,7 +96,11 @@ impl Document {
     }
 
     /// Borrows an admitted canonical temporal value without reparsing its payload.
-    /// Pass nodes belonging to this document, as with [`Self::string`].
+    ///
+    /// Returns `None` for a non-temporal node or a node from another document,
+    /// even if both documents contain equal source text. Moving this document
+    /// does not invalidate its nodes' source binding. This check also applies
+    /// when the temporal payload owns decoded or canonicalized text.
     pub fn temporal<'a>(&'a self, node: &'a Node) -> Option<crate::TemporalValue<'a>> {
         match &node.value {
             Value::Temporal(value) => value.value(&self.source),
