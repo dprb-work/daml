@@ -33,6 +33,8 @@ pub enum ResolvedValue<'a> {
     Number(Cow<'a, Number>),
     /// Text borrowed from supplied input or schema defaults when possible.
     String(Cow<'a, str>),
+    /// An admitted temporal scalar, retaining exact canonical precision and offset presence.
+    Temporal(crate::TemporalValue<'a>),
     /// Ordered array entries.
     Sequence(Vec<ResolvedNode<'a>>),
     /// Literal object keys, without implicit dotted/slashed traversal.
@@ -110,12 +112,14 @@ impl<'a> ResolvedNode<'a> {
     ///
     /// This allocates an owned output; inspect borrowed values through the other
     /// accessors when serialization is not needed.
+    /// Temporal values project to canonical ISO strings, losing intrinsic kind.
     pub fn to_json(&self) -> serde_json::Value {
         match &self.value {
             ResolvedValue::Null => serde_json::Value::Null,
             ResolvedValue::Bool(value) => serde_json::Value::Bool(*value),
             ResolvedValue::Number(value) => serde_json::Value::Number(value.as_ref().clone()),
             ResolvedValue::String(value) => serde_json::Value::String(value.to_string()),
+            ResolvedValue::Temporal(value) => serde_json::Value::String(value.as_str().to_owned()),
             ResolvedValue::Sequence(items) => {
                 serde_json::Value::Array(items.iter().map(Self::to_json).collect())
             }

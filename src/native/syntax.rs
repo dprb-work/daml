@@ -28,9 +28,8 @@ pub fn parse_definition_with_limits<'a>(
     limits: Limits,
 ) -> Result<Definition, ParseError> {
     let source = source.into();
-    let root = crate::parser::native::parse_definition(source.as_ref(), limits)?;
-    Ok(Definition {
-        source: source.into_owned(),
-        root,
-    })
+    crate::parser::check_input(source.as_ref(), limits)?;
+    let source = source.into_owned();
+    let root = crate::parser::native::parse_definition(&source, limits)?;
+    Ok(Definition { source, root })
 }

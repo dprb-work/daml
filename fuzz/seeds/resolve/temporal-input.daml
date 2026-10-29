@@ -1,0 +1,11 @@
+!fuzz.Config {
+  name: "temporal consumer"
+  count: 3
+  items: [1]
+  choice: "selected"
+  schedule: {
+    date: !Date "2024-02-29"
+    deadline: !DateTime "2026-10-29T09:30:00.123456789123+01:00"
+    ordinary: "2024-02-29"
+  }
+}

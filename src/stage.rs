@@ -13,6 +13,13 @@ pub enum SummaryValue<'a> {
     Number(&'a str),
     /// Borrowed text.
     String(&'a str),
+    /// Canonical temporal text with its intrinsic kind, without host coercion.
+    Temporal {
+        /// Intrinsic temporal kind.
+        kind: crate::TemporalKind,
+        /// Exact canonical ISO payload.
+        value: &'a str,
+    },
     /// Sequence length, without descendants.
     Sequence(usize),
     /// Mapping length, without descendants.
@@ -22,7 +29,12 @@ pub enum SummaryValue<'a> {
 #[derive(Clone, Copy)]
 enum SummarySource<'a> {
     Resolved(&'a ResolvedNode<'a>),
-    Default(&'a JsonValue, Option<&'a str>, Option<&'a str>),
+    Default(
+        &'a JsonValue,
+        SchemaView<'a>,
+        Option<&'a str>,
+        Option<&'a str>,
+    ),
 }
 
 /// A shallow read-only view, also usable before a schema default is expanded.
@@ -36,21 +48,21 @@ impl<'a> NodeSummary<'a> {
     pub fn value(&self) -> SummaryValue<'a> {
         match self.source {
             SummarySource::Resolved(node) => resolved_summary(node),
-            SummarySource::Default(value, _, _) => default_summary(value),
+            SummarySource::Default(value, schema, _, _) => default_summary(value, schema),
         }
     }
     /// Returns only this node's asserted tag.
     pub fn tag(&self) -> Option<&'a str> {
         match self.source {
             SummarySource::Resolved(node) => node.tag(),
-            SummarySource::Default(_, tag, _) => tag,
+            SummarySource::Default(_, _, tag, _) => tag,
         }
     }
     /// Returns only this node's explicit binding identifier.
     pub fn tag_binding(&self) -> Option<&'a str> {
         match self.source {
             SummarySource::Resolved(node) => node.tag_binding(),
-            SummarySource::Default(_, _, binding) => binding,
+            SummarySource::Default(_, _, _, binding) => binding,
         }
     }
     /// Iterates direct map fields; field containers expose only their length.
@@ -60,8 +72,8 @@ impl<'a> NodeSummary<'a> {
                 ResolvedValue::Mapping(fields) => FieldSource::Resolved(fields.iter()),
                 _ => FieldSource::Empty,
             },
-            SummarySource::Default(value, _, _) => match value {
-                JsonValue::Object(fields) => FieldSource::Default(fields.iter()),
+            SummarySource::Default(value, schema, _, _) => match value {
+                JsonValue::Object(fields) => FieldSource::Default(fields.iter(), schema),
                 _ => FieldSource::Empty,
             },
         };
@@ -71,7 +83,7 @@ impl<'a> NodeSummary<'a> {
 
 enum FieldSource<'a> {
     Resolved(std::collections::btree_map::Iter<'a, Cow<'a, str>, ResolvedNode<'a>>),
-    Default(serde_json::map::Iter<'a>),
+    Default(serde_json::map::Iter<'a>, SchemaView<'a>),
     Empty,
 }
 
@@ -86,9 +98,9 @@ impl<'a> Iterator for SummaryFields<'a> {
             FieldSource::Resolved(iter) => iter
                 .next()
                 .map(|(key, node)| (key.as_ref(), resolved_summary(node))),
-            FieldSource::Default(iter) => iter
+            FieldSource::Default(iter, schema) => iter
                 .next()
-                .map(|(key, value)| (key.as_str(), default_summary(value))),
+                .map(|(key, value)| (key.as_str(), default_summary(value, *schema))),
             FieldSource::Empty => None,
         }
     }
@@ -99,11 +111,21 @@ fn resolved_summary<'a>(node: &'a ResolvedNode<'_>) -> SummaryValue<'a> {
         ResolvedValue::Bool(value) => SummaryValue::Bool(*value),
         ResolvedValue::Number(value) => SummaryValue::Number(value.as_str()),
         ResolvedValue::String(value) => SummaryValue::String(value),
+        ResolvedValue::Temporal(value) => SummaryValue::Temporal {
+            kind: value.kind(),
+            value: value.as_str(),
+        },
         ResolvedValue::Sequence(items) => SummaryValue::Sequence(items.len()),
         ResolvedValue::Mapping(fields) => SummaryValue::Mapping(fields.len()),
     }
 }
-fn default_summary(value: &JsonValue) -> SummaryValue<'_> {
+fn default_summary<'a>(value: &'a JsonValue, schema: SchemaView<'a>) -> SummaryValue<'a> {
+    if let Some(temporal) = schema.default_temporal(value) {
+        return SummaryValue::Temporal {
+            kind: temporal.kind(),
+            value: value.as_str().expect("admitted temporal text"),
+        };
+    }
     match value {
         JsonValue::Null => SummaryValue::Null,
         JsonValue::Bool(value) => SummaryValue::Bool(*value),
@@ -462,6 +484,7 @@ impl Budget<'_> {
     pub(super) fn defer_default(
         &mut self,
         value: &JsonValue,
+        schema: SchemaView<'_>,
         tag: Option<&ResolvedTag<'_>>,
         node: &ResolvedNode<'_>,
         path: &str,
@@ -473,6 +496,7 @@ impl Budget<'_> {
         let summary = NodeSummary {
             source: SummarySource::Default(
                 value,
+                schema,
                 tag.map(|tag| tag.name.as_ref()),
                 tag.and_then(|tag| tag.binding.as_deref()),
             ),
@@ -513,9 +537,9 @@ impl Budget<'_> {
         path: &str,
     ) -> Result<(), ResolveError> {
         match value {
-            SummaryValue::String(text) | SummaryValue::Number(text) => {
-                self.add_bytes(node, text, path)
-            }
+            SummaryValue::String(text)
+            | SummaryValue::Number(text)
+            | SummaryValue::Temporal { value: text, .. } => self.add_bytes(node, text, path),
             _ => Ok(()),
         }
     }
@@ -1153,6 +1177,9 @@ fn same_stage_payload(left: &ResolvedNode<'_>, right: &ResolvedNode<'_>, copy: b
             left.as_str() == right.as_str()
         }
         (ResolvedValue::String(left), ResolvedValue::String(right)) => left == right,
+        (ResolvedValue::Temporal(left), ResolvedValue::Temporal(right)) => {
+            left.kind() == right.kind() && left.as_str() == right.as_str()
+        }
         (ResolvedValue::Sequence(left), ResolvedValue::Sequence(right)) => {
             left.len() == right.len()
                 && left
@@ -1311,6 +1338,7 @@ fn own_semantic_node<'a>(node: ResolvedNode<'_>) -> ResolvedNode<'a> {
         ResolvedValue::Bool(value) => ResolvedValue::Bool(value),
         ResolvedValue::Number(value) => ResolvedValue::Number(Cow::Owned(value.into_owned())),
         ResolvedValue::String(value) => ResolvedValue::String(Cow::Owned(value.into_owned())),
+        ResolvedValue::Temporal(value) => ResolvedValue::Temporal(value.into_owned()),
         ResolvedValue::Sequence(items) => {
             ResolvedValue::Sequence(items.into_iter().map(own_semantic_node).collect())
         }

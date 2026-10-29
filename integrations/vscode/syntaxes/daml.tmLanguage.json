@@ -68,7 +68,7 @@
       "patterns": [
         { "name": "keyword.control.daml", "match": "\\b(?:closed|unset)\\b" },
         { "name": "constant.language.daml", "match": "\\b(?:true|false|null)\\b" },
-        { "name": "entity.name.type.daml", "match": "\\b(?:String|Bool|Int|Number|Object|List|Tuple|Map|Any|Never|Regex)\\b" }
+        { "name": "entity.name.type.daml", "match": "\\b(?:String|Bool|Int|Number|Object|List|Tuple|Map|Any|Never|Regex|Date|Time|DateTime)\\b" }
       ]
     },
     "numbers": { "name": "constant.numeric.daml", "match": "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?" },

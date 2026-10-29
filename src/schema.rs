@@ -76,6 +76,177 @@ fn native_regex_factory<'a>(
     Ok(Box::new(NativeRegex(regex)))
 }
 
+fn normalize_temporal_defaults(schema: &mut Value) -> Result<(), SchemaError> {
+    if let Some(object) = schema.as_object_mut()
+        && let Some(annotations) = object.get("x-daml-default-temporals")
+    {
+        let annotations = annotations
+            .as_array()
+            .filter(|entries| !entries.is_empty())
+            .ok_or_else(|| invalid("x-daml-default-temporals must be a nonempty array"))?;
+        let default = object.get("default").ok_or_else(|| {
+            invalid("x-daml-default-temporals requires a default on the same schema")
+        })?;
+        let mut targets = HashSet::new();
+        for annotation in annotations {
+            let annotation = self::object(annotation, "default temporal annotation")?;
+            reject_unknown(annotation, &["path", "kind"], "default temporal annotation")?;
+            let path = annotation
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| invalid("default temporal annotation requires string path"))?;
+            if !path.is_empty() && !path.starts_with('/') {
+                return Err(invalid("default temporal path must be a JSON Pointer"));
+            }
+            let mut bytes = path.bytes();
+            while let Some(byte) = bytes.next() {
+                if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
+                    return Err(invalid("invalid default temporal JSON Pointer escape"));
+                }
+            }
+            annotation
+                .get("kind")
+                .and_then(Value::as_str)
+                .and_then(crate::TemporalKind::from_str)
+                .ok_or_else(|| invalid("invalid default temporal kind"))?;
+            let target = default
+                .pointer(path)
+                .ok_or_else(|| invalid("default temporal path does not identify a value"))?;
+            if !targets.insert(target as *const Value as usize) {
+                return Err(invalid("duplicate default temporal target"));
+            }
+            target
+                .as_str()
+                .ok_or_else(|| invalid("default temporal target must be a string"))?;
+        }
+        // Canonicalize in the existing JSON storage; no second ISO payload is retained.
+        let annotations = object
+            .remove("x-daml-default-temporals")
+            .expect("checked annotations");
+        let default = object.get_mut("default").expect("checked default");
+        for annotation in annotations.as_array().expect("checked array") {
+            let path = annotation["path"].as_str().expect("checked path");
+            let kind =
+                crate::TemporalKind::from_str(annotation["kind"].as_str().expect("checked kind"))
+                    .expect("checked kind");
+            let target = default.pointer_mut(path).expect("checked target");
+            let text = target.as_str().expect("checked string");
+            let metadata = crate::TemporalValue::parse(kind, text)
+                .map_err(|error| invalid(error.to_string()))?;
+            if metadata.as_str() != text {
+                *target = Value::String(metadata.into_text().into_owned());
+            }
+        }
+        object.insert("x-daml-default-temporals".into(), annotations);
+    }
+    let mut result = Ok(());
+    profile::for_each_child_mut(schema, |child| {
+        if result.is_ok() {
+            result = normalize_temporal_defaults(child);
+        }
+    });
+    result
+}
+
+struct NativeScalar {
+    kind: Option<crate::TemporalKind>,
+    offset: &'static str,
+    constant: Option<crate::TemporalValue<'static>>,
+}
+impl<'i> Keyword<'i, DamlJson> for NativeScalar {
+    fn validate(&self, instance: NodeRef<'i>) -> Result<(), ValidationError<'i>> {
+        if self.is_valid(instance) {
+            Ok(())
+        } else {
+            Err(ValidationError::custom(
+                "value does not satisfy the DAML scalar kind, offset policy or constant",
+            ))
+        }
+    }
+    fn is_valid(&self, instance: NodeRef<'i>) -> bool {
+        if self.kind.is_none() && matches!(instance, NodeRef::Property(_)) {
+            return true;
+        }
+        match (self.kind, instance.value()) {
+            (None, Some(crate::ResolvedValue::String(_))) => true,
+            (Some(kind), Some(crate::ResolvedValue::Temporal(value))) => {
+                value.kind() == kind
+                    && match self.offset {
+                        "required" => value.offset_minutes().is_some(),
+                        "forbidden" => value.offset_minutes().is_none(),
+                        _ => true,
+                    }
+                    && self
+                        .constant
+                        .as_ref()
+                        .is_none_or(|constant| value == constant)
+            }
+            _ => false,
+        }
+    }
+}
+fn scalar_config(value: &Value) -> Result<NativeScalar, String> {
+    let config = value.as_object().ok_or("x-daml-scalar must be an object")?;
+    if config
+        .keys()
+        .any(|key| !matches!(key.as_str(), "kind" | "offset" | "const"))
+    {
+        return Err("unknown x-daml-scalar field".into());
+    }
+    let name = config
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or("x-daml-scalar requires kind")?;
+    let kind = if name == "string" {
+        None
+    } else {
+        Some(crate::TemporalKind::from_str(name).ok_or("invalid DAML scalar kind")?)
+    };
+    let offset = match config.get("offset") {
+        None => "optional",
+        Some(Value::String(value))
+            if kind.is_some_and(|kind| kind != crate::TemporalKind::Date) =>
+        {
+            match value.as_str() {
+                "optional" => "optional",
+                "required" => "required",
+                "forbidden" => "forbidden",
+                _ => return Err("invalid temporal offset policy".into()),
+            }
+        }
+        _ => return Err("offset policy is only valid for time/datetime".into()),
+    };
+    let constant = if let Some(value) = config.get("const") {
+        let kind = kind.ok_or("typed scalar const is only valid for temporal kinds")?;
+        let text = value.as_str().ok_or("temporal const must be ISO text")?;
+        let value = crate::TemporalValue::parse(kind, text)
+            .map_err(|error| error.to_string())?
+            .into_owned();
+        if (offset == "required" && value.offset_minutes().is_none())
+            || (offset == "forbidden" && value.offset_minutes().is_some())
+        {
+            return Err("temporal const contradicts offset policy".into());
+        }
+        Some(value)
+    } else {
+        None
+    };
+    Ok(NativeScalar {
+        kind,
+        offset,
+        constant,
+    })
+}
+fn scalar_factory<'a>(
+    _parent: &'a Map<String, Value>,
+    value: &'a Value,
+    _path: jsonschema::paths::Location,
+) -> Result<Box<dyn for<'i> Keyword<'i, DamlJson>>, ValidationError<'a>> {
+    scalar_config(value)
+        .map(|scalar| Box::new(scalar) as Box<dyn for<'i> Keyword<'i, DamlJson>>)
+        .map_err(ValidationError::schema)
+}
+
 #[derive(Clone)]
 struct Binding {
     value: Value,
@@ -136,6 +307,8 @@ impl SchemaModule {
                 check_schema_shape(schema)?;
                 let id = schema_id(schema).unwrap_or_else(|| generated_id(name));
                 let mut value = schema.clone();
+                normalize_temporal_defaults(&mut value)?;
+                check_value_limits(&value)?;
                 assign_id(&mut value, &id)?;
                 module.types.insert(name.clone(), Binding { value, id });
             }
@@ -154,12 +327,11 @@ impl SchemaModule {
                 let schema = item
                     .get("schema")
                     .ok_or_else(|| invalid("resource requires schema"))?;
-                check_schema_shape(schema)?;
-                if module
-                    .resources
-                    .insert(uri.to_owned(), schema.clone())
-                    .is_some()
-                {
+                let mut schema = schema.clone();
+                normalize_temporal_defaults(&mut schema)?;
+                check_value_limits(&schema)?;
+                check_schema_shape(&schema)?;
+                if module.resources.insert(uri.to_owned(), schema).is_some() {
                     return Err(duplicate(format!("duplicate resource URI {uri:?}")));
                 }
             }
@@ -209,6 +381,13 @@ impl<'a> SchemaView<'a> {
             annotation["tag"].as_str().expect("validated tag"),
             annotation.get("binding").and_then(Value::as_str),
         ))
+    }
+    pub(crate) fn default_temporal(self, value: &'a Value) -> Option<crate::TemporalValue<'a>> {
+        let metadata = *self
+            .entry()
+            .default_temporals
+            .get(&(value as *const Value as usize))?;
+        Some(metadata.value(value.as_str().expect("admitted temporal default is text")))
     }
     pub(crate) fn referenced(self) -> Option<Self> {
         self.registry
@@ -294,6 +473,7 @@ struct SchemaEntry {
     location: SchemaLocation,
     default_origin: Option<SchemaLocation>,
     default_tags: HashMap<usize, usize>,
+    default_temporals: HashMap<usize, crate::temporal::TemporalMetadata>,
     validator: Validator<DamlJson>,
     work: usize,
     has_defaults: bool,
@@ -409,6 +589,7 @@ impl Schemas {
             .offline()
             .should_validate_formats(false)
             .with_keyword(NATIVE_REGEX_KEYWORD, native_regex_factory)
+            .with_keyword("x-daml-scalar", scalar_factory)
             .with_pattern_options(
                 PatternOptions::regex()
                     .size_limit(REGEX_SIZE_LIMIT)
@@ -479,6 +660,32 @@ impl Schemas {
                     entry
                         .default_tags
                         .insert(target as *const Value as usize, index);
+                }
+            }
+            if let Some(annotations) = entry
+                .value
+                .get("x-daml-default-temporals")
+                .and_then(Value::as_array)
+            {
+                let default = entry
+                    .value
+                    .get("default")
+                    .expect("admitted temporal defaults");
+                for annotation in annotations {
+                    let target = default
+                        .pointer(annotation["path"].as_str().expect("admitted path"))
+                        .expect("admitted target");
+                    let kind = crate::TemporalKind::from_str(
+                        annotation["kind"].as_str().expect("admitted kind"),
+                    )
+                    .expect("admitted temporal kind");
+                    entry.default_temporals.insert(
+                        target as *const Value as usize,
+                        crate::temporal::TemporalMetadata::canonical(
+                            kind,
+                            target.as_str().expect("admitted text"),
+                        ),
+                    );
                 }
             }
         }
@@ -736,6 +943,7 @@ fn append_schema_entries(
             location,
             default_origin,
             default_tags: HashMap::new(),
+            default_temporals: HashMap::new(),
             validator,
             work: 0,
             has_defaults: false,
@@ -1312,7 +1520,7 @@ fn validate_default_tags(schema: &Map<String, Value>) -> Result<(), SchemaError>
                 .ok_or_else(|| invalid("default tag binding must be a string"))?;
             valid_name(binding)?;
         }
-        if !crate::names::valid_tag(tag) {
+        if !crate::names::valid_tag(tag) || crate::TemporalKind::from_constructor(tag).is_some() {
             return Err(invalid("default tag name is not a valid DAML tag spelling"));
         }
         if !path.is_empty() && !path.starts_with('/') {
@@ -1357,6 +1565,9 @@ fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError
             ));
         }
         validate_default_tags(m)?;
+        if let Some(config) = m.get("x-daml-scalar") {
+            scalar_config(config).map_err(invalid)?;
+        }
         if let Some(optional) = m.get("x-daml-native-optional")
             && optional != &Value::Bool(true)
         {
@@ -1453,6 +1664,11 @@ fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError
                 .ok_or_else(|| invalid("invalid string"))?
                 .to_owned(),
         ),
+        V::Temporal(_) => {
+            return Err(invalid(
+                "temporal DAML schema values are not JSON-compatible; use explicit default annotations",
+            ));
+        }
         V::Sequence(xs) => Value::Array(
             xs.iter()
                 .map(|x| daml_value(d, x))

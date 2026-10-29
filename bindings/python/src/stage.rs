@@ -214,6 +214,7 @@ fn charge_value(
 ) -> PyResult<()> {
     let bytes = match value {
         SummaryValue::Number(value) | SummaryValue::String(value) => value.len(),
+        SummaryValue::Temporal { value, .. } => value.len(),
         _ => 0,
     };
     budget.charge(py, 1, bytes, "")
@@ -250,6 +251,10 @@ fn shallow_value<'py>(py: Python<'py>, value: SummaryValue<'_>) -> PyResult<Boun
             out.set_item("value", value)?;
             "string"
         }
+        SummaryValue::Temporal { kind, value } => {
+            out.set_item("value", value)?;
+            kind.as_str()
+        }
         SummaryValue::Sequence(length) => {
             out.set_item("length", length)?;
             "list"
@@ -285,6 +290,10 @@ fn charge_resolved(
         ResolvedValue::Bool(value) => SummaryValue::Bool(*value),
         ResolvedValue::Number(value) => SummaryValue::Number(value.as_str()),
         ResolvedValue::String(value) => SummaryValue::String(value),
+        ResolvedValue::Temporal(value) => SummaryValue::Temporal {
+            kind: value.kind(),
+            value: value.as_str(),
+        },
         ResolvedValue::Sequence(items) => SummaryValue::Sequence(items.len()),
         ResolvedValue::Mapping(entries) => SummaryValue::Mapping(entries.len()),
     };
@@ -319,6 +328,10 @@ fn export_resolved<'py>(
         ResolvedValue::Bool(value) => SummaryValue::Bool(*value),
         ResolvedValue::Number(value) => SummaryValue::Number(value.as_str()),
         ResolvedValue::String(value) => SummaryValue::String(value),
+        ResolvedValue::Temporal(value) => SummaryValue::Temporal {
+            kind: value.kind(),
+            value: value.as_str(),
+        },
         ResolvedValue::Sequence(items) => SummaryValue::Sequence(items.len()),
         ResolvedValue::Mapping(entries) => SummaryValue::Mapping(entries.len()),
     };
@@ -338,6 +351,10 @@ fn export_resolved<'py>(
         ResolvedValue::String(value) => {
             out.set_item("value", value.as_ref())?;
             "string"
+        }
+        ResolvedValue::Temporal(value) => {
+            out.set_item("value", value.as_str())?;
+            value.kind().as_str()
         }
         ResolvedValue::Sequence(items) => {
             let output = PyList::empty(py);

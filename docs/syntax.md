@@ -86,6 +86,57 @@ are errors. Use a triple form for source text spanning physical lines.
 Unescaped ordinary content references the original source without a second
 string allocation. Escaped content owns its decoded text.
 
+## Temporal literals
+
+`!Date`, `!Time`, and `!DateTime` construct typed values in data documents:
+
+```daml
+!Object {
+  day: !Date "2026-10-29"
+  starts: !Time "09:30"
+  deadline: !DateTime "2026-10-29T10:30:00.123456789123Z"
+}
+```
+
+The constructor names are reserved. A generic assertion may precede one
+constructor, as in `!app.EventDate !Date "2026-10-29"`. Arbitrary assertion
+stacking remains invalid. A date-looking quoted string without a constructor
+is still an ordinary string; parsing never guesses temporal types.
+
+The accepted profile is an ISO 8601-1:2019 extended-calendar subset, informed by
+the relevant 2022 amendment. It is not a claim of full ISO 8601 conformance.
+Dates use Gregorian `YYYY-MM-DD` with four year digits, optionally preceded by
+`-` for a nonzero year before year zero. The supported range is -9999 through
+9999, including year zero. Month lengths and Gregorian leap years are checked.
+
+Times use `HH`, `HH:MM`, or `HH:MM:SS`. Standalone `Time` also accepts an
+optional leading uppercase `T`. `DateTime` joins a complete date and clock with
+uppercase `T`. An optional fraction follows seconds only, uses `.` or `,`, and
+must contain ASCII digits. Lower-order omitted clock fields become zero;
+fractions on hours/minutes and basic/compact clock spellings are unsupported.
+
+Time and DateTime may end with uppercase `Z` or signed `HH`/`HH:MM` offsets.
+Offset fields are bounded by 23 hours and 59 minutes; negative zero is rejected.
+No offset stays absent, never local or UTC by inference. Canonical values use
+full clock fields, a dot fraction, uppercase `T`/`Z`, and `±HH:MM`; zero offsets
+write as `Z`. Every supplied fractional digit is retained.
+
+Hour 24 is accepted only when lower fields and fraction are zero. It remains
+`24:00:00` on the authored date; it does not roll over. Second 60 is preserved
+as a leap-second label, but DAML does not check whether it occurred on a
+particular date. With an explicit offset, the corresponding UTC minute must be
+23:59. DAML does not consult IERS data, a clock, or a network service.
+
+Temporal values are distinct from strings and from each other. Native
+`!String` does not accept a temporal value. A native `!Date`, `!Time`, or
+`!DateTime` constraint checks the corresponding intrinsic kind; Time and
+DateTime can additionally require or forbid an explicit offset. See
+[native temporal constraints](native-authoring.md#temporal-values).
+
+JSON has no temporal primitive. Plain JSON export writes canonical ISO text and
+loses the intrinsic kind. Semantic representations retain a `date`, `time`, or
+`datetime` discriminator with canonical text.
+
 ## Native Regex literals
 
 Native definitions add one typed scalar that ordinary data documents do not:

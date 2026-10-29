@@ -1,0 +1,12 @@
+{
+  date: !Date "0000-02-29"
+  negative_year: !Date "-0001-01-01"
+  local_time: !Time "09:30:00.123456789123"
+  offset_time: !Time "T09:30:00+01"
+  local_datetime: !DateTime "2026-10-29T09"
+  utc_datetime: !DateTime "2026-10-29T09Z"
+  end_of_day: !DateTime "2026-10-29T24:00:00.000"
+  leap_second: !DateTime "2016-12-31T23:59:60.123456789123Z"
+  deadline: !app.Deadline !DateTime "2026-10-29T09:30:00.123456789123Z"
+  ordinary: "2026-10-29T09:30:00.123456789123Z"
+}
