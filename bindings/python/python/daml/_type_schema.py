@@ -246,6 +246,8 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             pending.extend(expression.__constraints__)
             if expression.__bound__ is not None:
                 pending.append(expression.__bound__)
+            if hasattr(expression, "has_default") and expression.has_default():
+                pending.append(expression.__default__)
         origin = get_origin(expression)
         if origin is not Literal:
             pending.extend(get_args(expression))
@@ -256,11 +258,11 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
         if isinstance(expression, type) and issubclass(expression, base_model):
             _check_config(expression.model_config, context)
             if expression.model_config.get("extra") == "allow":
-                pending.append(
-                    get_type_hints(expression, include_extras=True).get(
-                        "__pydantic_extra__"
-                    )
-                )
+                # Use the annotation Pydantic resolved with its model namespace;
+                # re-evaluating all hints loses factory-local forward references.
+                extra_info = expression.__pydantic_extra_info__
+                if extra_info is not None:
+                    pending.append(extra_info.annotation)
             for name, field in expression.model_fields.items():
                 _check_field_info(field, f"{context}.{name}", pending)
         elif isinstance(expression, type) and dataclasses.is_dataclass(expression):

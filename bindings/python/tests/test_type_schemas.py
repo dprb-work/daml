@@ -18,6 +18,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from typing_extensions import TypeVar as TypeVarWithDefault
 
 
 def resolve(types, value, expected, **kwargs):
@@ -168,6 +169,35 @@ def test_plain_string_keyed_mappings_and_typed_extras_remain_supported():
     assert daml.Schemas.compose([module]).resolve(
         daml.parse("{values: {one: 1}\nextra: 2}"), expected="app.OpenExtra"
     ).to_python() == {"values": {"one": 1}, "extra": 2}
+
+
+def test_local_forward_annotation_with_open_model_resolves():
+    def model_type():
+        class Inner(BaseModel):
+            value: int
+
+        class Outer(BaseModel):
+            model_config = ConfigDict(extra="allow")
+            inner: "Inner"
+
+        return Outer
+
+    assert resolve({"app.Outer": model_type()}, "{inner: {value: 1}}", "app.Outer") == {
+        "inner": {"value": 1}
+    }
+
+
+def test_typevar_default_cannot_hide_custom_core_schema_behavior():
+    class Hidden:
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source_type, handler):
+            from pydantic_core import core_schema
+
+            return core_schema.int_schema()
+
+    defaulted = TypeVarWithDefault("HiddenDefault", default=Hidden)
+    with pytest.raises((TypeError, ValueError), match="app.HiddenDefault"):
+        daml.schema_from_types({"app.HiddenDefault": defaulted})
 
 
 def test_msgspec_public_exporter_marker_data_and_immutability():
