@@ -96,17 +96,28 @@ an assertion tag doesn't cast away the surrounding requirements.
 You don't need type-system vocabulary to use this model. *Requirements versus
 supplied contents* describes the same distinction.
 
-## Where types in code could fit
+## Derive a schema from Python types
 
-The workflow we'd like to support starts with configuration types in a program:
-expose that model as a schema, then let people author concrete values in DAML.
-That would avoid maintaining a second, disconnected description by hand.
+The workflow of defining configuration types in code, deriving a schema, then
+authoring concrete values in DAML is now supported in bounded form by the
+optional Python API. Explicitly bind Pydantic v2 models or standard dataclasses
+to DAML names with `daml.schema_from_types`; the returned JSON Schema module is
+composed and resolved through the existing interchange API. It is an in-memory
+interchange module, not generated native `.daml` definition text. See the
+[runnable Python example](../examples/python_types.py) and
+[Python API guide](python.md#derive-schemas-from-python-types).
 
-DAML does not currently ship an automatic code-type-to-schema generator. Today's
-examples use handwritten native definitions. The existing
-[JSON Schema interchange API](schemas.md) admits a bounded profile, but it isn't
-a general host-language type exporter. Treat type-derived schemas as a direction
-for the project, not a hidden prerequisite or a tool these guides already ship.
+This is not universal host-language projection. The JSON Schema projection does
+not promise exact `model_validate` behavior, strict Python type identity,
+coercion, extra-ignore behavior, or model-instance construction. DAML's
+required-container completion and mathematical JSON integer semantics remain
+unchanged; default exports support string-keyed mappings. Unsupported model
+behavior such as custom validators, factories, schema overrides, normalization
+and schema-position `format` assertions (including temporal types) is rejected.
+Type and exporter hooks are trusted caller code. Python names remain subject to
+DAML's source-key grammar. For other type libraries, a caller-supplied generic
+exporter owns its schema conventions. Native definitions remain useful for
+contracts and defaults that need native DAML features.
 
 ## A few connections for later
 

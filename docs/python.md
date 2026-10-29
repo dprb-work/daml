@@ -34,6 +34,118 @@ fuzz graph. PyO3 0.30.1
 and maturin 1.15.0 own the language boundary and wheel packaging; no second parser
 or validator is implemented in Python.
 
+## Derive schemas from Python types
+
+The optional `types` extra supports a bounded, explicit path from Pydantic v2
+models or standard dataclasses to an in-memory JSON Schema module. Install it
+while building the Python extension from this checkout:
+
+```sh
+uv sync --project bindings/python --locked --python 3.12 --group dev --extra types --reinstall-package daml
+```
+
+The minimum Pydantic version is 2.14.2. The base `daml` import and a caller
+supplied custom exporter do not require Pydantic. The complete
+[Python type example](../examples/python_types.py) derives equivalent contracts
+and composes each using the ordinary schema-module API:
+
+```python
+from dataclasses import dataclass
+
+import daml
+from pydantic import BaseModel
+
+class WorkerModel(BaseModel):
+    name: str
+    retries: int = 3
+
+@dataclass
+class WorkerRecord:
+    name: str
+    retries: int = 3
+module = daml.schema_from_types({"app.Worker": WorkerModel})
+schemas = daml.Schemas.compose([module])
+resolved = schemas.resolve(
+    daml.parse('!app.Worker { name: "demo" }'),
+    expected="app.Worker",
+)
+print(resolved.to_python())
+# {'name': 'demo', 'retries': 3}
+
+dataclass_module = daml.schema_from_types({"app.Worker": WorkerRecord})
+dataclass_schemas = daml.Schemas.compose([dataclass_module])
+print(dataclass_schemas.resolve(
+    daml.parse('!app.Worker { name: "demo" }'),
+    expected="app.Worker",
+).to_python())
+```
+
+The mapping keys are explicit DAML assertion names and remain subject to the
+DAML source-key grammar. The result is an ordinary in-memory interchange module,
+not generated native `.daml` definition text, registered Python classes, or
+instantiated model objects. This is a JSON Schema projection, not exact
+`model_validate` behavior or strict Python type identity: it makes no promises
+about coercion, `extra="ignore"` behavior, or construction of Pydantic instances.
+Resolution returns plain values. DAML's required-container completion and
+mathematical JSON integer semantics remain unchanged. The default projection
+supports string-keyed mappings, but rejects pattern-constrained mapping keys and
+constrained model-extra keys: Pydantic's JSON Schema output loses those restrictions.
+
+Models must have resolved annotations before export. If a model refers to a type
+defined later, call its Pydantic `model_rebuild()` after defining that type.
+The helper rejects incomplete metadata rather than inspecting unresolved names
+and risking a weakened schema.
+Other type expressions, including named alias targets, must likewise contain
+resolved types rather than string forward references.
+
+The default exporter supports declarative JSON-shaped fields, constraints and
+static defaults. Python model behavior that cannot be represented declaratively
+is rejected: custom validators/serializers, schema overrides, normalization,
+custom-init/post-init behavior, factories and other unsupported core-schema
+forms are not run or silently discarded. Default factories are not invoked.
+`format` assertions at schema positions are rejected because format validation
+is disabled; this includes temporal types such as date/time. Temporal support
+remains unimplemented. Python type expressions and exporter hooks are trusted
+caller code and may execute code during export.
+
+An explicit `exporter(type) -> JSON Schema object or boolean` owns its translation
+conventions and errors; exceptions propagate without fallback. For example, a
+generic `msgspec` exporter is shown separately below. A custom schema's marker
+property remains a schema property; it does not become an implicit DAML tag.
+See the [interchange profile](schemas.md) for the limits shared with native
+schema admission and resolution.
+
+### Generic custom exporter with msgspec
+
+Install `msgspec` separately if you want this optional demonstration; it is not
+required by the Python `types` extra:
+
+```sh
+uv pip install --python bindings/python/.venv/bin/python msgspec
+```
+
+```python
+import msgspec
+import daml
+
+class RetryConfig(msgspec.Struct):
+    retries: int = 3
+
+module = daml.schema_from_types(
+    {"app.RetryConfig": RetryConfig},
+    exporter=lambda type_: msgspec.json.schema(type_),
+)
+schemas = daml.Schemas.compose([module])
+resolved = schemas.resolve(
+    daml.parse("!app.RetryConfig {}"),
+    expected="app.RetryConfig",
+)
+print(resolved.to_python())
+```
+
+This illustrates only the generic exporter boundary: DAML does not interpret
+library-specific markers or rewrite exporter output.
+
 ## Parse, complete, and inspect
 
 After building, start the project interpreter:

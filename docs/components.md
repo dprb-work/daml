@@ -11,7 +11,7 @@ DAML is an experimental configuration language and tooling project. The componen
 | Language server | Implemented | Provides native syntax diagnostics and document formatting over stdio. It does not provide schema semantics, completion, or hover. See [LSP capabilities](lsp.md). |
 | VS Code-compatible extension | Source-buildable VSIX | Provides syntax highlighting and the language server's diagnostics and formatting. No marketplace listing is provided. See [installation](../integrations/vscode/README.md). |
 | Browser SDK | Public GitHub release asset | WebAssembly API for parsing, native compilation, resolution, validation, and formatting. It is not published to npm. See the [browser SDK](../bindings/browser/README.md). |
-| Python API | Source-buildable | Python bindings over the Rust library. No PyPI release or wheel assets are provided. See the [Python API](python.md). |
+| Python API | Source-buildable | Python bindings over the Rust library; optionally derives bounded in-memory schema modules from explicitly named Pydantic v2 models or dataclasses. No PyPI release or wheel assets are provided. See the [Python API](python.md). |
 | Conversion tools | Not provided | DAML does not ship JSON/YAML, Helm, or vendor-format converter commands. See [conversion limits](conversion.md). |
 
 Install native executables from public [GitHub releases](distribution.md). The installation guide lists the supported platform matrix and source fallback.

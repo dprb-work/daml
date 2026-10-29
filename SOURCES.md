@@ -119,6 +119,18 @@ These package manifests keep crates unpublished. Python wheel and sdist assets
 are not part of the current release route; if added later, they also need generated
 third-party notices in addition to the project license.
 
+The optional Python `types` extra uses the public Pydantic API and its CoreSchema
+description to derive bounded validation contracts. The current Python lockfile
+records Pydantic 2.14.2, pydantic-core 2.50.2, annotated-types 0.8.0 and
+typing-inspection 0.4.4 (MIT), plus typing-extensions 4.16.0 (PSF-2.0).
+These packages are installed dependencies, not copied or bundled Python source.
+Their installed distribution metadata and license files retain their notices.
+The custom-exporter regression example uses msgspec 0.22.0 (BSD-3-Clause) as a
+development dependency; DAML does not import it as a built-in adapter or depend
+on a consuming application. No upstream implementation is vendored for this
+integration.
+
+
 ## Editor integration dependencies
 
 `integrations/vscode/package-lock.json` pins the separate editor-client graph.

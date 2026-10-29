@@ -1,5 +1,6 @@
 """Native DAML parsing, schema resolution, and formatting."""
 
+from ._type_schema import schema_from_types as schema_from_types
 from .daml import (
     Bundle as Bundle,
 )

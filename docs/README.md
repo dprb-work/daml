@@ -17,9 +17,10 @@ seeing a configuration work.
   cover Rust, Python, and browser JavaScript. [The examples catalogue](../examples/README.md)
   links the runnable files.
 
-The tutorial uses handwritten DAML definitions, not an automatic type-to-schema
-generator. Its completion and validation commands run an example library
-consumer; the native release executables provide formatting and LSP support.
+The tutorial uses handwritten DAML definitions to show native composition. A
+separate bounded Python workflow derives in-memory schema modules from explicitly
+named Pydantic models or dataclasses; it does not generate native `.daml` files.
+See the [Python API guide](python.md#derive-schemas-from-python-types).
 
 ## Understand the choices
 
