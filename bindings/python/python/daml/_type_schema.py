@@ -12,6 +12,7 @@ from typing import (
     Literal,
     NewType,
     TypeAliasType,
+    TypeVar,
     get_args,
     get_origin,
     get_type_hints,
@@ -241,6 +242,10 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             pending.append(expression.__value__)
         if isinstance(expression, NewType):
             pending.append(expression.__supertype__)
+        if isinstance(expression, TypeVar):
+            pending.extend(expression.__constraints__)
+            if expression.__bound__ is not None:
+                pending.append(expression.__bound__)
         origin = get_origin(expression)
         if origin is not Literal:
             pending.extend(get_args(expression))
@@ -250,6 +255,12 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             continue
         if isinstance(expression, type) and issubclass(expression, base_model):
             _check_config(expression.model_config, context)
+            if expression.model_config.get("extra") == "allow":
+                pending.append(
+                    get_type_hints(expression, include_extras=True).get(
+                        "__pydantic_extra__"
+                    )
+                )
             for name, field in expression.model_fields.items():
                 _check_field_info(field, f"{context}.{name}", pending)
         elif isinstance(expression, type) and dataclasses.is_dataclass(expression):
@@ -384,6 +395,10 @@ def _check_core_schema(root: dict[str, Any], base_model: type, context: str) -> 
                 raise ValueError(
                     f"{location}: only string-keyed mappings are supported"
                 )
+            if "pattern" in keys:
+                raise ValueError(
+                    f"{location}: mapping-key patterns lose constraints in JSON Schema"
+                )
             pending.append((keys, f"{path}.keys_schema"))
             if "values_schema" in node:
                 pending.append((node["values_schema"], f"{path}.values_schema"))
@@ -393,9 +408,12 @@ def _check_core_schema(root: dict[str, Any], base_model: type, context: str) -> 
             pending.extend(
                 (child, f"{path}.fields[{name!r}]") for name, child in children
             )
-            for key in ("extras_schema", "extras_keys_schema"):
-                if key in node:
-                    pending.append((node[key], f"{path}.{key}"))
+            if node.get("extras_keys_schema") is not None:
+                raise ValueError(
+                    f"{location}: constraints on extra-field keys are unsupported"
+                )
+            if "extras_schema" in node:
+                pending.append((node["extras_schema"], f"{path}.extras_schema"))
         elif kind == "union":
             pending.extend(
                 (

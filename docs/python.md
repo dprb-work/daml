@@ -87,8 +87,9 @@ instantiated model objects. This is a JSON Schema projection, not exact
 `model_validate` behavior or strict Python type identity: it makes no promises
 about coercion, `extra="ignore"` behavior, or construction of Pydantic instances.
 Resolution returns plain values. DAML's required-container completion and
-mathematical JSON integer semantics remain unchanged; the default projection
-supports string-keyed mappings only.
+mathematical JSON integer semantics remain unchanged. The default projection
+supports string-keyed mappings, but rejects pattern-constrained mapping keys and
+constrained model-extra keys: Pydantic's JSON Schema output loses those restrictions.
 
 The default exporter supports declarative JSON-shaped fields, constraints and
 static defaults. Python model behavior that cannot be represented declaratively

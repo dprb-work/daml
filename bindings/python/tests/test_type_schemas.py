@@ -4,7 +4,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, TypeVar
 
 import daml
 import msgspec
@@ -110,6 +110,64 @@ def test_projection_is_not_model_validate_coercion_or_extra_field_filtering():
 def test_non_string_mapping_key_annotation_is_rejected():
     with pytest.raises((TypeError, ValueError)):
         daml.schema_from_types({"app.Mapping": dict[int, str]})
+
+
+def test_lossy_mapping_schema_forms_fail_with_binding_context():
+    class OpenExtra(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        __pydantic_extra__: dict[Annotated[str, Field(min_length=3)], int]
+        value: str
+
+    class Hidden:
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source_type, handler):
+            from pydantic_core import core_schema
+
+            return core_schema.int_schema()
+
+    hidden_union = TypeVar("HiddenOrString", Hidden, str)
+    hidden_bound = TypeVar("HiddenBound", bound=Hidden)
+    cases = (
+        ("app.Keyed", dict[Annotated[str, Field(pattern="^x")], int]),
+        ("app.OpenExtra", OpenExtra),
+        (
+            "app.HiddenExtra",
+            type(
+                "HiddenExtra",
+                (BaseModel,),
+                {
+                    "model_config": ConfigDict(extra="allow"),
+                    "__annotations__": {
+                        "__pydantic_extra__": dict[str, Hidden],
+                        "value": str,
+                    },
+                },
+            ),
+        ),
+        ("app.HiddenUnion", hidden_union),
+        ("app.HiddenBound", hidden_bound),
+    )
+    for binding, expression in cases:
+        try:
+            daml.schema_from_types({binding: expression})
+        except (TypeError, ValueError) as error:
+            assert binding in str(error)
+        else:
+            pytest.fail(f"{binding} accepted a lossy schema form")
+
+
+def test_plain_string_keyed_mappings_and_typed_extras_remain_supported():
+    class OpenExtra(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        __pydantic_extra__: dict[str, int]
+        values: dict[str, int]
+
+    module = daml.schema_from_types(
+        {"app.OpenExtra": OpenExtra, "app.Mapping": dict[str, int]}
+    )
+    assert daml.Schemas.compose([module]).resolve(
+        daml.parse("{values: {one: 1}\nextra: 2}"), expected="app.OpenExtra"
+    ).to_python() == {"values": {"one": 1}, "extra": 2}
 
 
 def test_msgspec_public_exporter_marker_data_and_immutability():
