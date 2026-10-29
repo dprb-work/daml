@@ -63,6 +63,7 @@ mod semantic;
 mod source;
 mod strict_json;
 mod strings;
+mod temporal;
 
 pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
@@ -83,6 +84,7 @@ pub use schema_error::{SchemaError, SchemaErrorKind};
 pub use semantic::{
     SemanticError, SemanticErrorKind, SemanticNode, SemanticTag, SemanticValue, format_semantic,
 };
+pub use temporal::{ParsedTemporal, TemporalError, TemporalKind, TemporalValue};
 
 /// Parses one complete DAML value with default resource bounds.
 ///

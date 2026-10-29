@@ -1,9 +1,55 @@
 from collections.abc import Iterable
+from datetime import date, datetime, time
 from decimal import Decimal
 from os import PathLike
 from typing import Literal, NotRequired, Protocol, TypedDict
 
-_Value = None | bool | int | Decimal | str | list["_Value"] | dict[str, "_Value"]
+class Date:
+    """Immutable ISO-profile date, including years outside the stdlib domain."""
+
+    def __init__(self, text: str) -> None: ...
+    def isoformat(self) -> str: ...
+    def __str__(self) -> str: ...
+    def to_date(self) -> date:
+        """Convert exactly, raising ValueError for unrepresentable values."""
+        ...
+
+class Time:
+    """Immutable ISO-profile clock preserving precision and explicit offsets."""
+
+    def __init__(self, text: str) -> None: ...
+    @property
+    def offset_minutes(self) -> int | None: ...
+    def isoformat(self) -> str: ...
+    def __str__(self) -> str: ...
+    def to_time(self) -> time:
+        """Convert exactly, raising ValueError for unrepresentable values."""
+        ...
+
+class DateTime:
+    """Immutable ISO-profile date and clock; no implicit timezone or rollover."""
+
+    def __init__(self, text: str) -> None: ...
+    @property
+    def offset_minutes(self) -> int | None: ...
+    def isoformat(self) -> str: ...
+    def __str__(self) -> str: ...
+    def to_datetime(self) -> datetime:
+        """Convert exactly, raising ValueError for unrepresentable values."""
+        ...
+
+_Value = (
+    None
+    | bool
+    | int
+    | Decimal
+    | str
+    | Date
+    | Time
+    | DateTime
+    | list["_Value"]
+    | dict[str, "_Value"]
+)
 
 class _SemanticTag(TypedDict):
     name: str
@@ -28,6 +74,11 @@ class _SemanticString(TypedDict):
     value: str
     tag: NotRequired[_SemanticTag]
 
+class _SemanticTemporal(TypedDict):
+    kind: Literal["date", "time", "datetime"]
+    value: str
+    tag: NotRequired[_SemanticTag]
+
 class _SemanticList(TypedDict):
     kind: Literal["list"]
     items: list[_SemanticNode]
@@ -47,6 +98,7 @@ _SemanticNode = (
     | _SemanticBool
     | _SemanticNumber
     | _SemanticString
+    | _SemanticTemporal
     | _SemanticList
     | _SemanticMap
 )
@@ -65,6 +117,7 @@ _SummaryValue = (
     | _SemanticBool
     | _SemanticNumber
     | _SemanticString
+    | _SemanticTemporal
     | _SummaryList
     | _SummaryMapValue
 )
@@ -82,6 +135,7 @@ _NodeSummary = (
     | _SemanticBool
     | _SemanticNumber
     | _SemanticString
+    | _SemanticTemporal
     | _SummaryList
     | _SummaryMap
 )

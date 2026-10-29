@@ -198,8 +198,32 @@ impl Parser<'_> {
             }
             let save = self.pos;
             self.horizontal();
+            if crate::TemporalKind::from_constructor(&self.source[name.start..name.end]).is_some()
+                && matches!(self.peek(), Some('"' | '\''))
+            {
+                self.pos = start;
+                let node = self.value(depth)?;
+                return Ok(Expression {
+                    span: node.span,
+                    kind: ExpressionKind::Literal(node),
+                    default: DefaultValue::Inherited,
+                    assignment: None,
+                });
+            }
             if self.peek() == Some('!') {
-                return Err(self.error(ErrorKind::InvalidTag, self.pos, self.char_end(self.pos)));
+                let intrinsic_start = self.pos + 1;
+                let end = self.source[intrinsic_start..]
+                    .find(|ch: char| !is_name_char(ch))
+                    .map_or(self.source.len(), |n| intrinsic_start + n);
+                if crate::TemporalKind::from_constructor(&self.source[intrinsic_start..end])
+                    .is_none()
+                {
+                    return Err(self.error(
+                        ErrorKind::InvalidTag,
+                        self.pos,
+                        self.char_end(self.pos),
+                    ));
+                }
             }
             if self.source.get(name.start..name.end) == Some("Tuple") {
                 if self.peek() == Some('[') {
@@ -270,7 +294,10 @@ impl Parser<'_> {
                 });
             }
             if self.peek().is_some_and(|ch| {
-                matches!(ch, '"' | '\'' | 't' | 'f' | 'n' | '-' | '.' | '0'..='9')
+                matches!(
+                    ch,
+                    '!' | '"' | '\'' | 't' | 'f' | 'n' | '-' | '.' | '0'..='9'
+                )
             }) {
                 let node = self.value(depth + 1)?;
                 let end = node.span.end;

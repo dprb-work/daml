@@ -107,17 +107,20 @@ interchange module, not generated native `.daml` definition text. See the
 [runnable Python example](../examples/python_types.py) and
 [Python API guide](python.md#derive-schemas-from-python-types).
 
-This is not universal host-language projection. The JSON Schema projection does
-not promise exact `model_validate` behavior, strict Python type identity,
-coercion, extra-ignore behavior, or model-instance construction. DAML's
-required-container completion and mathematical JSON integer semantics remain
-unchanged; default exports support string-keyed mappings. Unsupported model
-behavior such as custom validators, factories, schema overrides, normalization
-and schema-position `format` assertions (including temporal types) is rejected.
-Type and exporter hooks are trusted caller code. Python names remain subject to
-DAML's source-key grammar. For other type libraries, a caller-supplied generic
-exporter owns its schema conventions. Native definitions remain useful for
-contracts and defaults that need native DAML features.
+The projection does not promise exact `model_validate` behavior, strict Python
+type identity, coercion, extra-ignore behavior, or model-instance construction.
+DAML's required-container completion and mathematical JSON integer semantics
+remain unchanged; default exports support string-keyed mappings. Unsupported
+model behavior such as custom validators, factories, schema overrides,
+normalization, and schema-position `format` assertions is rejected. Standard
+Python date/time/datetime annotations and representable static defaults are
+supported as first-class DAML temporal values; see the
+[temporal Python example](../examples/python_temporal.py) and
+[temporal profile](syntax.md#temporal-literals). Type and exporter hooks are
+trusted caller code. Python names remain subject to DAML's source-key grammar.
+For other type libraries, a caller-supplied generic exporter owns its schema
+conventions. Native definitions remain useful for contracts and defaults that
+need native DAML features.
 
 ## A few connections for later
 

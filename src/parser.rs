@@ -168,7 +168,23 @@ impl Parser<'_> {
                 end: tag_end,
             };
             self.horizontal();
+            if let Some(kind) =
+                crate::TemporalKind::from_constructor(&self.source[tag.start..tag.end])
+            {
+                return self.temporal_literal(start, None, kind);
+            }
             if self.peek() == Some('!') {
+                let intrinsic_start = self.pos + 1;
+                let end = self.source[intrinsic_start..]
+                    .find(|ch: char| !is_name_char(ch))
+                    .map_or(self.source.len(), |n| intrinsic_start + n);
+                if let Some(kind) =
+                    crate::TemporalKind::from_constructor(&self.source[intrinsic_start..end])
+                {
+                    self.pos = end;
+                    self.horizontal();
+                    return self.temporal_literal(start, Some(tag), kind);
+                }
                 return Err(self.error(ErrorKind::InvalidTag, self.pos, self.char_end(self.pos)));
             }
             let next = self.peek();
@@ -252,6 +268,45 @@ impl Parser<'_> {
             },
             tag,
             value,
+        })
+    }
+
+    fn temporal_literal(
+        &mut self,
+        start: usize,
+        tag: Option<Span>,
+        kind: crate::TemporalKind,
+    ) -> Result<Node, ParseError> {
+        self.count_node(start)?;
+        let payload_start = self.pos;
+        if !matches!(self.peek(), Some('"' | '\'')) {
+            return Err(self.error(ErrorKind::InvalidTemporal, start, self.char_end(self.pos)));
+        }
+        let (text, end) = crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)
+            .map_err(|error| {
+                if error.kind == ErrorKind::LimitExceeded {
+                    error
+                } else {
+                    self.error(ErrorKind::InvalidTemporal, payload_start, error.span.end)
+                }
+            })?;
+        self.pos = end;
+        let value = crate::ParsedTemporal::parse(kind, text, self.source)
+            .map_err(|_| self.error(ErrorKind::InvalidTemporal, payload_start, end))?;
+        if value
+            .value(self.source)
+            .expect("admitted source")
+            .as_str()
+            .len()
+            .saturating_add(2)
+            > self.limits.max_scalar_bytes
+        {
+            return Err(self.error(ErrorKind::LimitExceeded, payload_start, end));
+        }
+        Ok(Node {
+            span: Span { start, end },
+            tag,
+            value: Value::Temporal(value),
         })
     }
 

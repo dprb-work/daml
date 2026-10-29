@@ -29,6 +29,11 @@ fn same_value(a: &Document, left: &Node, b: &Document, right: &Node) -> bool {
         (Value::Bool(left), Value::Bool(right)) => left == right,
         (Value::Number(left), Value::Number(right)) => a.slice(*left) == b.slice(*right),
         (Value::String(_), Value::String(_)) => a.string(left) == b.string(right),
+        (Value::Temporal(_), Value::Temporal(_)) => {
+            let left = a.temporal(left).unwrap();
+            let right = b.temporal(right).unwrap();
+            left.kind() == right.kind() && left.as_str() == right.as_str()
+        }
         (Value::Sequence(left), Value::Sequence(right)) => {
             left.len() == right.len()
                 && left
@@ -66,6 +71,7 @@ fn check_node(document: &Document, node: &Node) -> usize {
             check_span(document.source(), *span);
             assert!(document.slice(*span).is_some());
         }
+        Value::Temporal(_) => assert!(document.temporal(node).is_some()),
         Value::String(StringValue::Decoded(_)) | Value::Null | Value::Bool(_) => {}
         Value::Sequence(items) => {
             for child in items {

@@ -1,6 +1,7 @@
 """Bounded Python type projections into DAML's JSON Schema module boundary."""
 
 import dataclasses
+import datetime
 import enum
 import json
 import math
@@ -19,7 +20,13 @@ from typing import (
     get_type_hints,
 )
 
-from .daml import SchemaModule
+from .daml import Date, DateTime, SchemaModule, Time
+
+_TEMPORAL_DEFAULT_TYPES = {
+    datetime.date: ("date", Date),
+    datetime.time: ("time", Time),
+    datetime.datetime: ("datetime", DateTime),
+}
 
 
 def schema_from_types(
@@ -62,7 +69,13 @@ def schema_from_types(
     return SchemaModule.from_json(json.dumps({"types": bindings}, allow_nan=False))
 
 
-def _check_json(value: Any, context: str, *, python_default: bool = False) -> None:
+def _check_json(
+    value: Any,
+    context: str,
+    *,
+    python_default: bool = False,
+    temporal_default: bool = False,
+) -> None:
     """Check representation without copying, coercing keys, or calling serializers."""
     active = set()
     pending = [(value, "$", False)]
@@ -73,6 +86,12 @@ def _check_json(value: Any, context: str, *, python_default: bool = False) -> No
             continue
         if python_default and isinstance(item, enum.Enum):
             pending.append((item.value, path, False))
+            continue
+        if temporal_default and type(item) in (
+            datetime.date,
+            datetime.time,
+            datetime.datetime,
+        ):
             continue
         if item is None or type(item) in (str, bool, int):
             continue
@@ -188,6 +207,27 @@ def _export_pydantic(type_expression: Any, context: str) -> dict[str, Any]:
         def emit_warning(self, kind: Any, detail: str) -> None:
             raise ValueError(f"{context}: JSON Schema warning ({kind}): {detail}")
 
+        def date_schema(self, schema: Any) -> dict[str, Any]:
+            return {"type": "string", "x-daml-scalar": {"kind": "date"}}
+
+        def time_schema(self, schema: Any) -> dict[str, Any]:
+            return _temporal_schema(schema, "time")
+
+        def datetime_schema(self, schema: Any) -> dict[str, Any]:
+            return _temporal_schema(schema, "datetime")
+
+        def default_schema(self, schema: Any) -> dict[str, Any]:
+            result = self.generate_inner(schema["schema"])
+            if "default" not in schema:
+                return result
+            annotations: list[dict[str, str]] = []
+            # Preserve actual static kinds, not Pydantic's string coercions or
+            # serializer settings. Factories/hooks were rejected before this.
+            result["default"] = _project_default(schema["default"], "", annotations)
+            if annotations:
+                result["x-daml-default-temporals"] = annotations
+            return result
+
     try:
         _check_type_hooks(type_expression, BaseModel, context)
         adapter = TypeAdapter(type_expression)
@@ -198,6 +238,40 @@ def _export_pydantic(type_expression: Any, context: str) -> dict[str, Any]:
     except (TypeError, ValueError, NameError) as error:
         error_type = TypeError if isinstance(error, TypeError) else ValueError
         raise error_type(f"{context}: {error}") from error
+
+
+def _temporal_schema(schema: dict[str, Any], kind: str) -> dict[str, Any]:
+    scalar = {"kind": kind}
+    policy = schema.get("tz_constraint")
+    if policy is not None:
+        scalar["offset"] = {"aware": "required", "naive": "forbidden"}[policy]
+    return {"type": "string", "x-daml-scalar": scalar}
+
+
+def _project_default(value: Any, path: str, annotations: list[dict[str, str]]) -> Any:
+    """Project admitted static defaults, recording only actual temporal values."""
+    if type(value) in _TEMPORAL_DEFAULT_TYPES:
+        kind, constructor = _TEMPORAL_DEFAULT_TYPES[type(value)]
+        text = constructor(value.isoformat()).isoformat()
+        annotations.append({"path": path, "kind": kind})
+        return text
+    if isinstance(value, enum.Enum):
+        return _project_default(value.value, path, annotations)
+    if isinstance(value, (list, tuple)):
+        return [
+            _project_default(child, f"{path}/{index}", annotations)
+            for index, child in enumerate(value)
+        ]
+    if isinstance(value, dict):
+        return {
+            key: _project_default(
+                child,
+                f"{path}/{key.replace('~', '~0').replace('/', '~1')}",
+                annotations,
+            )
+            for key, child in value.items()
+        }
+    return value
 
 
 def _check_config(config: Mapping[str, Any], context: str) -> None:
@@ -220,6 +294,7 @@ def _check_config(config: Mapping[str, Any], context: str) -> None:
 def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> None:
     """Find hooks which can disappear entirely when a core schema is generated."""
     # This inspection only runs on the optional Pydantic exporter route.
+    from pydantic import AwareDatetime, NaiveDatetime
     from pydantic.fields import FieldInfo
     from typing_extensions import TypeAliasType as BackportTypeAliasType
 
@@ -242,6 +317,19 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             if method is None:
                 continue
             function = method.__func__ if hasattr(method, "__func__") else method
+            # Recognize the two exact framework-owned offset hooks, never a
+            # subclass, replacement hook, or a similarly named custom type.
+            temporal_owner = (
+                expression
+                if expression is AwareDatetime or expression is NaiveDatetime
+                else type(expression)
+            )
+            if (
+                hook == "__get_pydantic_core_schema__"
+                and temporal_owner in (AwareDatetime, NaiveDatetime)
+                and function is temporal_owner.__get_pydantic_core_schema__.__func__
+            ):
+                continue
             base_function = getattr(base_model, hook).__func__
             if function is not base_function:
                 raise ValueError(f"{context}: custom {hook} is unsupported")
@@ -323,7 +411,20 @@ def _check_field_info(field: Any, context: str, pending: list[Any]) -> None:
 
 
 _CORE_LEAVES = frozenset(
-    ("any", "none", "bool", "int", "float", "str", "literal", "enum", "definition-ref")
+    (
+        "any",
+        "none",
+        "bool",
+        "int",
+        "float",
+        "str",
+        "date",
+        "time",
+        "datetime",
+        "literal",
+        "enum",
+        "definition-ref",
+    )
 )
 _CORE_WRAPPERS = frozenset(
     (
@@ -372,7 +473,9 @@ def _check_core_schema(root: dict[str, Any], base_model: type, context: str) -> 
         if node.get("default_factory") is not None:
             raise ValueError(f"{location}: default factory is unsupported")
         if "default" in node:
-            _check_json(node["default"], location, python_default=True)
+            _check_json(
+                node["default"], location, python_default=True, temporal_default=True
+            )
         if "config" in node:
             _check_config(node["config"], location)
         if kind in ("model", "dataclass", "typed-dict") and "cls" in node:
@@ -381,6 +484,22 @@ def _check_core_schema(root: dict[str, Any], base_model: type, context: str) -> 
             # Pydantic exports .pattern but drops compiled regex flags.
             if node["pattern"].flags != re.UNICODE:
                 raise ValueError(f"{location}: compiled regex flags are unsupported")
+        if kind in ("date", "time", "datetime"):
+            for constraint in ("gt", "ge", "lt", "le", "now_op", "now_utc_offset"):
+                if node.get(constraint) is not None:
+                    raise ValueError(
+                        f"{location}: temporal constraint {constraint!r} is unsupported"
+                    )
+            if node.get("tz_constraint") not in (None, "aware", "naive"):
+                raise ValueError(
+                    f"{location}: fixed temporal offset constraint is unsupported"
+                )
+            # Framework defaults include truncate. Projection deliberately does
+            # not adopt Python coercions: DAML values keep every fraction digit.
+            if node.get("microseconds_precision") not in (None, "truncate"):
+                raise ValueError(
+                    f"{location}: unsupported temporal microseconds precision behavior"
+                )
         if kind == "literal":
             _check_json(node["expected"], location, python_default=True)
         if kind == "enum":

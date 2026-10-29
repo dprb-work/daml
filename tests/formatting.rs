@@ -9,6 +9,12 @@ fn same_value(left: &Document, a: &Node, right: &Document, b: &Node) {
         (Value::Bool(a), Value::Bool(b)) => assert_eq!(a, b),
         (Value::Number(a), Value::Number(b)) => assert_eq!(left.slice(*a), right.slice(*b)),
         (Value::String(_), Value::String(_)) => assert_eq!(left.string(a), right.string(b)),
+        (Value::Temporal(_), Value::Temporal(_)) => {
+            let left = left.temporal(a).unwrap();
+            let right = right.temporal(b).unwrap();
+            assert_eq!(left.kind(), right.kind());
+            assert_eq!(left.as_str(), right.as_str());
+        }
         (Value::Sequence(a), Value::Sequence(b)) => {
             assert_eq!(a.len(), b.len());
             for (a, b) in a.iter().zip(b) {

@@ -39,7 +39,8 @@ const server = createServer(async (request, response) => {
       return;
     }
     const verifierModule = pathname === '/staged-checks.mjs' ||
-      pathname === '/review-checks.mjs' || pathname === '/final-review-checks.mjs';
+      pathname === '/review-checks.mjs' || pathname === '/final-review-checks.mjs' ||
+      pathname === '/temporal-checks.mjs';
     const file = verifierModule
       ? resolve(here, pathname.slice(1))
       : resolve(dist, `.${decodeURIComponent(pathname)}`);
@@ -101,6 +102,8 @@ try {
     window.runStagedChecks = runStagedChecks;
     const { runReviewChecks } = await import('/review-checks.mjs');
     window.runReviewChecks = runReviewChecks;
+    const { runTemporalChecks } = await import('/temporal-checks.mjs');
+    window.runTemporalChecks = runTemporalChecks;
     const { runFinalReviewChecks } = await import('/final-review-checks.mjs');
     window.runFinalReviewChecks = runFinalReviewChecks;
     document.querySelector('#result').textContent = 'SDK initialized';
@@ -395,6 +398,7 @@ try {
       nativeParityCase: fixture.case,
       ...window.runStagedChecks(sdk),
       ...window.runReviewChecks(sdk),
+      ...window.runTemporalChecks(sdk),
       ...window.runFinalReviewChecks(sdk),
     };
   }, {

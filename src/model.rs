@@ -29,6 +29,8 @@ pub enum Value {
     Number(Span),
     /// Ordinary, dedented literal, or wrapped text.
     String(StringValue),
+    /// An admitted intrinsic temporal literal, not an ordinary string or assertion.
+    Temporal(crate::ParsedTemporal),
     /// Ordered sequence entries.
     Sequence(Vec<Node>),
     /// Ordered mapping entries with unique unquoted keys.
@@ -85,6 +87,15 @@ impl Document {
         match &node.value {
             Value::String(StringValue::Source(span)) => self.slice(*span),
             Value::String(StringValue::Decoded(text)) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Borrows an admitted canonical temporal value without reparsing its payload.
+    /// Pass nodes belonging to this document, as with [`Self::string`].
+    pub fn temporal<'a>(&'a self, node: &'a Node) -> Option<crate::TemporalValue<'a>> {
+        match &node.value {
+            Value::Temporal(value) => value.value(&self.source),
             _ => None,
         }
     }
@@ -159,6 +170,8 @@ pub enum ErrorKind {
     InvalidEscape,
     /// A string delimiter or raw character violates its string form.
     InvalidString,
+    /// An intrinsic temporal constructor has a missing or invalid ISO payload.
+    InvalidTemporal,
     /// A string has no closing delimiter.
     UnterminatedString,
     /// A mapping or sequence has no closing delimiter.
@@ -204,6 +217,7 @@ impl fmt::Display for ParseError {
             ErrorKind::InvalidNumber => "invalid decimal number",
             ErrorKind::InvalidEscape => "invalid escape or continuation",
             ErrorKind::InvalidString => "invalid string syntax",
+            ErrorKind::InvalidTemporal => "invalid temporal literal",
             ErrorKind::UnterminatedString => "unterminated string",
             ErrorKind::UnterminatedCollection => "unterminated collection",
             ErrorKind::InvalidTag => "invalid or stacked tag",

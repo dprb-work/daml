@@ -42,6 +42,10 @@ fn show(document: &Document, node: &Node, depth: usize) {
         Value::Bool(value) => println!("{value}"),
         Value::Number(span) => println!("number {}", document.slice(*span).unwrap()),
         Value::String(_) => println!("string {:?}", document.string(node).unwrap()),
+        Value::Temporal(_) => {
+            let value = document.temporal(node).unwrap();
+            println!("{} {}", value.kind().as_str(), value.as_str());
+        }
         Value::Sequence(items) => {
             println!("sequence");
             for item in items {

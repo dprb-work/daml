@@ -224,6 +224,46 @@ leak onto supplied data.
 Malformed records, unknown fields, invalid or duplicate paths, missing targets,
 and an empty annotation array are rejected during schema admission. The declared
 tag must satisfy the current [tag grammar](syntax.md#structure-and-names).
+### Annotate temporal defaults
+
+JSON has no temporal primitive. A schema adapter that projects a native
+temporal default must preserve its kind with `x-daml-default-temporals`.
+Each record names a default-relative RFC 6901 `path` and a `kind` of `date`,
+`time`, or `datetime`. Use the empty path for the default root.
+
+```json
+{
+  "type": "object",
+  "default": {"day": "2026-10-29"},
+  "x-daml-default-temporals": [
+    {"path": "/day", "kind": "date"}
+  ]
+}
+```
+
+The annotation applies only to the schema's `default`; an identically named
+property in instance data is ordinary data. Targets must exist as string values,
+have valid temporal content, and use unique paths. A temporal marker on raw
+non-JSON data in `SchemaModule.from_daml` is rejected rather than silently
+projected as a string.
+
+The shared `x-daml-scalar` keyword carries intrinsic scalar constraints:
+
+```json
+{
+  "x-daml-scalar": {"kind": "datetime", "offset": "required"}
+}
+```
+
+`kind` is `string`, `date`, `time`, or `datetime`. `offset` is `optional`,
+`required`, or `forbidden`; it applies only to time/datetime and defaults to
+optional. An optional typed `const` uses an ISO temporal value of the declared
+kind. String Schema constraints inspect canonical ISO text but do not create a
+temporal value. Native `String` remains an ordinary string constraint.
+
+These keywords preserve intrinsic values in DAML's semantic boundary; plain
+`to_json` remains a lossy canonical-string projection.
+tag must satisfy the current [tag grammar](syntax.md#structure-and-names).
 
 `examples/schema_adapter.rs` contains a complete consumer-side conversion from a
 made-up vendor format. It maps that format's record marker and default-tag
@@ -231,7 +271,6 @@ metadata to native keywords, registers a canonical resource, and binds both root
 names and the nested settings type with regular `$ref`s. It then composes the
 module and resolves a tagged input. No consumer-specific adapter or callback
 framework belongs in DAML.
-
 ## Programmatic semantic admission
 
 `Schemas::resolve_semantic` and `resolve_semantic_with_limits` accept an editable
