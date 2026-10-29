@@ -17,8 +17,9 @@ from pydantic import (
     field_validator,
     model_serializer,
     model_validator,
+    with_config,
 )
-from typing_extensions import TypeAliasType
+from typing_extensions import TypeAliasType, TypedDict
 from typing_extensions import TypeVar as TypeVarWithDefault
 
 
@@ -52,6 +53,15 @@ class LateHookType:
         from pydantic_core import core_schema
 
         return core_schema.int_schema()
+
+
+class HookedTypedExtra(TypedDict, extra_items=LateHookType):
+    name: str
+
+
+@with_config(ConfigDict(json_schema_extra={"type": "string"}))
+class ConfiguredTypedDict(TypedDict):
+    name: str
 
 
 def resolve(types, value, expected, **kwargs):
@@ -271,6 +281,54 @@ def test_resolved_type_alias_and_inert_annotated_metadata_are_supported():
         "app.Documented",
     ) == {"value": 3}
     assert resolve({"app.Number": alias}, "4", "app.Number") == 4
+
+
+def test_typed_dict_extra_items_preserve_value_contracts():
+    class Open(TypedDict, extra_items=int):
+        name: str
+
+    assert resolve({"app.Open": Open}, '{name: "item"\ncount: 2}', "app.Open") == {
+        "name": "item",
+        "count": 2,
+    }
+    with pytest.raises(daml.ResolveError):
+        resolve({"app.Open": Open}, '{name: "item"\ncount: "bad"}', "app.Open")
+
+
+def test_typed_dict_hidden_hook_and_schema_config_are_rejected_with_binding():
+    for binding, expression in (
+        ("app.HookedTypedExtra", HookedTypedExtra),
+        ("app.ConfiguredTypedDict", ConfiguredTypedDict),
+    ):
+        try:
+            daml.schema_from_types({binding: expression})
+        except (TypeError, ValueError) as error:
+            assert binding in str(error)
+        else:
+            pytest.fail(f"{binding} accepted unsupported TypedDict behavior")
+
+
+def test_custom_str_metadata_hooks_are_rejected_on_roots_and_fields():
+    class CustomMetadata(str):
+        @classmethod
+        def __get_pydantic_core_schema__(cls, source_type, handler):
+            from pydantic_core import core_schema
+
+            return core_schema.int_schema()
+
+    class Model(BaseModel):
+        value: Annotated[int, CustomMetadata("metadata")]
+
+    for binding, expression in (
+        ("app.MetadataRoot", Annotated[int, CustomMetadata("metadata")]),
+        ("app.MetadataField", Model),
+    ):
+        try:
+            daml.schema_from_types({binding: expression})
+        except (TypeError, ValueError) as error:
+            assert binding in str(error)
+        else:
+            pytest.fail(f"{binding} accepted custom schema-hook metadata")
 
 
 def test_msgspec_public_exporter_marker_data_and_immutability():

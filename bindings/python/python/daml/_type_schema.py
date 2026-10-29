@@ -259,7 +259,7 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
         if origin is Annotated:
             annotation, *metadata = get_args(expression)
             pending.append(annotation)
-            pending.extend(item for item in metadata if not isinstance(item, str))
+            pending.extend(item for item in metadata if type(item) is not str)
             continue
         if origin is not Literal:
             pending.extend(get_args(expression))
@@ -300,6 +300,9 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
                 if isinstance(field.default, FieldInfo):
                     _check_field_info(field.default, f"{context}.{field.name}", pending)
         elif isinstance(expression, type) and hasattr(expression, "__required_keys__"):
+            # TypedDict variants expose optional Pydantic config and PEP 728 extras.
+            _check_config(getattr(expression, "__pydantic_config__", {}), context)
+            pending.append(getattr(expression, "__extra_items__", None))
             pending.extend(get_type_hints(expression, include_extras=True).values())
         # FieldInfo may appear directly inside Annotated, including its metadata.
         if isinstance(expression, FieldInfo):
@@ -316,7 +319,7 @@ def _check_field_info(field: Any, context: str, pending: list[Any]) -> None:
     if field.exclude_if is not None:
         raise ValueError(f"{context}: custom serialization exclude_if is unsupported")
     pending.append(field.annotation)
-    pending.extend(item for item in field.metadata if not isinstance(item, str))
+    pending.extend(item for item in field.metadata if type(item) is not str)
 
 
 _CORE_LEAVES = frozenset(
