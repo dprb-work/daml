@@ -1,70 +1,140 @@
 # Build a service configuration
 
-This tutorial starts with plain data, adds definitions and defaults, then selects
-independently authored providers. Use the checked-in files under
-[`examples/tutorial/`](../examples/tutorial/README.md) as the canonical example.
-The endpoint strings are sample data; the consumer does not contact them.
+Imagine a service whose configuration starts small: a name, a retry count, and
+later a choice of adapter. You want sensible defaults, but you also want the
+choices people do supply to be checked.
 
-## Data supplies values; schemas describe them
-
-A data document says which values this configuration supplies. A schema says
-which values are allowed and which defaults complete omitted fields. A native
-definition expresses that schema; an assertion tag in a data document selects
-a definition to check, rather than making the data itself a schema.
-
-If those layers are unfamiliar, begin with [data and schema](data-and-schema.md).
-It shows a small definition, input, completed result, and failure before adding
-nested records. For programmers, it connects the layers to types and values,
-then introduces structural typing, composition, and module-local names.
+Let's build that up. You'll first run a worker configuration, change its retry
+count, and see a useful failure. Then you'll give a service an HTTP adapter and
+swap in a separately defined provider without rewriting the service's contract.
+The examples print configuration values; the sample endpoints are not contacted.
 
 ## Before you start
 
 Use a source checkout with [the pinned Rust toolchain](development/building.md)
-installed. Run all commands from the repository root. Cargo builds the existing
-example consumers with locked dependencies; Python and the VS Code extension are
-not required for this tutorial.
+installed, and run commands from the repository root. Cargo builds the existing
+Rust example consumer, which completes and validates configuration and prints
+JSON. You don't need Python or the VS Code extension for this tutorial.
 
-The released `daml-fmt` and `daml-lsp` executables do not perform this tutorial's
-schema-resolution operation. Here, `cargo run --example native` runs a small
-library consumer, not a separately installed DAML validation command.
+If you only want to try editing first, use [the formatter guide](getting-started.md).
+The released native executables provide formatting and LSP support; the
+resolution steps below use the source-built library consumer.
 
-## 1. Read plain configuration
+The files under [`examples/tutorial/`](../examples/tutorial/README.md) are the
+working examples. Their definitions are handwritten DAML. There is no automatic
+code-type-to-schema generator to install as part of this tutorial.
 
-[`data/plain.daml`](../examples/tutorial/data/plain.daml) contains:
+## 1. Give the worker a name
+
+Open [`data/worker.daml`](../examples/tutorial/data/worker.daml):
 
 ```daml
+!app.Worker {
+  name: "demo"
+}
+```
+
+It names the configuration's definition, `app.Worker`, and supplies a name. Run it:
+
+```sh
+cargo run --locked --example native -- examples/tutorial examples/tutorial/data/worker.daml
+```
+
+You get more than the file supplied:
+
+```json
 {
+  "name": "demo",
+  "retries": 3
+}
+```
+
+Where did three retries come from? Look at
+[`app/Worker.daml`](../examples/tutorial/app/Worker.daml):
+
+```daml
+closed !Object {
+  name: !String
+  retries: !Int
+} = {
+  retries: 3
+}
+```
+
+This is the **schema layer**. It requires a string name and an integer retry
+count; the data after `=` supplies a default of three. `closed` means unexpected
+worker fields are errors rather than silently accepted additions.
+
+The configuration you ran is the **data layer**: one particular worker. DAML
+fills its missing retry count, then checks the completed value against the
+requirements. It doesn't rewrite the input file.
+
+You can read the definition as a type and the configuration as a value if that
+analogy is familiar. Otherwise, *requirements* and *supplied contents* are enough.
+[Data and schema](data-and-schema.md) explores both ways of thinking about it.
+
+## 2. Make a choice, then make a mistake
+
+Suppose this worker needs five retries. Save your own copy as `worker.daml` in
+the repository root, using another filename if that one is already in use:
+
+```daml
+!app.Worker {
+  name: "demo"
+  retries: 5
+}
+```
+
+Pass your copy to the same consumer, substituting its filename if needed:
+
+```sh
+cargo run --locked --example native -- examples/tutorial worker.daml
+```
+
+The result contains `"retries": 5`. The definition supplies a baseline; your
+explicit value takes precedence.
+
+Now change just the retry value in your copy:
+
+```daml
+!app.Worker {
+  name: "demo"
+  retries: "many"
+}
+```
+
+Run the same command again. It must fail with a schema violation at `/retries`.
+`"many"` is valid string syntax, but it isn't an integer. DAML doesn't replace a
+bad supplied choice with a default and carry on.
+
+Restore `retries: 5` if you want to keep using your copy. The remaining steps use
+the checked-in examples, so you don't need to edit them. You can also reproduce
+this failure directly with [`invalid/retries.daml`](../examples/tutorial/invalid/retries.daml).
+
+## 3. Give the service an adapter
+
+A worker's fields are straightforward. What happens when a configuration needs
+another configurable component?
+
+[`data/configured.daml`](../examples/tutorial/data/configured.daml) supplies an
+adapter with an endpoint:
+
+```daml
+!app.Service {
   name: "demo"
   adapter: { endpoint: "https://example.com" }
 }
 ```
 
-Inspect it:
+Run it:
 
 ```sh
-cargo run --locked --example inspect -- examples/tutorial/data/plain.daml
+cargo run --locked --example native -- examples/tutorial examples/tutorial/data/configured.daml
 ```
 
-The inspector prints a mapping tree, original source spans, and string values.
-The file has no type assertion and needs no definitions just to parse.
-Multi-entry objects use newlines rather than commas.
-
-For the two multiline string forms, inspect a second file:
-
-```sh
-cargo run --locked --example inspect -- examples/tutorial/data/text.daml
-```
-
-Its `instructions` value is `Read the configuration. Report any missing values.`
-The `template` value is `service:\n  name: demo`: triple-double quotes preserve
-relative layout after dedent. [The syntax reference](syntax.md) owns the exact
-framing and escape rules.
-
-## 2. Add a root definition
-
-The entry [`daml.bundle`](../examples/tutorial/daml.bundle) binds definition
-bundles to aliases. Its `app` alias selects the directory containing
-[`Service.daml`](../examples/tutorial/app/Service.daml):
+The service also receives `"retries": 3`; its adapter keeps the endpoint you
+supplied. Here is the service's definition in
+[`app/Service.daml`](../examples/tutorial/app/Service.daml):
 
 ```daml
 closed !Object {
@@ -76,16 +146,9 @@ closed !Object {
 }
 ```
 
-The fields are required. `closed` rejects additional service fields. The preset
-after `=` supplies a retry count when the configuration omits it.
-
-This is the schema layer: `retries: !Int` states a requirement, while the preset
-`retries: 3` embeds default data. A schema can describe many configurations; it
-is not one particular service configuration.
-
-The app bundle's own [`daml.bundle`](../examples/tutorial/app/daml.bundle)
-binds `contracts` to the directory containing
-[`Adapter.daml`](../examples/tutorial/contracts/Adapter.daml):
+Instead of naming every possible provider, it asks for an `Adapter`.
+[`contracts/Adapter.daml`](../examples/tutorial/contracts/Adapter.daml) says what
+that means:
 
 ```daml
 !Object {
@@ -93,44 +156,14 @@ binds `contracts` to the directory containing
 }
 ```
 
-That structural contract requires a string endpoint and permits other adapter
-fields. It does not enumerate provider names.
+An adapter must have a string endpoint. This record is open, so it can also have
+settings the service doesn't need to know about. The service's own record is
+closed; that doesn't make every nested record closed too.
 
-[`data/configured.daml`](../examples/tutorial/data/configured.daml) is the data
-layer. It supplies particular values and selects `!app.Service`:
+## 4. Choose HTTP and let it supply its settings
 
-```daml
-!app.Service {
-  name: "demo"
-  adapter: { endpoint: "https://example.com" }
-}
-```
-
-Complete and validate it:
-
-```sh
-cargo run --locked --example native -- examples/tutorial examples/tutorial/data/configured.daml
-```
-
-The result is:
-
-```json
-{
-  "adapter": {
-    "endpoint": "https://example.com"
-  },
-  "name": "demo",
-  "retries": 3
-}
-```
-
-The supplied data remains unchanged. The resolved value has the missing retry
-count. The plain JSON output omits assertion metadata; the Rust result retains it.
-
-## 3. Select an independent provider
-
-[`providers/Http.daml`](../examples/tutorial/providers/Http.daml) defines its own
-record without referencing the app or its adapter contract:
+The HTTP provider has its own definition in
+[`providers/Http.daml`](../examples/tutorial/providers/Http.daml):
 
 ```daml
 closed !Object {
@@ -141,7 +174,8 @@ closed !Object {
 }
 ```
 
-[`data/provider.daml`](../examples/tutorial/data/provider.daml) selects it:
+Select it on the adapter value, as
+[`data/provider.daml`](../examples/tutorial/data/provider.daml) does:
 
 ```daml
 !app.Service {
@@ -150,56 +184,68 @@ closed !Object {
 }
 ```
 
-Run:
-
 ```sh
 cargo run --locked --example native -- examples/tutorial examples/tutorial/data/provider.daml
 ```
 
-The completed adapter contains `"timeout": 30`, and the service still contains
-`"retries": 3`. The value must satisfy both the containing `Adapter` requirement
-and the explicit `Http` definition. Its tag does not replace the parent's
-constraints. An open adapter contract and a closed provider definition are
-compatible: one permits extra fields; the other restricts this selected value.
+The result now contains both defaults:
 
-## 4. Use another independently authored definition
+```json
+{
+  "adapter": {
+    "endpoint": "https://example.com",
+    "timeout": 30
+  },
+  "name": "demo",
+  "retries": 3
+}
+```
 
-The entry manifest also binds `extra` to `third-party/`. Its
-[`Custom.daml`](../examples/tutorial/third-party/Custom.daml) requires a string
-endpoint and supplies `label: "external"`.
+The service supplies its retry default. The HTTP definition supplies its timeout.
+Choosing HTTP doesn't waive the service's requirements: the endpoint still has
+to be a string, and any supplied timeout still has to be an integer.
+
+## 5. Swap providers, not the service contract
+
+A separately authored definition,
+[`third-party/Custom.daml`](../examples/tutorial/third-party/Custom.daml), also
+requires a string endpoint. It has a label instead of an HTTP timeout and supplies
+`label: "external"` as its default.
+
+[`data/external.daml`](../examples/tutorial/data/external.daml) selects it with
+`!extra.Custom`. Run that version:
 
 ```sh
 cargo run --locked --example native -- examples/tutorial examples/tutorial/data/external.daml
 ```
 
-The adapter receives `"label": "external"` instead of an HTTP timeout. The service
-still receives three retries. Neither `app/Service.daml` nor
-`contracts/Adapter.daml` changes to enumerate this provider. The entry context
-selects the bundle; the configuration selects the assertion.
+The adapter now contains `"label": "external"`; the service still gets three
+retries. Neither `Service.daml` nor `Adapter.daml` needed a new branch listing
+that provider. Its completed value meets the same requirement.
 
-[Structural composition](structural-composition.md) explains this open-world model
-and contrasts it with intentionally enumerated alternatives and nominal ancestry.
-It also distinguishes extensibility from the `closed` record modifier.
+The [`daml.bundle` files](../examples/tutorial/daml.bundle) make those names
+available. The entry bundle binds `app`, `providers`, and `extra` to directories;
+the app bundle has its own `contracts` binding. To expose another provider, the
+entry context needs a binding for its bundle. That is a wiring change, not a
+change to the service's requirements.
 
-## 5. Observe an invalid configuration
+This is the practical benefit of structural compatibility. Read
+[structural composition](structural-composition.md) for open-world providers,
+closed alternatives, and why record openness is a separate question.
 
-[`invalid/endpoint.daml`](../examples/tutorial/invalid/endpoint.daml) supplies
-`endpoint: 42` where the app requires a string:
+One final check: a numeric endpoint doesn't meet the contract, whether or not
+other fields look plausible. The deliberately invalid example demonstrates it:
 
 ```sh
 cargo run --locked --example native -- examples/tutorial examples/tutorial/invalid/endpoint.daml
 ```
 
-This command must exit unsuccessfully with a schema violation at
-`/adapter/endpoint`. It is valid DAML syntax but invalid for the selected
-contract. Syntax highlighting or a successful format operation does not prove
-that a configuration satisfies its definitions.
+Expect a schema violation at `/adapter/endpoint`.
 
 ## Consume it from a program
 
-The Rust API follows the same steps as the command-line example. This complete
-`main` function reads the provider configuration, parses its data, loads the
-bundle's asserted definitions, and resolves a completed, validated value:
+The command you've been running is a small Rust consumer. Here is the same path
+with fixed input filenames, ready to read as a complete `main` function:
 
 ```rust
 use daml::Bundle;
@@ -215,27 +261,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Repository examples can use the `daml` crate and its already-declared
-`serde_json` dependency. [`examples/native.rs`](../examples/native.rs) is the
-runnable consumer with command-line arguments and explicit output-error handling.
-Run it with the provider command above.
+[`examples/native.rs`](../examples/native.rs) is the runnable version with
+command-line arguments and explicit output-error handling. Repository examples
+can use `daml` and the already-declared `serde_json` dependency. In another Rust
+project, add a source/path dependency on DAML and declare `serde_json`; the DAML
+crate is not published to crates.io.
 
-In another Rust project, use a source/path dependency on DAML, declare
-`serde_json`, and select your own input and bundle paths. This project's crate is
-not published to crates.io.
+`document` retains the authored source and spans. `resolved` gives you completed
+values and their metadata. Printing `to_json()` exports plain values, not tags or
+the original document. [Python](python.md#parse-complete-and-inspect) and
+[browser JavaScript](../bindings/browser/README.md#load-and-edit) show the same
+engine from other languages.
 
-The distinction between source and values remains useful here: `document`
-retains authored source and spans; `resolved` exposes the completed value and
-its metadata. Printing `to_json()` exports plain values rather than the original
-document. For other languages, see [Python](python.md#parse-complete-and-inspect)
-or [browser JavaScript](../bindings/browser/README.md#load-and-edit).
+## Explore text and source
 
-## Continue
+For layout-preserving text versus wrapped prose, inspect the string example:
 
-- [Native definitions](native-authoring.md): constraints, bundles and preset rules.
-- [Resolution and schema interchange](schemas.md): completion and validation.
-- [Examples](../examples/README.md): the larger native corpus and library consumers.
-- [Python](python.md) or [browser SDK](../bindings/browser/README.md): other consumers
-  of the same language engine.
-- [Conversion](conversion.md): what plain exports preserve and where YAML/JSON
-  interoperability still requires consumer code.
+```sh
+cargo run --locked --example inspect -- examples/tutorial/data/text.daml
+```
+
+`instructions` decodes to `Read the configuration. Report any missing values.`
+The literal `template` keeps `service:\n  name: demo`. To inspect plain data
+without selecting a definition, run:
+
+```sh
+cargo run --locked --example inspect -- examples/tutorial/data/plain.daml
+```
+
+## Where to go next
+
+You've supplied values, used defaults, rejected an invalid choice, and selected
+independent providers. For the reasons behind those choices, read the
+[design principles](design-principles.md) or [YAML/JSON comparison](comparison.md).
+For exact rules, use [syntax](syntax.md), [native definitions](native-authoring.md),
+and [completion and validation](schemas.md). [The examples catalogue](../examples/README.md)
+links the larger corpus; [interoperability](conversion.md) explains the limits of
+plain exports and the currently missing YAML/JSON converters.

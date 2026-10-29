@@ -1,30 +1,30 @@
 # Install and format your first DAML file
 
-Use this guide to try the language and native tools without building Rust or
-Python. Start with [data versus schema](data-and-schema.md) if the distinction
-between values and requirements is new to you. To complete and validate
-configuration against definitions afterward, continue to [the tutorial](tutorial.md).
+Want to get a feel for DAML before building anything? Start with a file you can
+format and edit. You'll see how the structure reads and what the editor catches;
+[the tutorial](tutorial.md) adds definitions, defaults, and validation afterward.
 
-## 1. Install the native tools
+## 1. Get the native tools
 
-Download the archive and matching checksum for your platform from the
+Download your platform's archive and matching checksum from the
 [native v0.1.0 release](https://github.com/dprb-work/daml/releases/tag/v0.1.0).
-Follow [the installation guide](distribution.md) to verify, extract, and add its
-`bin` directory to `PATH`.
+[The installation guide](distribution.md) walks through verification, extraction,
+and adding the archive's `bin` directory to `PATH`.
 
-Check both executables:
+Check that both tools are available:
 
 ```sh
 daml-fmt --help
 daml-lsp --help
 ```
 
-The archive contains the formatter and language server. The VS Code extension is
-a separate package, and neither executable is a configuration-validation CLI.
+They run without Rust or Python. `daml-fmt` formats files; `daml-lsp` supports
+editors. The VS Code extension is a separate package, and neither native command
+is a configuration-validation CLI.
 
-## 2. Write a file
+## 2. Write something to format
 
-Save this as `service.daml`:
+In a scratch directory, save this as `service.daml`:
 
 ```daml
 !app.Service {
@@ -33,18 +33,18 @@ adapter: !providers.Http { endpoint: "https://example.com" }
 }
 ```
 
-Braces define the object boundaries. The `name` and `adapter` fields belong to
-the service; `endpoint` belongs to the adapter. Indentation is presentation.
-The tags name definitions that a consumer can later load. Formatting does not
-require those definitions.
+The service has a name and an adapter. Its braces already say which fields belong
+together, even though the indentation isn't helpful yet. The tags select
+definitions when a consumer validates the data; you can format the file before
+loading those definitions.
 
-## 3. Format it
+## 3. Let the formatter make it readable
 
 ```sh
 daml-fmt service.daml
 ```
 
-The command prints this to standard output and leaves `service.daml` unchanged:
+It prints this and leaves your source file alone:
 
 ```daml
 !app.Service {
@@ -53,33 +53,34 @@ The command prints this to standard output and leaves `service.daml` unchanged:
 }
 ```
 
-Save the output to a different file, then check it:
+Save the output to a different file and check it:
 
 ```sh
 daml-fmt service.daml > service.formatted.daml
 daml-fmt --check service.formatted.daml
 ```
 
-The check exits successfully without output. On unformatted input, `--check`
-exits with status 1; syntax or command errors exit with status 2. Do not redirect
-the output over the input path: the shell would truncate it before reading.
+The check succeeds silently. On the original unformatted input, `--check` would
+exit with status 1; syntax or command errors exit with status 2. Don't redirect
+over the input path: the shell would truncate it before the formatter reads it.
 
-## 4. Use an editor
+## 4. Try the editor feedback
 
 Follow [the VS Code guide](../integrations/vscode/README.md) to build and install
-the extension VSIX. Configure its server path if `daml-lsp` is not on `PATH`.
-Open `service.daml` in a trusted workspace and run **Format Document**.
+the extension VSIX. Set its server path if `daml-lsp` isn't on `PATH`, open your
+file in a trusted workspace, and run **Format Document**.
 
-Try removing the final `}` to see a syntax diagnostic, then restore it. Current
-editor support includes highlighting, syntax diagnostics, and document formatting.
-It does not load your definitions or report schema-validation errors. For another
-LSP-capable editor, see [the language-server setup](lsp.md).
+Remove the final `}` and notice the syntax diagnostic; then put it back. That is
+the current editor experience: highlighting, syntax diagnostics, and formatting.
+Checking a value against its definitions is a separate operation, not something
+the language server does today. For another LSP-capable editor, use
+[the server guide](lsp.md).
 
-## Next: definitions and defaults
+## Next: give the file some requirements
 
-[The configuration tutorial](tutorial.md) uses checked-in files and a source-built
-Rust example consumer. It adds definitions, inserts defaults, accepts independent
-providers, and demonstrates a validation failure.
-
-For compact syntax lookup use [the syntax reference](syntax.md). For the reasons
-behind these choices use [design principles](design-principles.md).
+[Build a service configuration](tutorial.md) to see a retry default appear, a bad
+value rejected, and an independent provider selected. It uses checked-in examples
+and a source-built Rust consumer. If you want the distinction between a
+configuration and its requirements first, read [data and schema](data-and-schema.md).
+Use [syntax](syntax.md) for lookup and [design principles](design-principles.md)
+for the reasons behind the choices.
