@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping
 from typing import (
     Annotated,
     Any,
+    ForwardRef,
     Literal,
     NewType,
     TypeAliasType,
@@ -220,11 +221,17 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
     """Find hooks which can disappear entirely when a core schema is generated."""
     # This inspection only runs on the optional Pydantic exporter route.
     from pydantic.fields import FieldInfo
+    from typing_extensions import TypeAliasType as BackportTypeAliasType
 
     pending = [type_expression]
     seen = set()
     while pending:
         expression = pending.pop()
+        if isinstance(expression, (str, ForwardRef)):
+            raise ValueError(
+                f"{context}: unresolved type references are unsupported; "
+                "supply resolved types"
+            )
         if id(expression) in seen:
             continue
         seen.add(id(expression))
@@ -238,7 +245,7 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             base_function = getattr(base_model, hook).__func__
             if function is not base_function:
                 raise ValueError(f"{context}: custom {hook} is unsupported")
-        if isinstance(expression, TypeAliasType):
+        if isinstance(expression, (TypeAliasType, BackportTypeAliasType)):
             pending.append(expression.__value__)
         if isinstance(expression, NewType):
             pending.append(expression.__supertype__)
@@ -249,12 +256,15 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
             if hasattr(expression, "has_default") and expression.has_default():
                 pending.append(expression.__default__)
         origin = get_origin(expression)
+        if origin is Annotated:
+            annotation, *metadata = get_args(expression)
+            pending.append(annotation)
+            pending.extend(item for item in metadata if not isinstance(item, str))
+            continue
         if origin is not Literal:
             pending.extend(get_args(expression))
-        if origin is not None and origin not in (Annotated, Literal):
+        if origin is not None and origin is not Literal:
             pending.append(origin)
-        if origin is Annotated:
-            continue
         if isinstance(expression, type) and issubclass(expression, base_model):
             if not expression.__pydantic_fields_complete__:
                 raise ValueError(
@@ -306,7 +316,7 @@ def _check_field_info(field: Any, context: str, pending: list[Any]) -> None:
     if field.exclude_if is not None:
         raise ValueError(f"{context}: custom serialization exclude_if is unsupported")
     pending.append(field.annotation)
-    pending.extend(field.metadata)
+    pending.extend(item for item in field.metadata if not isinstance(item, str))
 
 
 _CORE_LEAVES = frozenset(

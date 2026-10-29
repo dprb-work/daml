@@ -95,6 +95,8 @@ Models must have resolved annotations before export. If a model refers to a type
 defined later, call its Pydantic `model_rebuild()` after defining that type.
 The helper rejects incomplete metadata rather than inspecting unresolved names
 and risking a weakened schema.
+Other type expressions, including named alias targets, must likewise contain
+resolved types rather than string forward references.
 
 The default exporter supports declarative JSON-shaped fields, constraints and
 static defaults. Python model behavior that cannot be represented declaratively

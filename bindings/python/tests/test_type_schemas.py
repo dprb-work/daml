@@ -18,6 +18,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from typing_extensions import TypeAliasType
 from typing_extensions import TypeVar as TypeVarWithDefault
 
 
@@ -31,15 +32,18 @@ class IncompleteOrdinaryField(BaseModel):
     value: "LateHookType"
 
 
-class ResolvedForwardTarget(BaseModel):
-    value: int
-
-
 class ResolvedForwardModel(BaseModel):
     target: "ResolvedForwardTarget"
 
 
-ResolvedForwardModel.model_rebuild()
+class ResolvedForwardTarget(BaseModel):
+    value: int
+
+
+assert ResolvedForwardModel.model_rebuild() is True
+
+
+UnresolvedHookAlias = TypeAliasType("UnresolvedHookAlias", "LateHookType")
 
 
 class LateHookType:
@@ -248,6 +252,25 @@ def test_typevar_default_cannot_hide_custom_core_schema_behavior():
     defaulted = TypeVarWithDefault("HiddenDefault", default=Hidden)
     with pytest.raises((TypeError, ValueError), match="app.HiddenDefault"):
         daml.schema_from_types({"app.HiddenDefault": defaulted})
+
+
+def test_unresolved_type_alias_target_cannot_hide_custom_schema_hook():
+    with pytest.raises((TypeError, ValueError), match="app.HiddenAlias"):
+        daml.schema_from_types({"app.HiddenAlias": UnresolvedHookAlias})
+
+
+def test_resolved_type_alias_and_inert_annotated_metadata_are_supported():
+    alias = TypeAliasType("NumberAlias", int)
+
+    class Documented(BaseModel):
+        value: Annotated[int, "doc label"]
+
+    assert resolve(
+        {"app.Number": alias, "app.Documented": Documented},
+        "{value: 3}",
+        "app.Documented",
+    ) == {"value": 3}
+    assert resolve({"app.Number": alias}, "4", "app.Number") == 4
 
 
 def test_msgspec_public_exporter_marker_data_and_immutability():
