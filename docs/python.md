@@ -91,6 +91,11 @@ mathematical JSON integer semantics remain unchanged. The default projection
 supports string-keyed mappings, but rejects pattern-constrained mapping keys and
 constrained model-extra keys: Pydantic's JSON Schema output loses those restrictions.
 
+Models must have resolved annotations before export. If a model refers to a type
+defined later, call its Pydantic `model_rebuild()` after defining that type.
+The helper rejects incomplete metadata rather than inspecting unresolved names
+and risking a weakened schema.
+
 The default exporter supports declarative JSON-shaped fields, constraints and
 static defaults. Python model behavior that cannot be represented declaratively
 is rejected: custom validators/serializers, schema overrides, normalization,

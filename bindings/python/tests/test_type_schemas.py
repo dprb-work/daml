@@ -21,6 +21,35 @@ from pydantic import (
 from typing_extensions import TypeVar as TypeVarWithDefault
 
 
+class IncompleteTypedExtra(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: dict[str, "LateHookType"]
+    value: str
+
+
+class IncompleteOrdinaryField(BaseModel):
+    value: "LateHookType"
+
+
+class ResolvedForwardTarget(BaseModel):
+    value: int
+
+
+class ResolvedForwardModel(BaseModel):
+    target: "ResolvedForwardTarget"
+
+
+ResolvedForwardModel.model_rebuild()
+
+
+class LateHookType:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        from pydantic_core import core_schema
+
+        return core_schema.int_schema()
+
+
 def resolve(types, value, expected, **kwargs):
     module = daml.schema_from_types(types, **kwargs)
     return (
@@ -185,6 +214,27 @@ def test_local_forward_annotation_with_open_model_resolves():
     assert resolve({"app.Outer": model_type()}, "{inner: {value: 1}}", "app.Outer") == {
         "inner": {"value": 1}
     }
+
+
+def test_incomplete_forward_models_with_hidden_hooks_are_rejected():
+    for binding, expression in (
+        ("app.TypedExtra", IncompleteTypedExtra),
+        ("app.OrdinaryField", IncompleteOrdinaryField),
+    ):
+        try:
+            daml.schema_from_types({binding: expression})
+        except (TypeError, ValueError) as error:
+            assert binding in str(error)
+        else:
+            pytest.fail(f"{binding} accepted incomplete hook-bearing metadata")
+
+
+def test_explicitly_rebuilt_forward_model_remains_supported():
+    assert resolve(
+        {"app.ResolvedForward": ResolvedForwardModel},
+        "{target: {value: 7}}",
+        "app.ResolvedForward",
+    ) == {"target": {"value": 7}}
 
 
 def test_typevar_default_cannot_hide_custom_core_schema_behavior():

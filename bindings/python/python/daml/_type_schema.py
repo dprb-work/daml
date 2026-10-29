@@ -256,6 +256,11 @@ def _check_type_hooks(type_expression: Any, base_model: type, context: str) -> N
         if origin is Annotated:
             continue
         if isinstance(expression, type) and issubclass(expression, base_model):
+            if not expression.__pydantic_fields_complete__:
+                raise ValueError(
+                    f"{context}: model annotations are incomplete; "
+                    "call model_rebuild() after defining referenced types"
+                )
             _check_config(expression.model_config, context)
             if expression.model_config.get("extra") == "allow":
                 # Use the annotation Pydantic resolved with its model namespace;
