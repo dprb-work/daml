@@ -20,9 +20,11 @@ If you only want to try editing first, use [the formatter guide](getting-started
 The released native executables provide formatting and LSP support; the
 resolution steps below use the source-built library consumer.
 
-The files under [`examples/tutorial/`](../examples/tutorial/README.md) are the
-working examples. Their definitions are handwritten DAML. There is no automatic
-code-type-to-schema generator to install as part of this tutorial.
+The files under [`examples/tutorial/`](../examples/tutorial/README.md) show
+handwritten DAML definitions and native resolution. A separate
+[Python types example](../examples/python_types.py) derives in-memory schema
+modules from Pydantic models and dataclasses; it does not generate native
+`.daml` definition files.
 
 ## 1. Give the worker a name
 

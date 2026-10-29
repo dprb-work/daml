@@ -40,10 +40,8 @@ These examples show how a program consumes DAML, rather than only its syntax:
 
 | Language or operation | Code and reading path |
 |---|---|
-| Rust parsing and resolution | [Complete consumer](native.rs) and [short annotated example](../docs/tutorial.md#consume-it-from-a-program) |
-| Rust source inspection | [Tree and source-span inspector](inspect.rs) |
-| Python | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
-| Browser JavaScript | [Load, edit, write, and revalidate](../bindings/browser/README.md#load-and-edit) |
+| Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
+| Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
 
 Start with [values versus requirements](../docs/data-and-schema.md) if the
 schema/data distinction is new. That explanation also maps DAML concepts to

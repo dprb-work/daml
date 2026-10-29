@@ -103,11 +103,11 @@ The excerpt belongs inside a function returning `Result`. The tutorial has a
 also [Python](docs/python.md#parse-complete-and-inspect) and
 [browser JavaScript](bindings/browser/README.md#load-and-edit) examples.
 
-The longer-term workflow we want is **define configuration types in code, derive
-the schema, then author concrete values in DAML**. Automatic type-to-schema
-generation is not a shipped DAML tool today. The examples use handwritten DAML
-definitions; they demonstrate the configuration side of that workflow without
-pretending a generator already exists.
+The Python API also supports a bounded path from explicitly named Pydantic v2
+models and standard dataclasses to in-memory JSON Schema modules; it does not
+generate native `.daml` definition files or typed instances. See the
+[Python types example](examples/python_types.py) and [Python API guide](docs/python.md).
+Other workflows can use handwritten DAML definitions.
 
 ## What can I use today?
 
