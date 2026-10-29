@@ -15,5 +15,5 @@
 - [x] Run the frozen regression suite and actual model/dataclass/msgspec consumer scenarios.
 - [x] Prove base import/custom export without the optional dependency; check an extracted built package.
 - [x] Run repository-native checks and OpenSpec validation on the exact candidate.
-- [ ] Obtain independent code/security/contract review, repair kept findings and re-review.
-- [ ] Publish verified source for owner handoff; report remote CI and any pending integration authority separately.
+- [x] Obtain independent code/security/contract review, repair kept findings and re-review.
+- [x] Publish verified source for owner handoff; report remote CI and any pending integration authority separately.
