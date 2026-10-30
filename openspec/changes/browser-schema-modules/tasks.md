@@ -11,4 +11,4 @@
 - [x] Verify unchanged real consumer closure plus native/browser recursive parity; synthetic admission alone is not integration acceptance.
 - [x] Complete applicable native Rust, generated-type, dependency and packaging verification on the final candidate.
 - [x] Complete consolidation/simplification examinations and independent implementation review.
-- [ ] Publish the source candidate for immutable consumer qualification; keep merge/release authorization separate.
+- [x] Publish the source candidate for immutable consumer qualification; keep merge/release authorization separate. Source candidate: [PR #26](https://github.com/dprb-work/daml/pull/26); SDK publication remains a separate gate.
