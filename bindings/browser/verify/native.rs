@@ -1,4 +1,6 @@
-use daml::{Bundle, FormatOptions, Origin, SemanticNode, SemanticValue, parse};
+use daml::{
+    Bundle, FormatOptions, Origin, SchemaModule, Schemas, SemanticNode, SemanticValue, parse,
+};
 use serde_json::{Value, json};
 use std::{env, fs, io};
 
@@ -155,13 +157,112 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    let module_sources = fixture
+        .get("schemaModuleSources")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "schemaModuleSources is required",
+            )
+        })?;
+    let modules = module_sources
+        .iter()
+        .map(|source| -> Result<_, Box<dyn std::error::Error>> {
+            let source = source.as_str().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "module source must be a string")
+            })?;
+            Ok(SchemaModule::from_json(source)?)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let module_schemas = Schemas::compose(modules)?;
+    let module_source = fixture
+        .get("schemaModuleSource")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "schemaModuleSource is required")
+        })?;
+    let module_expected = fixture
+        .get("schemaModuleExpected")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "schemaModuleExpected is required",
+            )
+        })?;
+    let module_document = parse(module_source)?;
+    let module_resolution = module_schemas.resolve_as(&module_document, module_expected)?;
+    let module_semantic = SemanticNode::from_resolved(module_resolution.root());
+    let module_canonical_source =
+        module_schemas.format_semantic(&module_semantic, FormatOptions::default())?;
+    let module_default = module_resolution.root().get("attempts").ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "module default attempts is missing",
+        )
+    })?;
+    let module_default_origin = match module_default.origin() {
+        Origin::Default(location) => json!({
+            "resource": location.resource,
+            "pointer": location.pointer,
+        }),
+        Origin::Input(_) | Origin::Semantic => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "module attempts must originate from the registered resource default",
+            )
+            .into());
+        }
+    };
+
+    let recursive_field = |name: &str| {
+        fixture.get(name).and_then(Value::as_str).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("{name} is required"))
+        })
+    };
+    let recursive_schemas = Schemas::compose([SchemaModule::from_json(recursive_field(
+        "recursiveModule",
+    )?)?])?;
+    let recursive_document = parse(recursive_field("recursiveSource")?)?;
+    let recursive_resolution =
+        recursive_schemas.resolve_as(&recursive_document, recursive_field("recursiveExpected")?)?;
+    let recursive_value = SemanticNode::from_resolved(recursive_resolution.root());
+    recursive_schemas.validate_semantic(
+        &recursive_value,
+        Some(recursive_field("recursiveExpected")?),
+    )?;
+    let recursive_canonical =
+        recursive_schemas.format_semantic(&recursive_value, FormatOptions::default())?;
+    let recursive_origin = recursive_resolution
+        .root()
+        .get("next")
+        .unwrap()
+        .get("copies")
+        .unwrap()
+        .origin();
+    let Origin::Default(recursive_location) = recursive_origin else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "recursive default must retain its schema origin",
+        )
+        .into());
+    };
+
     println!(
         "{}",
         json!({
             "canonicalSource": canonical_source,
             "taglessCanonicalSource": tagless_canonical_source,
             "rebaseCanonicalSource": rebase_canonical_source,
-            "defaultOrigin": default_origin
+            "defaultOrigin": default_origin,
+            "schemaModuleCanonicalSource": module_canonical_source,
+            "schemaModuleDefaultOrigin": module_default_origin,
+            "recursiveCanonicalSource": recursive_canonical,
+            "recursiveDefaultOrigin": {
+                "resource": recursive_location.resource,
+                "pointer": recursive_location.pointer,
+            }
         })
     );
     Ok(())

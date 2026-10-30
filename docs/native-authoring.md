@@ -49,8 +49,22 @@ Only referenced definitions are loaded: selected root types, explicit data tags,
 explicit additional types, constraint references, and references/tags in declared defaults. Unused invalid
 files are not scanned. Manifest shape is admitted when the bundle is loaded;
 unreferenced dependency directories are not opened just because their aliases
-are declared. Bundle-import cycles are allowed; definition-reference cycles
-remain rejected by the bounded validation profile.
+are declared. Bundle-import cycles are allowed. Definition references may recur
+through object members or collection elements; pure alias cycles and other
+non-descending evaluation loops remain invalid.
+
+For example, a `Node.daml` definition can describe finite recursive data:
+
+```daml
+closed !Object {
+  value: !Int
+  children: !List { items: !self.Node } = []
+}
+```
+
+Defaults and inherited overrides keep their existing rules at each recursive
+member. Missing required containers that would need unending construction fail
+with `LimitExceeded`; resolution does not manufacture a terminating value.
 
 Tooling discovers the nearest ancestor manifest starting at a document's
 directory, unless a caller explicitly selects a context. Cwd, Git roots, and

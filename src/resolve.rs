@@ -38,6 +38,16 @@ enum CandidateRequirement {
     Feasible,
 }
 
+#[derive(Clone, Copy)]
+enum TagAdmission {
+    // Constraint-only validation does not retain a resolved snapshot.
+    Validate,
+    // A completed result checks constraints and retains canonical bindings.
+    Resolve,
+    // A staged candidate pins bindings before its constraints can be checked.
+    PinCandidate,
+}
+
 struct DefaultLayers {
     tag_owned: HashSet<SchemaId>,
     tag_branches: HashSet<SchemaId>,
@@ -136,6 +146,42 @@ impl Schemas {
         }
         .run_semantic(node, expected)
     }
+
+    /// Validates supplied semantic data and assertions without applying completion.
+    ///
+    /// Literal JSON mapping keys are accepted even when DAML source cannot represent
+    /// them. Success does not guarantee serialization. The input is not mutated.
+    ///
+    /// # Errors
+    ///
+    /// Returns tag, binding, expected-type, schema, numeric, or resource failures.
+    pub fn validate_semantic(
+        &self,
+        node: &SemanticNode,
+        expected: Option<&str>,
+    ) -> Result<(), ResolveError> {
+        let mut resolver = Resolver {
+            schemas: self,
+            budget: Budget {
+                limits: ResolutionLimits::default(),
+                nodes: 0,
+                bytes: 0,
+                steps: 0,
+                stage: None,
+            },
+            search: CompletionSearch::default(),
+            contracts: BTreeMap::new(),
+            pending_defaults: None,
+        };
+        let mut root = from_semantic_with_keys(node, 0, "", &mut resolver.budget, false)?;
+        resolver.known_tags(&root, "")?;
+        if let Some(expected) = expected {
+            let schema = resolver.expected_view(&root, expected)?;
+            Resolver::check_node(&root, &schema, "", &mut resolver.budget)?;
+        }
+        resolver.admit_tags(&mut root, "", 0, TagAdmission::Validate)
+    }
+
     pub(crate) fn complete_partial_default<'a>(
         &'a self,
         expected: &str,
@@ -245,17 +291,25 @@ impl<'a> Resolver<'a, '_> {
             views.push(view);
         }
         if let Some(expected) = expected {
-            views.push(self.schemas.type_schema(expected).ok_or_else(|| {
-                failure(
-                    ResolveErrorKind::UnknownExpectedType,
-                    root,
-                    format!("no schema is bound to expected type {expected:?}"),
-                    None,
-                    "",
-                )
-            })?);
+            views.push(self.expected_view(root, expected)?);
         }
         Ok(views)
+    }
+
+    fn expected_view(
+        &self,
+        root: &ResolvedNode<'_>,
+        expected: &str,
+    ) -> Result<SchemaView<'a>, ResolveError> {
+        self.schemas.type_schema(expected).ok_or_else(|| {
+            failure(
+                ResolveErrorKind::UnknownExpectedType,
+                root,
+                format!("no schema is bound to expected type {expected:?}"),
+                None,
+                "",
+            )
+        })
     }
 
     fn select_candidates(
@@ -387,7 +441,7 @@ impl<'a> Resolver<'a, '_> {
             .tag()
             .and_then(|_| tag_schema(self.schemas, &root))
             .map(|view| view.id());
-        self.admit_tags(&mut root, "", 0, true)?;
+        self.admit_tags(&mut root, "", 0, TagAdmission::Resolve)?;
         for view in root_views {
             if Some(view.id()) != asserted {
                 Self::check_node(&root, view, "", &mut self.budget)?;
@@ -790,6 +844,26 @@ impl<'a> Resolver<'a, '_> {
         origin: Origin<'a>,
         required: bool,
     ) -> Result<Option<ResolvedNode<'a>>, ResolveError> {
+        let Some((candidate, schemas)) =
+            self.missing_candidate(schemas, path, depth, origin, required)?
+        else {
+            return Ok(None);
+        };
+        self.complete(candidate, &schemas, path, CompletionLevel::merged(depth))
+            .map(Some)
+    }
+
+    // Candidate/default accumulators must be dropped before descending into a
+    // newly synthesized container, just as in complete_node_defaults. Keeping
+    // them in a recursive frame exhausts the ordinary stack before depth 128.
+    fn missing_candidate(
+        &mut self,
+        schemas: &[SchemaView<'a>],
+        path: &str,
+        depth: usize,
+        origin: Origin<'a>,
+        required: bool,
+    ) -> Result<Option<(ResolvedNode<'a>, Vec<SchemaView<'a>>)>, ResolveError> {
         if !required
             && schemas.iter().any(|schema| {
                 schema.value().get("x-daml-native-optional") == Some(&JsonValue::Bool(true))
@@ -909,13 +983,9 @@ impl<'a> Resolver<'a, '_> {
             self.budget.add_node(&implicit, path)?;
             let mut implicit = implicit;
             self.budget.classify(&mut implicit, path)?;
-            return self
-                .complete(implicit, &schemas, path, CompletionLevel::merged(depth))
-                .map(Some);
+            return Ok(Some((implicit, schemas)));
         }
-        let completed = completed.expect("checked as present");
-        self.complete(completed, &schemas, path, CompletionLevel::merged(depth))
-            .map(Some)
+        Ok(completed.map(|candidate| (candidate, schemas)))
     }
 
     fn conjunction(
@@ -1024,7 +1094,7 @@ impl<'a> Resolver<'a, '_> {
                             keyword,
                         }));
                     }
-                    if self.has_implicit_branch_work(schemas, &[branch], node, path)? {
+                    if self.has_implicit_branch_work(schemas, &[branch], node, path, 0)? {
                         return Ok(Some(Union {
                             schema: *schema,
                             keyword,
@@ -1096,8 +1166,18 @@ impl<'a> Resolver<'a, '_> {
         branch: &[SchemaView<'a>],
         node: &ResolvedNode<'a>,
         path: &str,
+        discovery_depth: usize,
     ) -> Result<bool, ResolveError> {
         self.budget.step(node, path)?;
+        if discovery_depth >= crate::schema::profile::MAX_SCHEMA_DEPTH {
+            return Err(failure(
+                ResolveErrorKind::LimitExceeded,
+                node,
+                "implicit container discovery exceeds depth bound",
+                None,
+                path,
+            ));
+        }
         let common = self.conjunction(common, node, path)?;
         let branch = self.schema_conjunction(branch.iter().copied(), node, path)?;
         if branch.is_empty() {
@@ -1158,6 +1238,7 @@ impl<'a> Resolver<'a, '_> {
                             &branch_children,
                             &probe,
                             &child_path,
+                            discovery_depth + 1,
                         )? {
                             return Ok(true);
                         }
@@ -1177,6 +1258,7 @@ impl<'a> Resolver<'a, '_> {
                         &branch_children,
                         value,
                         &crate::pointer::join(path, key),
+                        discovery_depth + 1,
                     )? {
                         return Ok(true);
                     }
@@ -1203,6 +1285,7 @@ impl<'a> Resolver<'a, '_> {
                         &branch_children,
                         item,
                         &crate::pointer::join(path, &index.to_string()),
+                        discovery_depth + 1,
                     )? {
                         return Ok(true);
                     }
@@ -1215,7 +1298,13 @@ impl<'a> Resolver<'a, '_> {
         for schema in &branch {
             for keyword in ["anyOf", "oneOf"] {
                 for nested in schema.array_children(keyword) {
-                    if self.has_implicit_branch_work(&combined, &[nested], node, path)? {
+                    if self.has_implicit_branch_work(
+                        &combined,
+                        &[nested],
+                        node,
+                        path,
+                        discovery_depth + 1,
+                    )? {
                         return Ok(true);
                     }
                 }
@@ -1270,7 +1359,7 @@ impl<'a> Resolver<'a, '_> {
         node: &mut ResolvedNode<'a>,
         path: &str,
         depth: usize,
-        check_constraints: bool,
+        admission: TagAdmission,
     ) -> Result<(), ResolveError> {
         self.budget.step(node, path)?;
         if depth > 128 {
@@ -1292,11 +1381,13 @@ impl<'a> Resolver<'a, '_> {
                     path,
                 )
             })?;
-            if check_constraints {
+            if !matches!(admission, TagAdmission::PinCandidate) {
                 Self::check_node(node, &schema, path, &mut self.budget)?;
             }
             let tag = node.tag.as_ref().expect("checked asserted tag is present");
-            if tag.binding.is_none() || !matches!(tag.origin, Origin::Semantic) {
+            if !matches!(admission, TagAdmission::Validate)
+                && (tag.binding.is_none() || !matches!(tag.origin, Origin::Semantic))
+            {
                 let canonical = self
                     .schemas
                     .canonical_binding_schema(tag.binding.as_deref().unwrap_or(tag.name.as_ref()))
@@ -1330,7 +1421,7 @@ impl<'a> Resolver<'a, '_> {
                         child,
                         &crate::pointer::join(path, key),
                         depth + 1,
-                        check_constraints,
+                        admission,
                     )?;
                 }
             }
@@ -1340,7 +1431,7 @@ impl<'a> Resolver<'a, '_> {
                         child,
                         &crate::pointer::join(path, &i.to_string()),
                         depth + 1,
-                        check_constraints,
+                        admission,
                     )?;
                 }
             }
@@ -1354,10 +1445,11 @@ impl<'a> Resolver<'a, '_> {
         path: &str,
         budget: &mut Budget<'_>,
     ) -> Result<(), ResolveError> {
-        budget.charge_work(schema.evaluation_cost(resolved_work(node)), node, path)?;
-        if schema.uses_uniqueness() {
-            budget.charge_work(schema.evaluation_cost(uniqueness_work(node)), node, path)?;
-        }
+        budget.charge_work(
+            schema.evaluation_cost(node, budget.limits.max_steps.saturating_sub(budget.steps)),
+            node,
+            path,
+        )?;
         schema.validate(node).map_err(|failure_info| {
             let full_path = format!("{path}{}", failure_info.path);
             let failing = node.at_pointer(&failure_info.path).unwrap_or(node);
@@ -1551,42 +1643,6 @@ impl CompletionLevel {
 struct Union<'a> {
     schema: SchemaView<'a>,
     keyword: &'static str,
-}
-
-fn resolved_work(node: &ResolvedNode<'_>) -> usize {
-    match &node.value {
-        ResolvedValue::Sequence(items) => items.iter().fold(1usize, |count, child| {
-            count.saturating_add(resolved_work(child))
-        }),
-        ResolvedValue::Mapping(fields) => fields.iter().fold(1usize, |count, (key, child)| {
-            count
-                .saturating_add(key.len().div_ceil(64))
-                .saturating_add(resolved_work(child))
-        }),
-        ResolvedValue::String(value) => 1usize.saturating_add(value.len().div_ceil(64)),
-        ResolvedValue::Number(value) => {
-            1usize.saturating_add(value.as_ref().as_str().len().div_ceil(64))
-        }
-        _ => 1,
-    }
-}
-
-fn uniqueness_work(node: &ResolvedNode<'_>) -> usize {
-    match &node.value {
-        ResolvedValue::Sequence(items) => {
-            let item_work = items.iter().map(resolved_work).max().unwrap_or(0);
-            let pairs = items.len().saturating_mul(items.len().saturating_sub(1)) / 2;
-            items
-                .iter()
-                .fold(pairs.saturating_mul(item_work), |work, item| {
-                    work.saturating_add(uniqueness_work(item))
-                })
-        }
-        ResolvedValue::Mapping(fields) => fields.values().fold(0usize, |work, child| {
-            work.saturating_add(uniqueness_work(child))
-        }),
-        _ => 0,
-    }
 }
 
 /// A depth-first, mixed-radix search through branch/default choices. A changed
@@ -1802,6 +1858,16 @@ fn from_semantic<'a>(
     path: &str,
     budget: &mut Budget<'_>,
 ) -> Result<ResolvedNode<'a>, ResolveError> {
+    from_semantic_with_keys(node, depth, path, budget, true)
+}
+
+fn from_semantic_with_keys<'a>(
+    node: &'a SemanticNode,
+    depth: usize,
+    path: &str,
+    budget: &mut Budget<'_>,
+    require_source_keys: bool,
+) -> Result<ResolvedNode<'a>, ResolveError> {
     let mut result = untagged_placeholder(Origin::Semantic);
     budget.add_node(&result, path)?;
     if depth >= 128
@@ -1861,11 +1927,12 @@ fn from_semantic<'a>(
                     .iter()
                     .enumerate()
                     .map(|(index, child)| {
-                        from_semantic(
+                        from_semantic_with_keys(
                             child,
                             depth + 1,
                             &crate::pointer::join(path, &index.to_string()),
                             budget,
+                            require_source_keys,
                         )
                     })
                     .collect::<Result<_, _>>()?,
@@ -1877,7 +1944,7 @@ fn from_semantic<'a>(
             for (key, child) in fields {
                 budget.add_semantic_scalar(&result, key, path)?;
                 let child_path = crate::pointer::join(path, key);
-                if !crate::names::valid_key(key) {
+                if require_source_keys && !crate::names::valid_key(key) {
                     return Err(failure(
                         ResolveErrorKind::InvalidKey,
                         &result,
@@ -1886,7 +1953,13 @@ fn from_semantic<'a>(
                         &child_path,
                     ));
                 }
-                let child = from_semantic(child, depth + 1, &child_path, budget)?;
+                let child = from_semantic_with_keys(
+                    child,
+                    depth + 1,
+                    &child_path,
+                    budget,
+                    require_source_keys,
+                )?;
                 resolved.insert(Cow::Borrowed(key.as_str()), child);
             }
             ResolvedValue::Mapping(resolved)

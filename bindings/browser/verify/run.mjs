@@ -25,7 +25,13 @@ if (typeof nativeResult.canonicalSource !== 'string' ||
     typeof nativeResult.taglessCanonicalSource !== 'string' ||
     typeof nativeResult.rebaseCanonicalSource !== 'string' ||
     typeof nativeResult.defaultOrigin?.resource !== 'string' ||
-    typeof nativeResult.defaultOrigin?.pointer !== 'string') {
+    typeof nativeResult.defaultOrigin?.pointer !== 'string' ||
+    typeof nativeResult.schemaModuleCanonicalSource !== 'string' ||
+    typeof nativeResult.schemaModuleDefaultOrigin?.resource !== 'string' ||
+    typeof nativeResult.schemaModuleDefaultOrigin?.pointer !== 'string' ||
+    typeof nativeResult.recursiveCanonicalSource !== 'string' ||
+    typeof nativeResult.recursiveDefaultOrigin?.resource !== 'string' ||
+    typeof nativeResult.recursiveDefaultOrigin?.pointer !== 'string') {
   throw new Error('Native parity result must contain canonical sources and actual default-origin resource/pointer metadata.');
 }
 const html = `<!doctype html><meta charset="utf-8"><link rel="icon" href="data:,"><title>DAML browser verifier</title><main id="result">Loading SDK</main>`;
@@ -39,7 +45,8 @@ const server = createServer(async (request, response) => {
       return;
     }
     const verifierModule = pathname === '/staged-checks.mjs' ||
-      pathname === '/review-checks.mjs' || pathname === '/final-review-checks.mjs';
+      pathname === '/review-checks.mjs' || pathname === '/final-review-checks.mjs' ||
+      pathname === '/schema-module-checks.mjs';
     const file = verifierModule
       ? resolve(here, pathname.slice(1))
       : resolve(dist, `.${decodeURIComponent(pathname)}`);
@@ -103,10 +110,12 @@ try {
     window.runReviewChecks = runReviewChecks;
     const { runFinalReviewChecks } = await import('/final-review-checks.mjs');
     window.runFinalReviewChecks = runFinalReviewChecks;
+    const { runSchemaModuleChecks } = await import('/schema-module-checks.mjs');
+    window.runSchemaModuleChecks = runSchemaModuleChecks;
     document.querySelector('#result').textContent = 'SDK initialized';
   });
   networkDisabled = true;
-  const result = await page.evaluate(({ fixture, nativeCanonical, taglessCanonical, rebaseCanonical, nativeDefaultOrigin }) => {
+  const result = await page.evaluate(({ fixture, nativeCanonical, taglessCanonical, rebaseCanonical, nativeDefaultOrigin, moduleNative }) => {
     const fail = (message) => { throw new Error(`browser contract: ${message}`); };
     const same = (actual, expected, path = '$') => {
       if (actual === expected) return;
@@ -396,6 +405,7 @@ try {
       ...window.runStagedChecks(sdk),
       ...window.runReviewChecks(sdk),
       ...window.runFinalReviewChecks(sdk),
+      ...window.runSchemaModuleChecks(sdk, fixture, moduleNative),
     };
   }, {
     fixture,
@@ -403,6 +413,12 @@ try {
     taglessCanonical: nativeResult.taglessCanonicalSource,
     rebaseCanonical: nativeResult.rebaseCanonicalSource,
     nativeDefaultOrigin: nativeResult.defaultOrigin,
+    moduleNative: {
+      canonicalSource: nativeResult.schemaModuleCanonicalSource,
+      defaultOrigin: nativeResult.schemaModuleDefaultOrigin,
+      recursiveCanonicalSource: nativeResult.recursiveCanonicalSource,
+      recursiveDefaultOrigin: nativeResult.recursiveDefaultOrigin,
+    },
   });
 
   if (preloadExternalRequests.length !== 0) {

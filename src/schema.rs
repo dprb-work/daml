@@ -1,6 +1,6 @@
 use crate::{
     json_backend::{DamlJson, NodeRef},
-    resolved::{ResolvedNode, SchemaLocation},
+    resolved::{ResolvedNode, ResolvedValue, SchemaLocation},
     schema_error::{SchemaError, SchemaErrorKind},
 };
 use jsonschema::{
@@ -268,23 +268,370 @@ impl<'a> SchemaView<'a> {
     pub(crate) fn has_defaults(self) -> bool {
         self.entry().has_defaults
     }
-    pub(crate) fn uses_uniqueness(self) -> bool {
-        self.entry().uses_uniqueness
-    }
-    pub(crate) fn evaluation_cost(self, units: usize) -> usize {
-        self.entry().work.saturating_mul(units)
+    /// Reserve an upper bound before calling the upstream engine. This walks
+    /// structure, never decides whether a constraint or branch is valid.
+    pub(crate) fn evaluation_cost(self, node: &ResolvedNode<'_>, limit: usize) -> usize {
+        fn measure(
+            node: &ResolvedNode<'_>,
+            uniqueness: bool,
+            record: &mut impl FnMut(usize, usize, usize, usize),
+        ) -> (usize, usize) {
+            let (units, unique, immediate) = match &node.value {
+                ResolvedValue::Mapping(fields) => fields.iter().fold(
+                    (1usize, 0usize, 1usize),
+                    |(units, unique, immediate), (key, child)| {
+                        let (child_units, child_unique) = measure(child, uniqueness, record);
+                        (
+                            units
+                                .saturating_add(key.len().div_ceil(64))
+                                .saturating_add(child_units),
+                            unique.saturating_add(child_unique),
+                            immediate.saturating_add(key.len().div_ceil(64).max(1)),
+                        )
+                    },
+                ),
+                ResolvedValue::Sequence(items) => {
+                    let (mut units, mut unique, mut largest) = (1usize, 0usize, 0usize);
+                    for child in items {
+                        let (child_units, child_unique) = measure(child, uniqueness, record);
+                        units = units.saturating_add(child_units);
+                        unique = unique.saturating_add(child_unique);
+                        largest = largest.max(child_units);
+                    }
+                    let unique = if uniqueness {
+                        let pairs = items.len().saturating_mul(items.len().saturating_sub(1)) / 2;
+                        unique.saturating_add(pairs.saturating_mul(largest))
+                    } else {
+                        0
+                    };
+                    (units, unique, 1usize.saturating_add(items.len()))
+                }
+                ResolvedValue::String(value) => {
+                    let units = 1usize.saturating_add(value.len().div_ceil(64));
+                    (units, 0, units)
+                }
+                ResolvedValue::Number(value) => {
+                    let units = 1usize.saturating_add(value.as_ref().as_str().len().div_ceil(64));
+                    (units, 0, units)
+                }
+                _ => (1, 0, 1),
+            };
+            record(
+                node as *const ResolvedNode<'_> as usize,
+                units,
+                unique,
+                immediate,
+            );
+            (units, unique)
+        }
+        if let Some(work) = self.entry().work {
+            let (units, unique) = measure(node, self.entry().uses_uniqueness, &mut |_, _, _, _| {});
+            // Keep the admitted acyclic profile's existing cost and limits.
+            return work.saturating_mul(units.saturating_add(if self.entry().uses_uniqueness {
+                unique
+            } else {
+                0
+            }));
+        }
+        let mut measured = HashMap::new();
+        measure(
+            node,
+            self.entry().uses_uniqueness,
+            &mut |address, units, unique, immediate| {
+                measured.insert(address, (units, unique, immediate));
+            },
+        );
+        // Errors covers validate/collect_errors; Validity covers is_valid.
+        // An error-producing union probes and then collects, but its probes do
+        // not recursively collect errors. Keeping their counts separate avoids
+        // inventing a factor of two at every nested union. Marking is the
+        // independent unevaluated-annotation walk, which itself uses probes.
+        #[derive(Clone, Copy, Default)]
+        struct Passes {
+            errors: usize,
+            validity: usize,
+            marking: usize,
+        }
+        impl Passes {
+            fn total(self) -> usize {
+                self.errors
+                    .saturating_add(self.validity)
+                    .saturating_add(self.marking)
+            }
+        }
+        struct Task<'s, 'i> {
+            schema: SchemaView<'s>,
+            instance: NodeRef<'i>,
+            passes: Passes,
+            depth: usize,
+            enclosing_error_units: usize,
+        }
+        let mut pending = vec![Task {
+            schema: self,
+            instance: NodeRef::new(node),
+            passes: Passes {
+                errors: 1,
+                ..Passes::default()
+            },
+            depth: 0,
+            enclosing_error_units: 0,
+        }];
+        let mut cost = 0usize;
+        while let Some(task) = pending.pop() {
+            let Task {
+                schema,
+                instance,
+                passes,
+                depth,
+                enclosing_error_units,
+            } = task;
+            let (units, unique, immediate) = match instance {
+                NodeRef::Value(node) | NodeRef::Dispatch { node, .. } => {
+                    measured[&(node as *const ResolvedNode<'_> as usize)]
+                }
+                NodeRef::Property(name) => {
+                    let units = 1usize.saturating_add(name.len().div_ceil(64));
+                    (units, 0, units)
+                }
+            };
+            let uses_uniqueness = schema.value().get("uniqueItems") == Some(&Value::Bool(true));
+            let comparison = if uses_uniqueness { unique } else { 0 };
+            // is_valid probes do not construct ValidationErrors or call
+            // lazy_value. Keep deep data/comparison work for const/enum and
+            // uniqueItems; primitive checks and structural routing use only
+            // the immediate node. Errors/marking retain full subtree costs.
+            let probe_units = if uses_uniqueness
+                || schema.value().get("const").is_some()
+                || schema.value().get("enum").is_some()
+            {
+                units
+            } else {
+                immediate
+            };
+            let data_work = units
+                .max(enclosing_error_units)
+                .saturating_add(comparison)
+                .saturating_mul(passes.errors)
+                .saturating_add(
+                    units
+                        .saturating_add(comparison)
+                        .saturating_mul(passes.marking),
+                )
+                .saturating_add(
+                    probe_units
+                        .saturating_add(comparison)
+                        .saturating_mul(passes.validity),
+                );
+            cost = cost.saturating_add(schema.entry().local_work.saturating_mul(data_work));
+            if cost > limit || depth > MAX_SCHEMA_DEPTH {
+                return limit.saturating_add(1);
+            }
+            // Charge before queue allocation. Weighted modes coalesce identical
+            // structural traversals without expanding the engine's replay tree.
+            let mut push = |schema, instance, passes: Passes, enclosing_error_units| {
+                if passes.total() == 0 {
+                    return;
+                }
+                cost = cost.saturating_add(1);
+                if cost <= limit {
+                    pending.push(Task {
+                        schema,
+                        instance,
+                        passes,
+                        depth: depth + 1,
+                        enclosing_error_units,
+                    });
+                }
+            };
+            if passes.errors.saturating_add(passes.validity) != 0
+                && ["unevaluatedProperties", "unevaluatedItems"]
+                    .iter()
+                    .any(|keyword| {
+                        schema
+                            .value()
+                            .get(keyword)
+                            .is_some_and(|value| value != &Value::Bool(true))
+                    })
+            {
+                push(
+                    schema,
+                    instance,
+                    Passes {
+                        marking: passes.errors.saturating_add(passes.validity),
+                        ..Passes::default()
+                    },
+                    enclosing_error_units,
+                );
+            }
+            if let Some(reference) = schema.referenced() {
+                push(reference, instance, passes, enclosing_error_units);
+            }
+            for child in profile::children(schema.value()).filter(|child| child.applies) {
+                let view = schema
+                    .registry
+                    .locate(child.value)
+                    .expect("indexed schema child");
+                // Structural applicability only: do not evaluate a dependency
+                // schema when its trigger member is absent (or not an object).
+                if child.keyword() == "dependentSchemas"
+                    && !matches!(
+                        instance,
+                        NodeRef::Value(ResolvedNode { value: ResolvedValue::Mapping(fields), .. })
+                            if child.map_key().is_some_and(|key| fields.contains_key(key))
+                    )
+                {
+                    continue;
+                }
+                if !child.descends() {
+                    let child_passes = match child.keyword() {
+                        "anyOf" | "oneOf" => Passes {
+                            errors: passes.errors,
+                            validity: passes
+                                .validity
+                                .saturating_add(passes.errors)
+                                .saturating_add(passes.marking),
+                            marking: passes.marking,
+                        },
+                        // Conditions and negation test validity; they never
+                        // collect their failing condition's nested errors.
+                        "if" => Passes {
+                            validity: passes.total(),
+                            marking: passes.marking,
+                            ..Passes::default()
+                        },
+                        "not" => Passes {
+                            validity: passes.errors.saturating_add(passes.validity),
+                            ..Passes::default()
+                        },
+                        _ => Passes {
+                            errors: passes.errors,
+                            validity: passes.validity.saturating_add(passes.marking),
+                            marking: passes.marking,
+                        },
+                    };
+                    push(view, instance, child_passes, enclosing_error_units);
+                    continue;
+                }
+                // contains and unevaluated validators probe item/property
+                // validity and construct their own outer errors. Other
+                // structural applicators preserve the parent's error phase.
+                let child_passes = if matches!(
+                    child.keyword(),
+                    "contains" | "unevaluatedProperties" | "unevaluatedItems"
+                ) {
+                    Passes {
+                        validity: passes.total(),
+                        ..Passes::default()
+                    }
+                } else {
+                    Passes {
+                        errors: passes.errors,
+                        validity: passes.validity.saturating_add(passes.marking),
+                        ..Passes::default()
+                    }
+                };
+                match instance {
+                    NodeRef::Value(ResolvedNode {
+                        value: ResolvedValue::Mapping(fields),
+                        ..
+                    }) => {
+                        for (key, value) in fields {
+                            let applies = match child.keyword() {
+                                "properties" => child.map_key() == Some(key.as_ref()),
+                                "additionalProperties"
+                                    if schema.value().get("patternProperties").is_none() =>
+                                {
+                                    schema
+                                        .value()
+                                        .get("properties")
+                                        .and_then(Value::as_object)
+                                        .is_none_or(|properties| {
+                                            !properties.contains_key(key.as_ref())
+                                        })
+                                }
+                                "prefixItems" | "items" | "contains" | "unevaluatedItems"
+                                | "additionalItems" => false,
+                                _ => true,
+                            };
+                            if applies {
+                                let instance = if child.keyword() == "propertyNames" {
+                                    NodeRef::Property(key)
+                                } else {
+                                    NodeRef::new(value)
+                                };
+                                // Each collected property-name error wraps a
+                                // deep copy of the containing object. Carry
+                                // that cost through the key's error branches,
+                                // without changing the key validation instance.
+                                let error_units = if child.keyword() == "propertyNames" {
+                                    units.max(enclosing_error_units)
+                                } else {
+                                    enclosing_error_units
+                                };
+                                push(view, instance, child_passes, error_units);
+                            }
+                        }
+                    }
+                    NodeRef::Value(ResolvedNode {
+                        value: ResolvedValue::Sequence(items),
+                        ..
+                    }) => {
+                        for (index, value) in items.iter().enumerate() {
+                            let applies = match child.keyword() {
+                                "prefixItems" => child.array_index() == Some(index),
+                                "items" => {
+                                    index
+                                        >= schema
+                                            .value()
+                                            .get("prefixItems")
+                                            .and_then(Value::as_array)
+                                            .map_or(0, Vec::len)
+                                }
+                                "contains" | "unevaluatedItems" | "additionalItems" => true,
+                                _ => false,
+                            };
+                            if applies {
+                                push(
+                                    view,
+                                    NodeRef::new(value),
+                                    child_passes,
+                                    enclosing_error_units,
+                                );
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if cost > limit {
+                return limit.saturating_add(1);
+            }
+        }
+        cost
     }
     pub(crate) fn validate(self, node: &ResolvedNode<'_>) -> Result<(), SchemaFailure> {
         let entry = self.entry();
-        entry
+        self.registry
             .validator
-            .validate(NodeRef::new(node))
+            .validate(NodeRef::Dispatch {
+                key: &entry.dispatch_key,
+                node,
+            })
             .map_err(|error| {
-                let schema_location = validation_error_location(&error, &entry.location);
+                let schema_location = compiled_error_location(
+                    &error,
+                    &self.registry.entries,
+                    &self.registry.compiled_resource,
+                    &entry.diagnostic_location,
+                );
+                let mut path = error.instance_path().to_string();
+                // The dispatcher has only properties constraints, so an error
+                // must originate beneath this exact borrowed singleton field.
+                path.drain(..entry.dispatch_key.len() + 1);
                 SchemaFailure {
-                    path: error.instance_path().to_string(),
+                    path,
                     schema: schema_location,
-                    message: error.masked().to_string(),
+                    message: compiled_error_message(&error, &self.registry.entries, true),
                 }
             })
     }
@@ -292,10 +639,14 @@ impl<'a> SchemaView<'a> {
 struct SchemaEntry {
     value: Value,
     location: SchemaLocation,
+    // Canonical $id resource/pointer for diagnostics, distinct from the storage
+    // identity used by bindings and default provenance.
+    diagnostic_location: SchemaLocation,
     default_origin: Option<SchemaLocation>,
     default_tags: HashMap<usize, usize>,
-    validator: Validator<DamlJson>,
-    work: usize,
+    dispatch_key: String,
+    work: Option<usize>,
+    local_work: usize,
     has_defaults: bool,
     uses_uniqueness: bool,
 }
@@ -303,6 +654,8 @@ struct SchemaEntry {
 /// Immutable, explicitly composed schema registry and its compiled validators.
 pub struct Schemas {
     entries: Vec<SchemaEntry>,
+    validator: Validator<DamlJson>,
+    compiled_resource: String,
     by_type: HashMap<String, SchemaId>,
     by_binding: HashMap<String, SchemaId>,
     by_address: HashMap<usize, SchemaId>,
@@ -402,7 +755,7 @@ impl Schemas {
             SchemaError::new(kind, format!("cannot prepare schema registry: {error}"))
                 .caused_by(error)
         })?;
-        let stats = prepare_schema_graph(&registry_contents, &registry)?;
+        let mut stats = prepare_schema_graph(&registry_contents, &registry)?;
         let options = jsonschema::options_for::<DamlJson>()
             .with_draft(Draft::Draft202012)
             .with_registry(&registry)
@@ -419,17 +772,11 @@ impl Schemas {
         let mut total = 0usize;
         for (name, binding) in types {
             let index = entries.len();
-            append_schema_entries(
-                binding.value,
-                &binding.id,
-                &options,
-                &mut entries,
-                &mut total,
-            )?;
+            append_schema_entries(binding.value, &binding.id, &mut entries, &mut total)?;
             by_type.insert(name, SchemaId(index));
         }
         for (uri, value) in resources {
-            append_schema_entries(value, &uri, &options, &mut entries, &mut total)?;
+            append_schema_entries(value, &uri, &mut entries, &mut total)?;
         }
         let by_binding = entries
             .iter()
@@ -454,12 +801,6 @@ impl Schemas {
             })
             .collect::<HashMap<_, _>>();
         for entry in &mut entries {
-            let info = stats
-                .get(&entry.location)
-                .expect("every compiled view was preflighted");
-            entry.work = info.work;
-            entry.has_defaults = info.defaults;
-            entry.uses_uniqueness = info.uniqueness;
             if let Some(annotations) = entry
                 .value
                 .get("x-daml-default-tags")
@@ -547,8 +888,147 @@ impl Schemas {
                 .expect("preflight admitted only references to indexed schema nodes");
             references.insert(SchemaId(id), target_id);
         }
+        // All original URI/anchor context has already been resolved above.
+        // Compile one internal resource: a constant base/scope makes static
+        // reference target caching independent of the path used to reach it.
+        let compiled_resource = (0usize..)
+            .map(|index| format!("urn:daml:compiled:{index}"))
+            .find(|uri| {
+                let base = jsonschema::uri::from_str(uri).expect("generated absolute URI");
+                registry.resolver(base).lookup("#").is_err()
+            })
+            .expect("a finite registry cannot occupy every generated URI");
+        let mut definitions = Map::new();
+        let mut properties = Map::new();
+        let (mut compile_work, mut compiled_bytes) = check_value_limits(&serde_json::json!({
+            "$id": compiled_resource,
+            "$defs": {},
+            "properties": {},
+        }))?;
+        compile_work = compile_work.saturating_add(compiled_bytes.div_ceil(64));
+        for (id, entry) in entries.iter_mut().enumerate() {
+            let mut value = entry.value.clone();
+            let mut originals = profile::children(&entry.value);
+            profile::for_each_child_mut(&mut value, |child| {
+                let original = originals.next().expect("matching profile traversal");
+                // Boolean schemas have keyword-specific compiler fast paths
+                // and public error placement. Keep them literal; they remain
+                // independently indexed/dispatchable like every other view.
+                if original.value.is_boolean() {
+                    return;
+                }
+                let target = by_address[&(original.value as *const Value as usize)];
+                *child = serde_json::json!({"$ref": format!("#/$defs/{}", target.0)});
+            });
+            if let Some(object) = value.as_object_mut() {
+                for keyword in [
+                    "$id",
+                    "$anchor",
+                    "$dynamicAnchor",
+                    "$recursiveAnchor",
+                    "$defs",
+                    "definitions",
+                ] {
+                    object.remove(keyword);
+                }
+                if let Some(target) = references.get(&SchemaId(id)) {
+                    object.insert(
+                        "$ref".into(),
+                        Value::String(format!("#/$defs/{}", target.0)),
+                    );
+                }
+            }
+            // Only this flattened body's operative keywords execute here.
+            // Defaults, annotations and child bodies are not re-evaluated at
+            // every visit. Runtime error/marking phases still reserve full
+            // subtrees for upstream eager error materialization.
+            entry.local_work = value
+                .as_object()
+                .into_iter()
+                .flat_map(|object| object.iter())
+                .filter(|(keyword, value)| profile::validates(keyword, value))
+                .try_fold(1usize, |work, (keyword, value)| {
+                    let (nodes, bytes) = check_value_bounds(value, MAX_COMPILE_NODES)?;
+                    Ok::<_, SchemaError>(
+                        work.saturating_add(nodes)
+                            .saturating_add(keyword.len().saturating_add(bytes).div_ceil(64)),
+                    )
+                })?;
+            let wrapper = serde_json::json!({"$ref": format!("#/$defs/{id}")});
+            let (nodes, bytes) = check_value_bounds(&value, MAX_COMPILE_NODES)?;
+            let (wrapper_nodes, wrapper_bytes) = check_value_limits(&wrapper)?;
+            // Ordinary target caching does not cover annotation construction:
+            // helper caches contain only currently pending targets. Reserve
+            // every completed-target revisit with its path multiplicity.
+            let helper_roots = ["unevaluatedProperties", "unevaluatedItems"]
+                .iter()
+                .filter(|keyword| {
+                    entry
+                        .value
+                        .get(**keyword)
+                        .is_some_and(|value| value != &Value::Bool(true))
+                })
+                .count();
+            let helper_work = stats
+                .get(&entry.location)
+                .expect("every compiled view was preflighted")
+                .helper_work
+                .saturating_mul(helper_roots);
+            let member_bytes = bytes
+                .saturating_add(wrapper_bytes)
+                .saturating_add(entry.dispatch_key.len() * 2 + 6)
+                .saturating_add(if id == 0 { 0 } else { 2 });
+            compile_work = compile_work
+                .saturating_add(nodes)
+                .saturating_add(wrapper_nodes)
+                .saturating_add(member_bytes.div_ceil(64))
+                .saturating_add(helper_work);
+            compiled_bytes = compiled_bytes.saturating_add(member_bytes);
+            if compile_work > MAX_COMPILE_NODES || compiled_bytes > MAX_SOURCE_BYTES {
+                return Err(limit(
+                    "normalized schema compilation exceeds aggregate node/byte bounds",
+                ));
+            }
+            definitions.insert(entry.dispatch_key.clone(), value);
+            properties.insert(entry.dispatch_key.clone(), wrapper);
+        }
+        // Prepared diagnostic strings have one final owner; consume the
+        // ephemeral statistics after the last compilation-budget lookup.
+        for entry in &mut entries {
+            let info = stats
+                .remove(&entry.location)
+                .expect("every compiled view was preflighted");
+            entry.work = info.work;
+            entry.diagnostic_location = info.diagnostic_location;
+            entry.has_defaults = info.defaults;
+            entry.uses_uniqueness = info.uniqueness;
+        }
+        let dispatcher = serde_json::json!({
+            "$id": compiled_resource,
+            "$defs": definitions,
+            "properties": properties,
+        });
+        let validator = options.build(&dispatcher).map_err(|error| {
+            let fallback = SchemaLocation {
+                resource: String::new(),
+                pointer: String::new(),
+            };
+            let location = native_regex_error_location(&error).unwrap_or_else(|| {
+                compiled_error_location(&error, &entries, &compiled_resource, &fallback)
+            });
+            // Upstream paths cannot be rewritten on ValidationError. Translate
+            // this expected schema failure here rather than expose the internal
+            // compiler namespace through a downcastable error source.
+            SchemaError::new(
+                SchemaErrorKind::InvalidSchema,
+                format!("schema compilation failed: {error}"),
+            )
+            .at(location)
+        })?;
         Ok(Self {
             entries,
+            validator,
+            compiled_resource,
             by_type,
             by_binding,
             by_address,
@@ -698,7 +1178,6 @@ fn index_nested_addresses(
 fn append_schema_entries(
     value: Value,
     resource: &str,
-    options: &jsonschema::ValidationOptions<'_, std::sync::Arc<dyn jsonschema::Retrieve>, DamlJson>,
     entries: &mut Vec<SchemaEntry>,
     total: &mut usize,
 ) -> Result<(), SchemaError> {
@@ -706,11 +1185,6 @@ fn append_schema_entries(
         value: &Value,
         resource: &str,
         pointer: &str,
-        options: &jsonschema::ValidationOptions<
-            '_,
-            std::sync::Arc<dyn jsonschema::Retrieve>,
-            DamlJson,
-        >,
         entries: &mut Vec<SchemaEntry>,
         total: &mut usize,
     ) -> Result<(), SchemaError> {
@@ -718,15 +1192,10 @@ fn append_schema_entries(
         if *total > MAX_COMPILE_NODES {
             return Err(limit("aggregate schema compilation work exceeds bound"));
         }
-        let target = canonical_reference(resource, pointer);
-        let wrapper = serde_json::json!({"$ref":target});
         let location = SchemaLocation {
             resource: resource.into(),
             pointer: pointer.into(),
         };
-        let validator = options
-            .build(&wrapper)
-            .map_err(|error| compile_error(error, location.clone()))?;
         let default_origin = value.get("default").map(|_| SchemaLocation {
             resource: resource.into(),
             pointer: crate::pointer::join(pointer, "default"),
@@ -734,10 +1203,15 @@ fn append_schema_entries(
         entries.push(SchemaEntry {
             value: value.clone(),
             location,
+            diagnostic_location: SchemaLocation {
+                resource: String::new(),
+                pointer: String::new(),
+            },
             default_origin,
             default_tags: HashMap::new(),
-            validator,
-            work: 0,
+            dispatch_key: entries.len().to_string(),
+            work: None,
+            local_work: 0,
             has_defaults: false,
             uses_uniqueness: false,
         });
@@ -746,7 +1220,6 @@ fn append_schema_entries(
                 child.value,
                 resource,
                 &child.pointer(pointer),
-                options,
                 entries,
                 total,
             )?;
@@ -755,7 +1228,7 @@ fn append_schema_entries(
     }
     let mut nodes = 0;
     walk_schema(&value, 0, &mut nodes)?;
-    visit(&value, resource, "", options, entries, total)
+    visit(&value, resource, "", entries, total)
 }
 fn canonical_reference(resource: &str, pointer: &str) -> String {
     let mut fragment = String::with_capacity(pointer.len());
@@ -842,6 +1315,12 @@ fn check_daml_limits(document: &crate::Document, root: &crate::Node) -> Result<(
     visit(document, root, 0, &mut nodes, &mut bytes)
 }
 fn check_value_limits(value: &Value) -> Result<(usize, usize), SchemaError> {
+    check_value_bounds(value, MAX_SCHEMA_NODES)
+}
+
+// Source admission and ephemeral compiler representation share exact accounting;
+// only the latter is governed by the existing compilation-node bound.
+fn check_value_bounds(value: &Value, node_bound: usize) -> Result<(usize, usize), SchemaError> {
     fn string_size(value: &str) -> usize {
         2usize.saturating_add(
             value
@@ -859,9 +1338,10 @@ fn check_value_limits(value: &Value) -> Result<(usize, usize), SchemaError> {
         depth: usize,
         nodes: &mut usize,
         bytes: &mut usize,
+        node_bound: usize,
     ) -> Result<(), SchemaError> {
         *nodes = nodes.saturating_add(1);
-        if *nodes > MAX_SCHEMA_NODES || depth > MAX_SCHEMA_DEPTH {
+        if *nodes > node_bound || depth > MAX_SCHEMA_DEPTH {
             return Err(limit("module exceeds node/depth bound"));
         }
         match value {
@@ -873,14 +1353,14 @@ fn check_value_limits(value: &Value) -> Result<(usize, usize), SchemaError> {
             Value::Array(values) => {
                 *bytes = bytes.saturating_add(2 + values.len().saturating_sub(1));
                 for value in values {
-                    visit(value, depth + 1, nodes, bytes)?
+                    visit(value, depth + 1, nodes, bytes, node_bound)?
                 }
             }
             Value::Object(values) => {
                 *bytes = bytes.saturating_add(2 + values.len().saturating_sub(1));
                 for (key, value) in values {
                     *bytes = bytes.saturating_add(string_size(key) + 1);
-                    visit(value, depth + 1, nodes, bytes)?;
+                    visit(value, depth + 1, nodes, bytes, node_bound)?;
                 }
             }
         }
@@ -890,7 +1370,7 @@ fn check_value_limits(value: &Value) -> Result<(usize, usize), SchemaError> {
         Ok(())
     }
     let (mut nodes, mut bytes) = (0, 0);
-    visit(value, 0, &mut nodes, &mut bytes)?;
+    visit(value, 0, &mut nodes, &mut bytes, node_bound)?;
     Ok((nodes, bytes))
 }
 fn check_source(s: &str) -> Result<(), SchemaError> {
@@ -1062,36 +1542,76 @@ fn validate_exact_numbers(value: &Value) -> Result<(), SchemaError> {
         _ => Ok(()),
     }
 }
-#[derive(Clone, Copy)]
 struct SchemaStats {
-    work: usize,
+    // None denotes a graph whose evaluation needs an actual, finite instance.
+    work: Option<usize>,
+    helper_work: usize,
     defaults: bool,
     uniqueness: bool,
-    height: usize,
+    diagnostic_location: SchemaLocation,
 }
 
-/// Preflight the same prepared resources the engine uses. Locations, reference
-/// scope, default reachability, and expanded work must agree before compiling
-/// any validators; a repeated acyclic reference graph can otherwise expand
-/// exponentially despite having few physical schema nodes.
+/// Admit references against the engine's prepared resources, before compilation.
+/// Definition containment contributes compilation work but never evaluation or
+/// instance progress. Only cycles in the same-instance evaluation graph are
+/// forbidden; structural cycles reserve their work against each actual instance.
 fn prepare_schema_graph(
     resources: &HashMap<String, Value>,
     registry: &Registry<'_>,
 ) -> Result<HashMap<SchemaLocation, SchemaStats>, SchemaError> {
-    fn collect(value: &Value, resource: &str, pointer: &str, locations: &mut Vec<SchemaLocation>) {
-        locations.push(SchemaLocation {
-            resource: resource.into(),
-            pointer: pointer.into(),
-        });
+    fn collect(
+        value: &Value,
+        resource: &str,
+        pointer: &str,
+        base: &jsonschema::Uri<String>,
+        resource_pointer: &str,
+        locations: &mut Vec<(SchemaLocation, SchemaLocation)>,
+    ) -> Result<(), SchemaError> {
+        let scoped;
+        let (base, resource_pointer) = if let Some(id) = value.get("$id").and_then(Value::as_str) {
+            scoped = jsonschema::uri::resolve_against(&base.borrow(), id)
+                .map_err(|error| invalid(format!("invalid schema identifier {id:?}: {error}")))?;
+            (&scoped, pointer)
+        } else {
+            (base, resource_pointer)
+        };
+        locations.push((
+            SchemaLocation {
+                resource: resource.into(),
+                pointer: pointer.into(),
+            },
+            SchemaLocation {
+                resource: base.as_str().to_owned(),
+                pointer: pointer
+                    .strip_prefix(resource_pointer)
+                    .expect("a schema view is within its containing resource")
+                    .to_owned(),
+            },
+        ));
         for child in profile::children(value) {
-            collect(child.value, resource, &child.pointer(pointer), locations);
+            collect(
+                child.value,
+                resource,
+                &child.pointer(pointer),
+                base,
+                resource_pointer,
+                locations,
+            )?;
         }
+        Ok(())
+    }
+    struct Edge {
+        target: usize,
+        restricted: bool,
+        applies: bool,
+        descends: bool,
     }
     struct Prepared<'a> {
         value: &'a Value,
         base: String,
-        edges: Vec<(usize, bool, bool)>,
+        edges: Vec<Edge>,
         location: SchemaLocation,
+        diagnostic_location: SchemaLocation,
         own_work: usize,
     }
     let mut locations = Vec::new();
@@ -1100,7 +1620,9 @@ fn prepare_schema_graph(
         let (nodes, bytes) = check_value_limits(schema)?;
         total_nodes = total_nodes.saturating_add(nodes);
         total_bytes = total_bytes.saturating_add(bytes);
-        collect(schema, uri, "", &mut locations);
+        let base = jsonschema::uri::from_str(uri)
+            .map_err(|error| invalid(format!("invalid schema URI: {error}")))?;
+        collect(schema, uri, "", &base, "", &mut locations)?;
     }
     if total_nodes > MAX_SCHEMA_NODES || total_bytes > MAX_SOURCE_BYTES {
         return Err(limit("composed schemas exceed aggregate node/byte bounds"));
@@ -1108,7 +1630,7 @@ fn prepare_schema_graph(
     let mut prepared = Vec::new();
     let mut addresses = HashMap::new();
     let mut copied_bytes = 0usize;
-    for location in locations {
+    for (location, diagnostic_location) in locations {
         let uri = jsonschema::uri::from_str(&location.resource)
             .map_err(|error| invalid(format!("invalid schema URI: {error}")))?;
         let resolved = registry
@@ -1132,6 +1654,7 @@ fn prepare_schema_graph(
             value,
             base: resolved.resolver().base_uri().as_str().to_owned(),
             location,
+            diagnostic_location,
             edges: Vec::new(),
             own_work: nodes.saturating_add(bytes.div_ceil(64)),
         });
@@ -1150,113 +1673,216 @@ fn prepare_schema_graph(
                 .get(&(resolved.contents() as *const Value as usize))
                 .copied()
                 .ok_or_else(|| unknown("references into non-schema data are unsupported"))?;
-            edges.push((target, false, true));
+            edges.push(Edge {
+                target,
+                restricted: false,
+                applies: true,
+                descends: false,
+            });
         }
         for child in profile::children(node.value) {
             let target = addresses
                 .get(&(child.value as *const Value as usize))
                 .copied()
                 .ok_or_else(|| invalid("schema child is absent from the prepared registry"))?;
-            edges.push((target, child.unsupported_defaults, child.applies));
+            edges.push(Edge {
+                target,
+                restricted: child.unsupported_defaults,
+                applies: child.applies,
+                descends: child.descends(),
+            });
         }
         node.edges = edges;
     }
-    fn evaluate(
-        id: usize,
+    // Explicit DFS frames also bound admission's own stack on hostile graphs.
+    fn order(
         nodes: &[Prepared<'_>],
-        active: &mut HashSet<usize>,
-        memo: &mut [Option<SchemaStats>],
-        depth: usize,
-    ) -> Result<SchemaStats, SchemaError> {
-        if active.contains(&id) {
-            return Err(SchemaError::new(
-                SchemaErrorKind::ReferenceCycle,
-                "schema reference cycle",
-            )
-            .at(nodes[id].location.clone()));
-        }
-        if depth > MAX_SCHEMA_DEPTH {
-            return Err(limit("expanded schema graph exceeds depth bound"));
-        }
-        if let Some(info) = memo[id] {
-            return Ok(info);
-        }
-        active.insert(id);
-        let mut info = SchemaStats {
-            work: nodes[id].own_work,
-            defaults: nodes[id].value.get("default").is_some(),
-            uniqueness: nodes[id].value.get("uniqueItems") == Some(&Value::Bool(true)),
-            height: 1,
-        };
-        for &(target, _restricted, applicable) in &nodes[id].edges {
-            let child = evaluate(target, nodes, active, memo, depth + 1)?;
-            if applicable {
-                info.defaults |= child.defaults;
-                info.uniqueness |= child.uniqueness;
-            }
-            info.work = info.work.saturating_add(child.work);
-            info.height = info.height.max(child.height.saturating_add(1));
-            if info.height > MAX_SCHEMA_DEPTH {
-                return Err(limit("expanded schema graph exceeds depth bound"));
-            }
-            if info.work > MAX_COMPILE_NODES {
-                return Err(limit("expanded schema evaluation work exceeds bound"));
-            }
-        }
-        active.remove(&id);
-        memo[id] = Some(info);
-        Ok(info)
-    }
-    let mut memo = vec![None; prepared.len()];
-    let mut active = HashSet::new();
-    let mut total_work = 0usize;
-    for id in 0..prepared.len() {
-        total_work =
-            total_work.saturating_add(evaluate(id, &prepared, &mut active, &mut memo, 0)?.work);
-        if total_work > MAX_COMPILE_NODES {
-            return Err(limit("aggregate expanded compilation work exceeds bound"));
-        }
-    }
-    fn check_default_reachability(
-        id: usize,
-        nodes: &[Prepared<'_>],
-        memo: &[Option<SchemaStats>],
-        visited: &mut HashSet<usize>,
-    ) -> Result<(), SchemaError> {
-        if !visited.insert(id) {
-            return Ok(());
-        }
-        for &(target, restricted, applicable) in &nodes[id].edges {
-            if !applicable {
+        same_instance: bool,
+        recursive: &mut [bool],
+    ) -> Result<Vec<usize>, SchemaError> {
+        let mut state = vec![0u8; nodes.len()];
+        let mut finished = Vec::with_capacity(nodes.len());
+        for root in 0..nodes.len() {
+            if state[root] != 0 {
                 continue;
             }
-            if restricted
-                && memo[target]
-                    .expect("graph statistics were computed")
-                    .defaults
+            state[root] = 1;
+            let mut stack = vec![(root, 0usize)];
+            while let Some((id, cursor)) = stack.last_mut() {
+                let id = *id;
+                let Some(edge) = nodes[id].edges.get(*cursor) else {
+                    state[id] = 2;
+                    finished.push(id);
+                    stack.pop();
+                    continue;
+                };
+                *cursor += 1;
+                if same_instance && (!edge.applies || edge.descends) {
+                    continue;
+                }
+                match state[edge.target] {
+                    1 if same_instance => {
+                        return Err(SchemaError::new(
+                            SchemaErrorKind::ReferenceCycle,
+                            "schema reference cycle without instance descent",
+                        )
+                        .at(nodes[edge.target].location.clone()));
+                    }
+                    1 => recursive[edge.target] = true,
+                    0 => {
+                        if stack.len() >= MAX_SCHEMA_DEPTH {
+                            return Err(limit("expanded schema graph exceeds depth bound"));
+                        }
+                        state[edge.target] = 1;
+                        stack.push((edge.target, 0));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(finished)
+    }
+    let mut recursive = vec![false; prepared.len()];
+    let same_instance = order(&prepared, true, &mut recursive)?;
+    let finished = order(&prepared, false, &mut recursive)?;
+    let mut parents = vec![Vec::new(); prepared.len()];
+    for (id, node) in prepared.iter().enumerate() {
+        for edge in &node.edges {
+            parents[edge.target].push((id, edge.applies));
+        }
+    }
+    let mut stats: Vec<_> = prepared
+        .iter()
+        .map(|node| SchemaStats {
+            work: None,
+            helper_work: 0,
+            defaults: node.value.get("default").is_some(),
+            uniqueness: node.value.get("uniqueItems") == Some(&Value::Bool(true)),
+            diagnostic_location: SchemaLocation {
+                resource: String::new(),
+                pointer: String::new(),
+            },
+        })
+        .collect();
+    // The engine's unevaluated helper caches are pending-only: siblings rebuild
+    // completed targets. Helpers follow same-instance applicators/references,
+    // not properties/items or definition containment. That graph is a DAG by
+    // admission, so this DP retains every edge's multiplicity without expanding
+    // the potentially exponential helper tree in our own preflight.
+    let mut same_instance_heights = vec![1usize; prepared.len()];
+    for id in same_instance {
+        let node = &prepared[id];
+        // References, when present, are the first prepared edge; only physical
+        // object children acquire extra wrappers. Booleans remain literal.
+        let inline_wrappers = node
+            .edges
+            .iter()
+            .skip(usize::from(
+                node.value.get("$ref").and_then(Value::as_str).is_some(),
+            ))
+            .filter(|edge| edge.applies && prepared[edge.target].value.is_object())
+            .count();
+        // A canonical child wrapper has two JSON values and less than 64 bytes
+        // (view ids are bounded by MAX_SCHEMA_NODES). Reserve its three work
+        // units twice: once for helper construction and once for any ordinary
+        // compile invoked at the helper's potentially different location.
+        let mut work = node
+            .own_work
+            .saturating_add(inline_wrappers.saturating_mul(6));
+        for edge in node
+            .edges
+            .iter()
+            .filter(|edge| edge.applies && !edge.descends)
+        {
+            work = work.saturating_add(stats[edge.target].helper_work);
+            same_instance_heights[id] =
+                same_instance_heights[id].max(same_instance_heights[edge.target].saturating_add(1));
+        }
+        if same_instance_heights[id] > MAX_SCHEMA_DEPTH {
+            return Err(limit(
+                "expanded same-instance schema graph exceeds depth bound",
+            ));
+        }
+        stats[id].helper_work = work.min(MAX_COMPILE_NODES + 1);
+    }
+    // Every flag changes at most once. Propagate to a fixed point across SCCs,
+    // including defaults hidden behind refs and restricted applicators.
+    let mut pending: Vec<_> = (0..prepared.len()).collect();
+    while let Some(id) = pending.pop() {
+        for &(parent, applies) in &parents[id] {
+            let defaults = stats[parent].defaults | (applies && stats[id].defaults);
+            let uniqueness = stats[parent].uniqueness | (applies && stats[id].uniqueness);
+            let cyclic = recursive[parent] | recursive[id];
+            if defaults != stats[parent].defaults
+                || uniqueness != stats[parent].uniqueness
+                || cyclic != recursive[parent]
             {
+                stats[parent].defaults = defaults;
+                stats[parent].uniqueness = uniqueness;
+                recursive[parent] = cyclic;
+                pending.push(parent);
+            }
+        }
+    }
+    // Preserve admission compatibility for the old wholly acyclic profile.
+    // In a recursive/mixed registry these expanded per-view trees are runtime
+    // coefficients, not compiler work: compilation now has one normalized owner
+    // whose actual representation/shared-target work is reserved in compose.
+    let legacy_acyclic = !recursive.iter().any(|recursive| *recursive);
+    let mut heights = vec![1usize; prepared.len()];
+    let mut total_work = 0usize;
+    for id in finished {
+        let mut work = prepared[id].own_work;
+        if !recursive[id] {
+            for edge in &prepared[id].edges {
+                work = work.saturating_add(
+                    stats[edge.target]
+                        .work
+                        .expect("acyclic children precede parents"),
+                );
+                heights[id] = heights[id].max(heights[edge.target].saturating_add(1));
+            }
+            if heights[id] > MAX_SCHEMA_DEPTH {
+                return Err(limit("expanded schema graph exceeds depth bound"));
+            }
+            stats[id].work = Some(work);
+        }
+        if legacy_acyclic {
+            total_work = total_work.saturating_add(work);
+            if total_work > MAX_COMPILE_NODES {
+                return Err(limit("aggregate expanded compilation work exceeds bound"));
+            }
+        }
+    }
+    let mut reachable = HashSet::new();
+    let mut pending: Vec<_> = prepared
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.location.pointer.is_empty())
+        .map(|(id, _)| id)
+        .collect();
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        for edge in prepared[id].edges.iter().filter(|edge| edge.applies) {
+            if edge.restricted && stats[edge.target].defaults {
                 return Err(SchemaError::new(
                     SchemaErrorKind::UnsupportedDefaults,
                     "defaults reachable through an unsupported applicator are unsupported",
                 )
-                .at(nodes[target].location.clone()));
+                .at(prepared[edge.target].location.clone()));
             }
-            check_default_reachability(target, nodes, memo, visited)?;
+            pending.push(edge.target);
         }
-        Ok(())
-    }
-    let mut reachable = HashSet::new();
-    for (id, _) in prepared
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.location.pointer.is_empty())
-    {
-        check_default_reachability(id, &prepared, &memo, &mut reachable)?;
     }
     Ok(prepared
         .into_iter()
-        .enumerate()
-        .map(|(id, node)| (node.location, memo[id].expect("every view was evaluated")))
+        .zip(stats)
+        .map(|(node, mut info)| {
+            info.diagnostic_location = node.diagnostic_location;
+            (node.location, info)
+        })
         .collect())
 }
 fn validate_default_bindings(
@@ -1422,15 +2048,64 @@ fn native_regex_error_location(error: &ValidationError<'_>) -> Option<SchemaLoca
     })
 }
 
-fn compile_error(error: ValidationError<'static>, fallback: SchemaLocation) -> SchemaError {
-    let location = native_regex_error_location(&error)
-        .unwrap_or_else(|| validation_error_location(&error, &fallback));
-    SchemaError::new(
-        SchemaErrorKind::InvalidSchema,
-        format!("schema compilation failed: {error}"),
-    )
-    .at(location)
-    .caused_by(error)
+fn compiled_error_message(
+    error: &ValidationError<'_>,
+    entries: &[SchemaEntry],
+    masked: bool,
+) -> String {
+    match error.kind() {
+        ValidationErrorKind::Not { schema } => {
+            // The engine captures the normalized not-child for diagnostics.
+            // Render its authored view, not the private dispatch reference.
+            let authored = match schema
+                .get("$ref")
+                .and_then(Value::as_str)
+                .and_then(|reference| reference.strip_prefix("#/$defs/"))
+            {
+                Some(key) => {
+                    &entries[key.parse::<usize>().expect("generated compiled view key")].value
+                }
+                None => schema,
+            };
+            if masked {
+                format!("{authored} is not allowed for value")
+            } else {
+                format!("{authored} is not allowed for {}", error.instance())
+            }
+        }
+        // Match the engine's property-name rendering: it displays the nested
+        // key error rather than applying the outer instance placeholder.
+        ValidationErrorKind::PropertyNames { error } => {
+            compiled_error_message(error, entries, false)
+        }
+        _ if masked => error.masked().to_string(),
+        _ => error.to_string(),
+    }
+}
+
+fn compiled_error_location(
+    error: &ValidationError<'_>,
+    entries: &[SchemaEntry],
+    resource: &str,
+    fallback: &SchemaLocation,
+) -> SchemaLocation {
+    let location = validation_error_location(error, fallback);
+    if error.absolute_keyword_location().is_some() && location.resource != resource {
+        return location;
+    }
+    let Some(path) = location.pointer.strip_prefix("/$defs/") else {
+        return fallback.clone();
+    };
+    let (key, suffix) = path.split_once('/').unwrap_or((path, ""));
+    let entry = &entries[key.parse::<usize>().expect("generated compiled view key")];
+    SchemaLocation {
+        resource: entry.diagnostic_location.resource.clone(),
+        pointer: if suffix.is_empty() {
+            entry.diagnostic_location.pointer.clone()
+        } else {
+            format!("{}/{suffix}", entry.diagnostic_location.pointer)
+        },
+    }
 }
 fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError> {
     use crate::Value as V;

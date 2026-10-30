@@ -18,7 +18,7 @@ pub enum NativeErrorKind {
     NestedBundleBoundary,
     /// A referenced bundle alias or definition cannot be resolved.
     UnknownReference,
-    /// A reachable definition graph contains a forbidden reference cycle.
+    /// A reachable reference loop can repeat without descending into the instance.
     ReferenceCycle,
     /// A native definition is malformed or uses unsupported metadata.
     InvalidDefinition,

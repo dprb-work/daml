@@ -63,6 +63,14 @@ Duplicate JSON object members are rejected, including escaped spellings of the
 same key. `from_value` receives an already constructed map, so duplicate-key
 admission belongs to its caller.
 
+In the browser SDK, `Schemas.fromJsonModules(modules: readonly string[])` applies
+this same JSON loader and composition to explicit module-envelope strings.
+It does not lower interchange to native definition text or fetch missing
+resources. See the
+[browser interchange API](../bindings/browser/README.md#consumer-generated-json-schema-modules)
+for admission bounds and handle ownership. Native `Bundle` compilation remains
+the separate authoring route.
+
 ## Compose independently owned definitions
 
 The module envelope accepts `types`, mapping literal names to `{ schema: ... }`,
@@ -121,6 +129,29 @@ cargo run --locked --example resolve -- examples/application.daml \
 
 It validates nested records, scalars, and arrays; fills the adapter timeout and
 request ID; and prints completed JSON data. It does not invoke an adapter.
+
+## Validate without completion
+
+`Schemas::validate_semantic(&SemanticNode, expected: Option<&str>)` checks only
+the supplied data. It uses the composed registry's compiled constraints and
+honors every supplied tag/binding assertion, including descendants of open
+containers. An expected root adds a constraint; it does not override an explicit
+root tag. Unknown tags, bindings, and expected types fail.
+
+This operation returns `()` on success and a `ResolveError` on failure. It does
+not apply defaults, construct missing required containers, run stage callbacks,
+or mutate the input. Missing required fields remain errors even when completion
+could have supplied them. Semantic input admission and validation retain the
+normal numeric, scalar, node, depth, byte and schema-work budgets.
+
+Literal JSON mapping keys, including `$ref`, are accepted as data under those
+budgets. Validation does not establish that the value can be serialized as DAML
+source; resolution and writing continue to reject keys outside the source
+grammar. Errors identify semantic origin and available data/schema pointers,
+not a fictitious source location. The browser exposes this operation as
+`schemas.validateSemantic(value, expected?)`; Python uses
+`schemas.validate_semantic(value, expected=None)`, with the same exact semantic
+tree and embedded assertions as semantic resolution.
 
 ## Exact completion rules
 
@@ -352,10 +383,12 @@ cover materialized nodes, bytes, and work including alternative candidates;
 materialized nesting is bounded at 128.
 Default resolution limits are 100,000 cumulatively materialized nodes, 8 MiB of
 value/key/tag bytes, and 1,000,000 conservative work units. Alternative candidates
-share those budgets. Validation charges expanded schema work against instance
-nodes and text in 64-byte blocks. Schemas that can evaluate `uniqueItems` also
-reserve worst-case exact pair-comparison work before entering the validator;
-oversized comparisons return `LimitExceeded` rather than exceeding the budget.
+share those budgets. Validation reserves work before entering the engine,
+distinguishing validity probes, error collection and annotation walks. Recursive
+validation charges operative local constraints rather than repeatedly charging
+inert descriptions or child-schema payloads. Reservations include exact
+`uniqueItems` comparisons and containing-object copies for each collected
+property-name error; excessive work returns `LimitExceeded`.
 
 Composition bounds the selected schemas to 10,000 JSON nodes and 8 MiB, compiled
 schema-view copies to 8 MiB, and aggregate expanded compilation work to 100,000.
@@ -370,10 +403,17 @@ loading rather than entering upstream extreme-exponent fallback behavior or
 rounding through floating point. This is a bounded implementation profile, not
 an unbounded mathematical-conformance claim.
 
-Schema graphs are bounded and cycles/dynamic references are rejected in this
-profile. Reference retrieval is explicitly offline, format assertions disabled,
-and regular expressions use a size-bounded linear engine. No custom user Rust
-callbacks, default factories, templates, or environment reads are registered.
+Structural reference cycles are supported when every evaluation cycle consumes
+an object member, array element or property-name value. Cycles that can revisit
+the same instance without descent remain invalid. Definition containment is not
+itself constraint evaluation. Finite recursive data retains its constraints and
+default provenance; required containers or defaults that demand unending
+construction fail within the existing limits rather than inventing a leaf.
+
+Dynamic references remain unsupported. Retrieval is explicitly offline, format
+assertions disabled, and regular expressions use a size-bounded linear engine.
+No custom user Rust callbacks, default factories, templates, or environment reads
+are registered.
 
 The implementation reuses `jsonschema` 0.60.1 (MIT), `serde_json` 1.0.154, and
 `serde` 1.0.229 (both MIT OR Apache-2.0), pinned in Cargo and its lockfile.

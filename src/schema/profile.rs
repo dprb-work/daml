@@ -54,6 +54,38 @@ fn classify(keyword: &str, value: &Value, pattern_properties: bool) -> Option<Cl
     })
 }
 
+// Runtime work excludes annotations and unknown extension payloads. Child
+// schemas have already become constant-size refs in the compiled local body.
+pub(super) fn validates(keyword: &str, value: &Value) -> bool {
+    classify(keyword, value, false).is_some_and(|kind| kind.applies)
+        || keyword == super::NATIVE_REGEX_KEYWORD
+        || matches!(
+            keyword,
+            "$ref"
+                | "const"
+                | "enum"
+                | "type"
+                | "pattern"
+                | "format"
+                | "required"
+                | "dependentRequired"
+                | "uniqueItems"
+                | "minimum"
+                | "maximum"
+                | "exclusiveMinimum"
+                | "exclusiveMaximum"
+                | "multipleOf"
+                | "minLength"
+                | "maxLength"
+                | "minItems"
+                | "maxItems"
+                | "minProperties"
+                | "maxProperties"
+                | "minContains"
+                | "maxContains"
+        )
+}
+
 pub(crate) fn property<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     if let Some(named) = value
         .get("properties")
@@ -91,6 +123,22 @@ pub(crate) struct Child<'a> {
 impl Child<'_> {
     pub(crate) fn keyword(&self) -> &str {
         self.keyword
+    }
+
+    pub(crate) fn descends(&self) -> bool {
+        matches!(
+            self.keyword,
+            "properties"
+                | "patternProperties"
+                | "additionalProperties"
+                | "unevaluatedProperties"
+                | "propertyNames"
+                | "prefixItems"
+                | "items"
+                | "contains"
+                | "unevaluatedItems"
+                | "additionalItems"
+        )
     }
 
     pub(crate) fn map_key(&self) -> Option<&str> {

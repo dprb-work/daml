@@ -36,5 +36,14 @@
       { "key": "marker", "value": { "kind": "string", "value": "root", "tag": { "name": "app.Base" } } },
       { "key": "seed", "value": { "kind": "string", "value": "seed", "tag": { "name": "app.Base" } } }
     ]
-  }
+  },
+  "schemaModuleSources": [
+    "{\"resources\":[{\"uri\":\"https://schemas.example.test/shared.json\",\"schema\":{\"$defs\":{\"attempts\":{\"type\":\"integer\",\"minimum\":0,\"default\":2},\"limit\":{\"type\":\"integer\",\"default\":9007199254740993}}}}]}",
+    "{\"types\":{\"app.GeneratedJob\":{\"schema\":{\"type\":\"object\",\"properties\":{\"label\":{\"type\":\"string\"},\"attempts\":{\"$ref\":\"https://schemas.example.test/shared.json#/$defs/attempts\"},\"limit\":{\"$ref\":\"https://schemas.example.test/shared.json#/$defs/limit\"}},\"required\":[\"label\",\"attempts\",\"limit\"],\"additionalProperties\":false}},\"app.RequiredContainers\":{\"schema\":{\"type\":\"object\",\"properties\":{\"configs\":{\"type\":\"object\"},\"items\":{\"type\":\"array\",\"items\":{\"type\":\"integer\"}},\"mode\":{\"type\":\"string\",\"default\":\"safe\"}},\"required\":[\"configs\",\"items\",\"mode\"],\"additionalProperties\":false}},\"app.LiteralKeys\":{\"schema\":{\"type\":\"object\",\"properties\":{\"$ref\":{\"type\":\"string\"}},\"required\":[\"$ref\"],\"additionalProperties\":false}}}}"
+  ],
+  "schemaModuleSource": "!app.GeneratedJob { label: \"worker\" }",
+  "schemaModuleExpected": "app.GeneratedJob",
+  "recursiveModule": "{\"types\":{\"app.Tree\":{\"schema\":{\"$ref\":\"urn:parity:tree\"}}},\"resources\":[{\"uri\":\"urn:parity:tree\",\"schema\":{\"type\":\"object\",\"properties\":{\"value\":{\"type\":\"integer\",\"minimum\":0},\"copies\":{\"type\":\"integer\",\"default\":9007199254740993},\"next\":{\"$ref\":\"urn:parity:tree\"},\"children\":{\"type\":\"array\",\"items\":{\"$ref\":\"urn:parity:tree\"},\"default\":[]}},\"required\":[\"value\",\"copies\",\"children\"],\"additionalProperties\":false}}]}",
+  "recursiveSource": "!app.Tree {\nvalue: 1\nnext: {value: 2}\nchildren: [{value: 3}]\n}",
+  "recursiveExpected": "app.Tree"
 }

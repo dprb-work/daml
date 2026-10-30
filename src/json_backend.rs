@@ -14,6 +14,10 @@ pub(crate) struct DamlJson;
 pub(crate) enum NodeRef<'a> {
     Value(&'a ResolvedNode<'a>),
     Property(&'a str),
+    Dispatch {
+        key: &'a str,
+        node: &'a ResolvedNode<'a>,
+    },
 }
 
 impl<'a> NodeRef<'a> {
@@ -25,7 +29,7 @@ impl<'a> NodeRef<'a> {
     fn value(self) -> Option<&'a ResolvedValue<'a>> {
         match self {
             Self::Value(node) => Some(&node.value),
-            Self::Property(_) => None,
+            Self::Property(_) | Self::Dispatch { .. } => None,
         }
     }
 }
@@ -117,13 +121,17 @@ impl JsonNumber for NumberRef<'_> {
 }
 
 impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
-    type Object = &'a BTreeMap<Cow<'a, str>, ResolvedNode<'a>>;
+    type Object = ObjectRef<'a>;
     type Array = &'a [ResolvedNode<'a>];
     type Number = NumberRef<'a>;
 
     fn as_object(&self) -> Option<Self::Object> {
-        match self.value()? {
-            ResolvedValue::Mapping(fields) => Some(fields),
+        match self {
+            Self::Dispatch { key, node } => Some(ObjectRef::Dispatch { key, node }),
+            Self::Value(ResolvedNode {
+                value: ResolvedValue::Mapping(fields),
+                ..
+            }) => Some(ObjectRef::Mapping(fields)),
             _ => None,
         }
     }
@@ -171,6 +179,7 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
     fn json_type(&self) -> JsonType {
         match self {
             Self::Property(_) => JsonType::String,
+            Self::Dispatch { .. } => JsonType::Object,
             Self::Value(node) => match node.value {
                 ResolvedValue::Null => JsonType::Null,
                 ResolvedValue::Bool(_) => JsonType::Boolean,
@@ -184,6 +193,12 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
 
     fn equals_value(&self, expected: &Value) -> bool {
         match (self, expected) {
+            (Self::Dispatch { key, node }, Value::Object(expected)) => {
+                expected.len() == 1
+                    && expected
+                        .get(*key)
+                        .is_some_and(|expected| NodeRef::new(node).equals_value(expected))
+            }
             (Self::Property(name), Value::String(expected)) => *name == expected,
             (Self::Value(node), expected) => match (&node.value, expected) {
                 (ResolvedValue::Null, Value::Null) => true,
@@ -217,40 +232,80 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
         match self {
             Self::Value(node) => Cow::Owned(node.to_json()),
             Self::Property(name) => Cow::Owned(Value::String((*name).to_owned())),
+            Self::Dispatch { key, node } => {
+                let mut object = serde_json::Map::new();
+                object.insert((*key).to_owned(), node.to_json());
+                Cow::Owned(Value::Object(object))
+            }
         }
     }
 
-    // Schema cycles are rejected and materialized values are depth-bounded. Omitting identity
-    // avoids assigning a false identity to a cheap copied view; the engine's cycle paths remain
-    // bounded by those composition and resolution limits.
+    // Values remain live and immutable throughout one engine call. The address
+    // identifies the actual node, not this copied view; child values therefore
+    // remain distinct during recursive reference/annotation bookkeeping.
     fn identity(&self) -> Option<NodeIdentity> {
-        None
+        match self {
+            Self::Value(node) => Some(NodeIdentity::new(*node as *const ResolvedNode<'_> as usize)),
+            Self::Property(_) | Self::Dispatch { .. } => None,
+        }
     }
 }
 
-impl<'a> Object<'a, DamlJson> for &'a BTreeMap<Cow<'a, str>, ResolvedNode<'a>> {
+/// The singleton dispatch envelope borrows its payload; it is never resolved or
+/// serialized as user data. Ordinary mappings keep their existing borrowed view.
+pub(crate) enum ObjectRef<'a> {
+    Mapping(&'a BTreeMap<Cow<'a, str>, ResolvedNode<'a>>),
+    Dispatch {
+        key: &'a str,
+        node: &'a ResolvedNode<'a>,
+    },
+}
+
+pub(crate) enum Members<'a> {
+    Mapping(std::collections::btree_map::Iter<'a, Cow<'a, str>, ResolvedNode<'a>>),
+    Dispatch(Option<(&'a str, NodeRef<'a>)>),
+}
+
+impl<'a> Iterator for Members<'a> {
+    type Item = (&'a str, NodeRef<'a>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Mapping(fields) => fields
+                .next()
+                .map(|(key, node)| (key.as_ref(), NodeRef::new(node))),
+            Self::Dispatch(field) => field.take(),
+        }
+    }
+}
+
+impl<'a> Object<'a, DamlJson> for ObjectRef<'a> {
     type Node = NodeRef<'a>;
     type MemberName = &'a str;
-    type MembersIter = Map<
-        std::collections::btree_map::Iter<'a, Cow<'a, str>, ResolvedNode<'a>>,
-        fn((&'a Cow<'a, str>, &'a ResolvedNode<'a>)) -> (&'a str, NodeRef<'a>),
-    >;
+    type MembersIter = Members<'a>;
 
     fn len(&self) -> usize {
-        BTreeMap::len(self)
+        match self {
+            Self::Mapping(fields) => fields.len(),
+            Self::Dispatch { .. } => 1,
+        }
     }
 
     fn get(&self, key: &String) -> Option<Self::Node> {
-        BTreeMap::get(self, key.as_str()).map(NodeRef::new)
+        match self {
+            Self::Mapping(fields) => fields.get(key.as_str()).map(NodeRef::new),
+            Self::Dispatch {
+                key: selected,
+                node,
+            } => (*selected == key.as_str()).then(|| NodeRef::new(node)),
+        }
     }
 
     fn members(&self) -> Self::MembersIter {
-        fn member<'a>(
-            (key, value): (&'a Cow<'a, str>, &'a ResolvedNode<'a>),
-        ) -> (&'a str, NodeRef<'a>) {
-            (key.as_ref(), NodeRef::new(value))
+        match self {
+            Self::Mapping(fields) => Members::Mapping(fields.iter()),
+            Self::Dispatch { key, node } => Members::Dispatch(Some((key, NodeRef::new(node)))),
         }
-        BTreeMap::iter(self).map(member)
     }
 }
 

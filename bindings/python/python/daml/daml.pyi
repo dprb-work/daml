@@ -227,6 +227,12 @@ class Schemas:
         """Complete and validate an editable semantic tree, retaining bindings."""
         ...
 
+    def validate_semantic(
+        self, value: _SemanticNode, expected: str | None = None
+    ) -> None:
+        """Validate without completion or mutation; JSON keys need not be writable."""
+        ...
+
     def resolve_staged(
         self,
         document: Document,

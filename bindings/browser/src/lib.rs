@@ -67,6 +67,8 @@ extern "C" {
     pub type JsSourceString;
     #[wasm_bindgen(typescript_type = "string[]")]
     pub type JsAdditionalTypes;
+    #[wasm_bindgen(typescript_type = "readonly string[]")]
+    pub type JsJsonModules;
     #[wasm_bindgen(typescript_type = "AdmissionStage")]
     pub type JsAdmissionStage;
     #[wasm_bindgen(typescript_type = "StageEdit[]")]
@@ -221,6 +223,32 @@ pub struct BrowserSchemas {
 
 #[wasm_bindgen(js_class = Schemas)]
 impl BrowserSchemas {
+    /// Composes explicit strict JSON module envelopes without fetching resources.
+    #[wasm_bindgen(js_name = fromJsonModules)]
+    pub fn from_json_modules(modules: JsJsonModules) -> Result<BrowserSchemas, JsValue> {
+        let modules = bridge::json_modules(modules.as_ref())?;
+        let schemas = daml::Schemas::compose(modules).map_err(diagnostic::schema)?;
+        Ok(Self { schemas })
+    }
+
+    /// Checks supplied values and assertions without completing or changing data.
+    /// Success does not guarantee that literal keys can be written as DAML source.
+    #[wasm_bindgen(js_name = validateSemantic)]
+    pub fn validate_semantic(
+        &self,
+        value: JsSemanticNode,
+        expected: Option<JsSourceString>,
+    ) -> Result<(), JsValue> {
+        let mut budget = bridge::Budget::default();
+        let expected = expected
+            .map(|value| budget.text(value.as_ref(), &bridge::DataPath::root()))
+            .transpose()?;
+        let value = bridge::decode_with_budget(value.as_ref(), &mut budget)?;
+        self.schemas
+            .validate_semantic(&value, expected.as_deref())
+            .map_err(|error| diagnostic::resolve(error, ""))
+    }
+
     pub fn resolve(
         &self,
         document: &BrowserDocument,

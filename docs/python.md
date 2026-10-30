@@ -254,6 +254,25 @@ to complete and validate edited values through the same resolver. The input is
 not trusted because an earlier version came from `resolve`: changed values,
 assertions and expected-root constraints are checked again.
 
+Use `schemas.validate_semantic(editable, expected=...)` to check constraints
+without completion. It accepts the same semantic tree and embedded tag/binding
+assertions as `resolve_semantic`, returns `None` on success, and raises the same
+admission or constraint errors on failure. It does not insert defaults, construct
+missing containers, invoke callbacks, or mutate the tree. Missing required fields
+remain missing and fail validation. Nested explicit assertions are checked even
+under open fields.
+
+Validation accepts literal JSON keys such as `$ref` within the normal key byte
+budget. Success does not promise DAML serialization: `resolve_semantic` and
+writing still reject keys outside DAML's source grammar. Use constraint-only
+validation when omission must remain omission.
+
+Both JSON-module and native-definition contracts may recurse through instance
+children. Finite nested values retain their field constraints and defaults;
+non-descending reference loops are rejected. Completion remains bounded:
+unending required-container or default expansion raises `LimitExceeded` instead
+of silently omitting a required value or inventing a leaf.
+
 Use `schemas.write(editable)` for contextual source writing. It preserves bound
 assertion meaning and uses an equivalent visible spelling only when one exists.
 It raises `SemanticError(kind="UnrepresentableTag", ...)` rather than printing a
@@ -331,6 +350,7 @@ the application owns construction and freshness.
 | `Bundle.compile(document, expected=None, additional_types=None)` | Reachable and explicitly loaded native definitions |
 | `Schemas.resolve(document, expected=None)` | Completion and validation |
 | `Schemas.resolve_semantic(value, expected=None)` | Complete and validate edited semantic values |
+| `Schemas.validate_semantic(value, expected=None)` | Validate supplied semantic data/assertions without completion or mutation |
 | `Schemas.resolve_staged(document, stage, expected=None, initial_edits=None)` | Shared staged completion followed by strict admission |
 | `Schemas.resolve_semantic_staged(value, stage, expected=None, initial_edits=None)` | Same stage for editable semantic input |
 | `Schemas.write(value, line_width=80)` | Binding-preserving contextual source writing |
