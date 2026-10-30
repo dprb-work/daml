@@ -25,6 +25,11 @@ revision and build provenance. Serve the extracted JavaScript and WASM assets
 from your application; do not make browser runtime requests to GitHub release
 endpoints.
 
+`Schemas.fromJsonModules`, `Schemas.validateSemantic`, and structural recursive
+contracts require SDK 0.2.0 or newer. The 0.1.0 download example does not provide
+those capabilities. Source changes and SDK artifact publication are separate;
+select an actual release matching the APIs and native source revision you use.
+
 ## Load and edit
 
 Publish the complete generated `dist/` tree as static assets, preserving its
@@ -72,11 +77,12 @@ Initialization may load the selected static WASM URL. After initialization and r
 The generated `dist/daml_browser.d.ts` is the type contract.
 
 This reference describes the current source API. The published
-`browser-sdk-v0.1.0` asset predates staged admission and the `additionalTypes`
-argument: its generated declarations do not include those newer operations.
-The load/edit example above works with that release. To use the newer source
-APIs, [build from source](#build-from-source) at the revision you select; source
-changes do not update an existing versioned archive.
+`browser-sdk-v0.1.0` asset predates staged admission, `additionalTypes`,
+`Schemas.fromJsonModules`, and `schemas.validateSemantic`: its generated
+declarations do not include those newer operations. The load/edit example above
+works with that release. To use the newer source APIs,
+[build from source](#build-from-source) at the revision you select; source changes
+do not update an existing versioned archive.
 
 | Operation | Result |
 |---|---|
@@ -87,6 +93,8 @@ changes do not update an existing versioned archive.
 | `formatDefinition(source, width?)` | Reflowed native definition source |
 | `new Bundle(root, sources)` | Explicit in-memory definition resources |
 | `bundle.compile(document, expected?, additionalTypes?)` | Reachable and explicitly loaded assertion context |
+| `Schemas.fromJsonModules(modules)` | Compose strict JSON module-envelope strings into an assertion context |
+| `schemas.validateSemantic(value, expected?)` | Check supplied semantic data and assertions without completion or mutation |
 | `schemas.resolve(document, expected?)` | Validated completed `Resolution` |
 | `schemas.resolveStaged(document, stage, expected?, initialEdits?)` | Strict checked staged result from source |
 | `schemas.resolveSemanticStaged(value, stage, expected?, initialEdits?)` | Same core stage from an editable semantic tree |
@@ -101,6 +109,74 @@ changes do not update an existing versioned archive.
 Widths default to 80 and must be integers from 1 through 16384. Output uses LF and ends with a newline. Canonical semantic writing does not preserve comments, input field order, whitespace, or scalar style. It preserves exact number data, strings, literal keys, and representable tag assertions. Keys must obey DAML's unquoted key grammar; there is no quoted-key escape hatch.
 
 Call `.free()` on each generated Rust-backed handle when finished. Do not use a freed handle. Returned semantic trees and origin maps are plain owned JavaScript values. Editing them never mutates a parsed document or validated resolution. A resolution snapshot survives freeing its input document and schema context.
+
+## Consumer-generated JSON Schema modules
+
+Use `Bundle` when your schema owner supplies native DAML definitions and bundle
+resources. Use `Schemas.fromJsonModules(modules: readonly string[])` when your
+consumer generates JSON Schema. These are separate language APIs; neither
+requires converting schema text into the other's authoring format.
+
+Each array entry is a strict JSON string containing the
+[module envelope](../../docs/schemas.md#supply-an-interchange-module), not a bare
+schema or a JavaScript object. The envelope has `types`, mapping assertion names
+to `{ schema: ... }`, and optional `resources`, containing `{ uri, schema }`
+entries. After SDK initialization:
+
+```js
+import { parse, Schemas } from './dist/daml_browser.js';
+
+const schemas = Schemas.fromJsonModules([`{
+  "types": {
+    "app.Config": {
+      "schema": {
+        "type": "object",
+        "properties": { "retries": { "type": "integer", "default": 3 } },
+        "required": ["retries"]
+      }
+    }
+  }
+}`]);
+try {
+  const document = parse('!app.Config {}');
+  try {
+    // Constraint-only validation rejects the missing required retries field:
+    // schemas.validateSemantic(document.value());
+    const resolution = schemas.resolve(document);
+    try {
+      schemas.validateSemantic(resolution.value()); // retries is now present
+    } finally {
+      resolution.free();
+    }
+  } finally {
+    document.free();
+  }
+} finally {
+  schemas.free();
+}
+```
+
+The bridge uses core `SchemaModule::from_json` and `Schemas::compose`, not another
+JSON parser or validator. Duplicate decoded JSON members, unknown envelope
+fields, duplicate declarations, unresolved references, unsupported schema
+features, and core resource-limit violations fail rather than being repaired or
+overridden. Module order is not precedence. Supply every referenced resource;
+an HTTP-looking URI is an in-memory identifier, never a request to fetch it.
+The application owns schema generation, resource rewriting and aliases.
+
+The result is the same immutable `Schemas` handle used by native bundle
+compilation. Resolve, contextual writing, staged admission, owned resolution
+snapshots, and `.free()` have the same semantics. Module strings and their input
+array are not retained by the compiled handle.
+
+`validateSemantic` checks the supplied semantic tree, its nested tag/binding
+assertions, and the optional expected root using the same compiled validators.
+It returns `undefined` on success and throws on failure. It inserts no defaults
+or missing containers, invokes no callbacks, and does not mutate the input.
+Literal JSON data keys such as `$ref` are accepted under the normal key byte
+budget. Validation success does **not** promise DAML serialization:
+`write` and resolution still enforce DAML's source key grammar. Use resolution
+when completion is wanted; use validation when omission must remain omission.
 
 ## Exact values and assertions
 
@@ -178,6 +254,14 @@ summaries, snapshots, edits, histories, keys and final value/provenance export.
 Budget failures are errors, not partial successful results. These bounds do not
 replace application-level scheduling or a host's smaller resource limits.
 
+JSON module admission accepts an actual JavaScript array of at most 10,000
+primitive strings and at most 8 MiB of aggregate UTF-8 text. It reads the admitted
+length once and each indexed value once; holes without inherited string values
+are invalid. It rejects boxed strings, invalid UTF-16, and over-budget text
+before retaining the parsed module. Core JSON/schema admission additionally
+enforces its own 10,000-node, depth-128, 8 MiB, raw-parse-work and compiled-work
+bounds. The array-entry limit does not replace those schema bounds.
+
 ## Errors
 
 SDK-generated errors are JavaScript `Error` objects named `DamlError`. They expose `category`
@@ -187,6 +271,15 @@ or `schema` when available. Categories are `parse`, `native`, `resolve`,
 Input spans use UTF-8 byte offsets. Known input-source diagnostics also carry
 zero-based UTF-16 line/character ranges for browser editors. Definition/default
 errors do not invent positions in the configuration source.
+
+JSON module shape, Unicode, text-budget, parsing and composition failures use
+the `schema` category. Core schema errors retain their `kind` and schema
+location when available. Array/string admission failures identify the array
+index with `pointer`. Exceptions thrown by array getters or Proxy traps propagate
+as the exact original thrown value, without relabeling; admitted temporary
+modules are released normally. Semantic validation uses existing `semantic`
+wire-admission and `resolve` constraint diagnostics, including data/schema
+pointers and semantic origin rather than an invented source span.
 
 ## Build from source
 

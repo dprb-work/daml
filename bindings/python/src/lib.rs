@@ -460,6 +460,22 @@ impl PySchemas {
         .map_err(|error| resolve_exception(py, &error))
     }
 
+    #[pyo3(signature = (value, expected = None))]
+    fn validate_semantic(
+        &self,
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+        expected: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let mut budget = semantic::Budget::default();
+        let expected = expected
+            .map(|expected| budget.borrow_string(expected, ""))
+            .transpose()?;
+        let node = semantic::decode_with_budget(value, &mut budget)?;
+        py.detach(|| self.inner.validate_semantic(&node, expected))
+            .map_err(|error| resolve_exception(py, &error))
+    }
+
     #[pyo3(
         signature = (document, stage, expected = None, initial_edits = None),
         text_signature = "($self, document, stage, expected=None, initial_edits=None)"

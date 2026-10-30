@@ -636,7 +636,7 @@ impl<'a> Resolver<'a, '_> {
             root = self.complete(root, views, "", CompletionLevel::existing(0))?;
             // Pin generated assertions for semantic round trips, without
             // certifying the still-unchecked candidate's native constraints.
-            self.admit_tags(&mut root, "", 0, false)?;
+            self.admit_tags(&mut root, "", 0, TagAdmission::PinCandidate)?;
             // Bound the host's full snapshot and complete applied-copy export.
             self.charge_candidate_copy(&root, "", 0)?;
             for edge in &copies {

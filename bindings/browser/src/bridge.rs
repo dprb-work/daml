@@ -267,6 +267,18 @@ impl Budget {
 }
 
 fn array(value: JsValue, path: &DataPath<'_>) -> Result<(JsValue, u32), JsValue> {
+    array_for(value, path, MAX_NODES, "semantic")
+}
+
+fn array_for(
+    value: JsValue,
+    path: &DataPath<'_>,
+    limit: usize,
+    category: &str,
+) -> Result<(JsValue, u32), JsValue> {
+    let invalid = |kind: &str, message: &str, path: &DataPath<'_>| {
+        diagnostic::error(category, kind, message, Some(&path.pointer()))
+    };
     if !is_array(&value)? {
         return Err(invalid("InvalidInput", "expected an array", path));
     }
@@ -274,10 +286,10 @@ fn array(value: JsValue, path: &DataPath<'_>) -> Result<(JsValue, u32), JsValue>
         .as_f64()
         .filter(|length| length.is_finite() && length.fract() == 0.0 && *length >= 0.0)
         .ok_or_else(|| invalid("InvalidInput", "expected an array length", path))?;
-    if length > MAX_NODES as f64 {
+    if length > limit as f64 {
         return Err(invalid(
             "LimitExceeded",
-            "semantic array exceeds the SDK node budget",
+            "array exceeds the SDK entry budget",
             path,
         ));
     }
@@ -439,6 +451,21 @@ pub(crate) fn sources(value: &JsValue) -> Result<Vec<(String, String)>, JsValue>
         out.push((key_text, text));
     }
     Ok(out)
+}
+
+pub(crate) fn json_modules(value: &JsValue) -> Result<Vec<daml::SchemaModule>, JsValue> {
+    let path = DataPath::root();
+    let (values, length) = array_for(value.clone(), &path, 10_000, "schema")?;
+    let mut modules = Vec::with_capacity(length as usize);
+    let mut bytes = 0;
+    for index in 0..length {
+        let path = path.index(index);
+        let value = Reflect::get_u32(&values, index)?;
+        let text = string_for(&value, MAX_BYTES - bytes, &path, "schema")?;
+        bytes += text.len();
+        modules.push(daml::SchemaModule::from_json(&text).map_err(diagnostic::schema)?);
+    }
+    Ok(modules)
 }
 
 fn node(

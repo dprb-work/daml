@@ -12,7 +12,7 @@ pub enum SchemaErrorKind {
     DuplicateName,
     /// A referenced resource or type was not explicitly supplied.
     UnknownReference,
-    /// A recursive schema graph is not supported by this bounded profile.
+    /// A reference loop can evaluate repeatedly without descending into the instance.
     ReferenceCycle,
     /// Default placement would require undefined/ambiguous evaluation semantics.
     UnsupportedDefaults,

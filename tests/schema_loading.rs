@@ -125,28 +125,17 @@ fn unresolved_offline_resources_and_reference_cycles_are_rejected() {
     );
 }
 #[test]
-fn reference_cycles_through_schema_child_positions_are_rejected_during_composition() {
+fn non_progressing_reference_cycles_are_rejected_during_composition() {
     for schema in [
-        json!({"properties":{"nested":{"$ref":"#"}}}),
-        json!({"patternProperties":{"^nested":{"$ref":"#"}}}),
         json!({"allOf":[{"$ref":"#"}]}),
         json!({"anyOf":[{"$ref":"#"}]}),
         json!({"oneOf":[{"$ref":"#"}]}),
-        json!({"prefixItems":[{"$ref":"#"}]}),
-        json!({"items":{"$ref":"#"}}),
-        json!({"additionalProperties":{"$ref":"#"}}),
         json!({"not":{"$ref":"#"}}),
-        json!({"contains":{"$ref":"#"}}),
-        json!({"propertyNames":{"$ref":"#"}}),
         json!({"if":{"$ref":"#"}}),
         json!({"then":{"$ref":"#"}}),
         json!({"else":{"$ref":"#"}}),
-        json!({"unevaluatedProperties":{"$ref":"#"}}),
-        json!({"unevaluatedItems":{"$ref":"#"}}),
         json!({"contentSchema":{"$ref":"#"}}),
         json!({"dependentSchemas":{"nested":{"$ref":"#"}}}),
-        json!({"$defs":{"nested":{"$ref":"#"}}}),
-        json!({"definitions":{"nested":{"$ref":"#"}}}),
     ] {
         let module = SchemaModule::from_value(json!({
             "types": {"app.Cycle": {"schema": schema}}
