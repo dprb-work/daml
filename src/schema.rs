@@ -1234,9 +1234,14 @@ impl Schemas {
                 resource: String::new(),
                 pointer: String::new(),
             };
-            let location = native_regex_error_location(&error).unwrap_or_else(|| {
-                compiled_error_location(&error, &entries, &compiled_resource, &fallback)
-            });
+            let location = native_regex_error_location(&error)
+                // Meta-validation treats the normalized schema as its instance;
+                // keyword compilation instead reports a schema/absolute path.
+                // Only the former's instance path names a generated view.
+                .or_else(|| compiled_pointer_location(&error.instance_path().to_string(), &entries))
+                .unwrap_or_else(|| {
+                    compiled_error_location(&error, &entries, &compiled_resource, &fallback)
+                });
             // Upstream paths cannot be rewritten on ValidationError. Translate
             // this expected schema failure here rather than expose the internal
             // compiler namespace through a downcastable error source.
@@ -2329,19 +2334,21 @@ fn compiled_error_location(
     if error.absolute_keyword_location().is_some() && location.resource != resource {
         return location;
     }
-    let Some(path) = location.pointer.strip_prefix("/$defs/") else {
-        return fallback.clone();
-    };
+    compiled_pointer_location(&location.pointer, entries).unwrap_or_else(|| fallback.clone())
+}
+
+fn compiled_pointer_location(pointer: &str, entries: &[SchemaEntry]) -> Option<SchemaLocation> {
+    let path = pointer.strip_prefix("/$defs/")?;
     let (key, suffix) = path.split_once('/').unwrap_or((path, ""));
     let entry = &entries[key.parse::<usize>().expect("generated compiled view key")];
-    SchemaLocation {
+    Some(SchemaLocation {
         resource: entry.diagnostic_location.resource.clone(),
         pointer: if suffix.is_empty() {
             entry.diagnostic_location.pointer.clone()
         } else {
             format!("{}/{suffix}", entry.diagnostic_location.pointer)
         },
-    }
+    })
 }
 fn daml_value(d: &crate::Document, n: &crate::Node) -> Result<Value, SchemaError> {
     use crate::Value as V;

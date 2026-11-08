@@ -160,3 +160,20 @@ def test_validation_does_not_charge_discarded_canonical_bindings():
     with pytest.raises(daml.ResolveError) as caught:
         schemas.resolve_semantic(supplied)
     assert caught.value.kind == "LimitExceeded"
+
+
+@pytest.mark.parametrize("keyword", ["minimum", "type"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_malformed_keyword_reports_authored_schema_location(keyword, nested):
+    invalid = {keyword: "bad"}
+    schema = {"properties": {"a/~": invalid}} if nested else invalid
+    module = daml.SchemaModule.from_json(
+        json.dumps(
+            {"types": {"app.Value": {"schema": {"$id": "urn:app:Value", **schema}}}}
+        )
+    )
+    with pytest.raises(daml.SchemaError) as caught:
+        daml.Schemas.compose([module])
+    assert caught.value.kind == "InvalidSchema"
+    pointer = f"/properties/a~1~0/{keyword}" if nested else f"/{keyword}"
+    assert caught.value.schema == ("urn:app:Value", pointer)

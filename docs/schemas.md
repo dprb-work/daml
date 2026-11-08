@@ -431,6 +431,9 @@ distinct types. A resolution error has a structured kind, RFC 6901 instance
 pointer, schema location when available, and supplied-input or default provenance.
 Dots/slashes inside names are not inferred paths; JSON Pointer escaping applies
 only in explicit diagnostic/reference pointers.
+Malformed schema keywords report the authored resource URI and keyword pointer,
+including nested resource IDs, rather than a meta-schema or private compiler
+location.
 
 Provided values point to original UTF-8 source bytes. Generated values identify
 the actual schema default, not fabricated input positions. Completion budgets

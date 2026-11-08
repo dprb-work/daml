@@ -620,3 +620,43 @@ fn obsolete_schema_keywords_and_declarations_reject_at_admission() {
     .expect("literal field names and default data are not schema keywords");
     Schemas::compose([literal]).expect("literal data is admitted");
 }
+
+#[test]
+fn malformed_keyword_errors_retain_authored_schema_locations() {
+    for (schema, resource, pointer) in [
+        (
+            json!({"$id": "urn:app:Value", "minimum": "bad"}),
+            "urn:app:Value",
+            "/minimum",
+        ),
+        (
+            json!({"$id": "urn:app:Value", "type": "bad"}),
+            "urn:app:Value",
+            "/type",
+        ),
+        (
+            json!({"$id": "urn:app:Value", "properties": {"a/~": {"minimum": "bad"}}}),
+            "urn:app:Value",
+            "/properties/a~1~0/minimum",
+        ),
+        (
+            json!({"$id": "urn:app:Value", "properties": {"child": {
+                "$id": "urn:app:Child", "minimum": "bad"
+            }}}),
+            "urn:app:Child",
+            "/minimum",
+        ),
+    ] {
+        let module = SchemaModule::from_value(json!({
+            "types": {"app.Value": {"schema": schema}}
+        }))
+        .expect("module shape is admitted before keyword compilation");
+        let error = Schemas::compose([module])
+            .err()
+            .expect("malformed keyword must fail compilation");
+        assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+        let location = error.location.expect("authored schema location");
+        assert_eq!(location.resource, resource);
+        assert_eq!(location.pointer, pointer);
+    }
+}
