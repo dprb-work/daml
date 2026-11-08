@@ -132,3 +132,44 @@ fn adjacent_tag_payloads_remain_valid_data_after_cli_formatting() {
         assert_eq!(formatted.string(payload), Some("text"));
     }
 }
+
+#[test]
+fn native_multiline_regex_cli_output_preserves_matching_and_is_check_clean() {
+    for delimiter in ["\"\"\"", "'''"] {
+        let source = format!(
+            "# head\n!String{{pattern:!Regex {delimiter}\n  \\d+\\\\x\n  {delimiter} # tail\n}}"
+        );
+        for width in ["12", "80"] {
+            let output = cli(&["--width", width], source.as_bytes());
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let formatted = String::from_utf8(output.stdout).unwrap();
+            assert!(formatted.contains("# head"));
+            assert!(formatted.contains("# tail"));
+            assert!(formatted.contains(delimiter));
+            assert!(formatted.contains("\\d+\\\\x"));
+            let checked = cli(&["--check", "--width", width], formatted.as_bytes());
+            assert_eq!(checked.status.code(), Some(0));
+            assert!(checked.stdout.is_empty());
+            let bundle = daml::Bundle::from_sources(
+                ".",
+                [
+                    ("daml.bundle".to_owned(), "{}".to_owned()),
+                    ("Pattern.daml".to_owned(), formatted),
+                ],
+            )
+            .unwrap();
+            let valid = daml::parse(r#""12\\x""#).unwrap();
+            let schemas = bundle.compile(&valid, Some("self.Pattern")).unwrap();
+            assert!(schemas.resolve_as(&valid, "self.Pattern").is_ok());
+            assert!(
+                schemas
+                    .resolve_as(&daml::parse("\"12x\"").unwrap(), "self.Pattern")
+                    .is_err()
+            );
+        }
+    }
+}

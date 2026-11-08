@@ -32,13 +32,9 @@ fn render<'a>(printer: &Printer<'a>, expression: &Expression, parent: u8) -> Pri
     let arena = printer.arena;
     let (mut doc, precedence) = match &expression.kind {
         ExpressionKind::Literal(node) => (printer.node(node), 3),
-        ExpressionKind::Regex(pattern) => (
-            arena
-                .text("!Regex \"")
-                .append(arena.text(&printer.source[pattern.start..pattern.end]))
-                .append("\""),
-            3,
-        ),
+        ExpressionKind::Regex { payload, .. } => {
+            (arena.text("!Regex ").append(printer.quoted(*payload)), 3)
+        }
         ExpressionKind::Tagged { name, body } => {
             let tag = arena
                 .text("!")
@@ -190,9 +186,9 @@ fn begins_with_collection(expression: &Expression) -> bool {
         ExpressionKind::Group(inner) | ExpressionKind::Closed(inner) => {
             begins_with_collection(inner)
         }
-        ExpressionKind::Regex(_) | ExpressionKind::Union(_) | ExpressionKind::Intersection(_) => {
-            false
-        }
+        ExpressionKind::Regex { .. }
+        | ExpressionKind::Union(_)
+        | ExpressionKind::Intersection(_) => false,
     }
 }
 
@@ -247,7 +243,7 @@ fn core_end(printer: &Printer<'_>, expression: &Expression) -> usize {
             close + 1
         }
         ExpressionKind::Literal(node) => node.span.end,
-        ExpressionKind::Regex(pattern) => pattern.end + 1,
+        ExpressionKind::Regex { payload, .. } => payload.end,
         ExpressionKind::Tagged { name, body } => body
             .as_ref()
             .map_or(name.end, |body| core_end(printer, body)),

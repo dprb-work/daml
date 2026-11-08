@@ -169,12 +169,32 @@ identifier: !String {
 }
 ```
 
-The quotes delimit the Regex but do not invoke DAML string escapes; the compiler
-passes backslashes through to Rust `regex`. Regex literals are single-line,
-compile during schema admission under the same 1 MiB program/DFA limits as
-interchange patterns, and match the complete string. Rust syntax and Unicode
-classes apply directly; look-around and backreferences are unsupported. A Regex
-literal is valid only as `String.pattern`, not as an instance-data type.
+Quotes delimit Regex text without invoking DAML string escapes. Backslashes
+reach Rust Regex unchanged in the single-line form and both multiline forms.
+Patterns compile during schema admission under the same 1 MiB program/DFA limits
+as interchange patterns and match the complete string. Rust syntax and Unicode
+classes apply directly; look-around and backreferences are unsupported. Regex
+is valid only as `String.pattern`, not as an instance-data type.
+
+Use triple-double quotes and inline `(?x)` for visual grouping and comments:
+
+```daml
+identifier: !String {
+  pattern: !Regex """
+    (?x)
+    [A-Z]{2}  # prefix
+    -
+    \d{4}     # identifier
+  """
+}
+```
+
+This matches `AB-1234`, not surrounding text. No flag is implicit: without
+`(?x)`, spaces and line breaks remain significant. Triple-single quotes fold
+lines into spaces, so they are unsuitable for preserving verbose line comments.
+The [Regex literal contract](syntax.md#native-regex-literals) defines raw
+backslashes, layout, delimiters and limits. See the
+[runnable Regex bundle](../examples/regex/).
 
 Unknown constructor metadata is rejected rather than ignored. Broader JSON
 Schema constraints remain available through the

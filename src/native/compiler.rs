@@ -1042,7 +1042,7 @@ impl Compiler<'_> {
                     schema.insert(keyword.into(), Json::Number(Number::from(bound)));
                 }
                 ("String", "pattern") => {
-                    let K::Regex(pattern) = &member.constraint.kind else {
+                    let K::Regex { pattern, payload } = &member.constraint.kind else {
                         return Err(NativeError::new(
                             NativeErrorKind::InvalidDefinition,
                             "String facet \"pattern\" requires a Regex",
@@ -1055,11 +1055,23 @@ impl Compiler<'_> {
                         .next_regex_origin
                         .checked_add(1)
                         .expect("Regex origins are bounded by schema nodes");
+                    // The admitted token retains its original delimiters; diagnostics
+                    // refer to the original interior, never offsets into laid-out text.
+                    let delimiter_bytes = if source[payload.start..].starts_with("\"\"\"")
+                        || source[payload.start..].starts_with("'''")
+                    {
+                        3
+                    } else {
+                        1
+                    };
                     self.regex_origins.insert(
                         crate::schema::native_regex_origin(origin),
                         RegexOrigin {
                             path: file.to_path_buf(),
-                            span: *pattern,
+                            span: Span {
+                                start: payload.start + delimiter_bytes,
+                                end: payload.end - delimiter_bytes,
+                            },
                         },
                     );
                     schema.insert(
@@ -1067,12 +1079,12 @@ impl Compiler<'_> {
                         Json::Object(Map::from_iter([
                             (
                                 "pattern".into(),
-                                Json::String(
-                                    source
-                                        .get(pattern.start..pattern.end)
-                                        .unwrap_or("")
-                                        .to_owned(),
-                                ),
+                                Json::String(match pattern {
+                                    StringValue::Source(span) => {
+                                        source[span.start..span.end].to_owned()
+                                    }
+                                    StringValue::Decoded(text) => text.clone(),
+                                }),
                             ),
                             ("origin".into(), Json::Number(Number::from(origin))),
                         ])),
@@ -1629,7 +1641,7 @@ impl Compiler<'_> {
             K::Literal(node) => {
                 schema = self.lower_literal(node, source, file)?;
             }
-            K::Regex(_) => {
+            K::Regex { .. } => {
                 return Err(NativeError::new(
                     NativeErrorKind::InvalidDefinition,
                     "Regex is only valid as a String pattern facet",
@@ -2536,7 +2548,7 @@ impl Compiler<'_> {
                     )?;
                 }
             }
-            K::Literal(_) | K::Regex(_) => {}
+            K::Literal(_) | K::Regex { .. } => {}
             K::Intersection(items) => {
                 if let Some(branches) = local_schema.get_mut("allOf").and_then(Json::as_array_mut) {
                     for (item, branch) in items.iter().zip(branches) {
@@ -2776,7 +2788,7 @@ fn supports_default_override_projection(expression: &crate::native::Expression) 
             .as_deref()
             .is_some_and(supports_default_override_projection),
         K::Closed(inner) | K::Group(inner) => supports_default_override_projection(inner),
-        K::Literal(_) | K::Regex(_) | K::Union(_) | K::Intersection(_) => false,
+        K::Literal(_) | K::Regex { .. } | K::Union(_) | K::Intersection(_) => false,
     }
 }
 
@@ -2822,7 +2834,7 @@ fn collect_default_override_paths(
                 prefix.pop();
             }
         }
-        K::Literal(_) | K::Regex(_) => {}
+        K::Literal(_) | K::Regex { .. } => {}
     }
 }
 
@@ -2874,7 +2886,7 @@ fn collect_unconditional_default_override_paths(
                 prefix.pop();
             }
         }
-        K::Literal(_) | K::Regex(_) => {}
+        K::Literal(_) | K::Regex { .. } => {}
     }
 }
 
@@ -3193,7 +3205,7 @@ fn has_default_in_expression_tree(expression: &crate::native::Expression) -> boo
         K::Union(items) | K::Intersection(items) => {
             items.iter().any(has_default_in_expression_tree)
         }
-        K::Literal(_) | K::Regex(_) | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => false,
+        K::Literal(_) | K::Regex { .. } | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => false,
     }
 }
 
@@ -3207,7 +3219,7 @@ fn first_unset_default_assignment(expression: &crate::native::Expression) -> Opt
         K::Union(items) | K::Intersection(items) => {
             items.iter().find_map(first_unset_default_assignment)
         }
-        K::Literal(_) | K::Regex(_) | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => None,
+        K::Literal(_) | K::Regex { .. } | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => None,
     }
 }
 
