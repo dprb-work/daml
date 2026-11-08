@@ -1,18 +1,33 @@
 # DAML
 
-**Configuration with structural contracts, explicit defaults, and room to grow.**
+**Define your configuration types in code. Author their values in DAML.**
 
-Your program needs configuration. You want people to supply the values that
-matter, leave routine choices to defaults, and get useful errors when something
-doesn't fit. When another package adds a compatible implementation, you shouldn't
-have to edit a central list just to describe it.
+Your program already knows what a worker needs. Its configuration shouldn't
+need a second, hand-maintained description of those fields. DAML can derive a
+schema from your Python types, fill in declared defaults, and tell you where a
+supplied value doesn't fit.
 
 DAML—**Definitively Asserted Markup Language**—is an experimental language for
-that kind of human-authored configuration.
+human-authored configuration. Python is one way in; native DAML definitions,
+a Rust library, and a browser SDK support other consumers.
 
-## Say what you want to configure
+## From types to configuration
 
-Here is a worker configuration:
+Start with a Pydantic model:
+
+```python
+from pydantic import BaseModel
+import daml
+
+class Worker(BaseModel):
+    name: str
+    retries: int = 3
+
+module = daml.schema_from_types({"app.Worker": Worker})
+schemas = daml.Schemas.compose([module])
+```
+
+Then write the configuration:
 
 ```daml
 !app.Worker {
@@ -20,35 +35,35 @@ Here is a worker configuration:
 }
 ```
 
-The file names a worker and leaves its retry count to the definition. That
-[definition](examples/tutorial/app/Worker.daml) says what a worker needs:
+`!app.Worker` selects the contract you named in code. Resolve the document:
 
-```daml
-closed !Object {
-  name: !String
-  retries: !Int
-} = {
-  retries: 3
-}
+```python
+document = daml.parse('!app.Worker { name: "demo" }')
+resolved = schemas.resolve(document, expected="app.Worker")
+print(resolved.to_python())
 ```
 
-Complete and validate the configuration, and you get:
+The result includes the default:
 
-```json
-{
-  "name": "demo",
-  "retries": 3
-}
+```text
+{'name': 'demo', 'retries': 3}
 ```
 
 Want five retries? Supply `retries: 5`. Supply `retries: "many"` instead and the
 same check rejects it at `/retries`; a default doesn't hide an invalid choice.
 
-The definition is the **schema**: requirements that many configurations can
-share. The configuration is **data**: one set of concrete values. If you know
-programming-language types, think *type versus value*, with defaults as an
-additional step. [Data and schema](docs/data-and-schema.md) walks through the
-example without assuming that background.
+The Python type supplies the **schema**: requirements that many configurations
+can share. The DAML document is **data**: one concrete set of values. Think
+*type versus value*, with default completion as an additional step.
+[Data and schema](docs/data-and-schema.md) explains the distinction without
+assuming a programming-language background.
+
+[Follow the Python quickstart](docs/python-quickstart.md) to build the bindings,
+read a configuration file, change a value, and see a validation error.
+Standard dataclasses work too. The result is a dictionary of resolved values,
+not a constructed model instance; schema derivation supports a
+[documented subset](docs/python.md#derive-schemas-from-python-types) of Python
+types and declarative constraints, not arbitrary Pydantic behavior.
 
 ## Add a provider without rewriting the consumer
 
@@ -74,8 +89,10 @@ better choice.
 
 ## Try the language
 
-- **See it work:** [follow the configuration tutorial](docs/tutorial.md). Run a
-  worker, change a value, then add defaults and independent providers.
+- **Use your Python types:** [follow the Python quickstart](docs/python-quickstart.md).
+  Derive a schema, supply configuration, and inspect completed values.
+- **Explore independent providers:** [follow the native configuration tutorial](docs/tutorial.md).
+  Write definitions and swap providers without changing the consumer's requirements.
 - **Just try editing:** [install the formatter and language server](docs/getting-started.md).
   Native archives run without Rust or Python; the VS Code extension is a separate
   source-built VSIX.
@@ -103,11 +120,23 @@ The excerpt belongs inside a function returning `Result`. The tutorial has a
 also [Python](docs/python.md#parse-complete-and-inspect) and
 [browser JavaScript](bindings/browser/README.md#load-and-edit) examples.
 
-The Python API also supports a bounded path from explicitly named Pydantic v2
-models and standard dataclasses to in-memory JSON Schema modules; it does not
-generate native `.daml` definition files or typed instances. See the
-[Python types example](examples/python_types.py) and [Python API guide](docs/python.md).
-Other workflows can use handwritten DAML definitions.
+You can also [write definitions in DAML](docs/native-authoring.md) when the
+contract shouldn't depend on Python. The [consumer examples](examples/README.md#consumer-code)
+show both type-derived schemas and native definitions.
+
+The native syntax also has first-class `!Date`, `!Time`, and `!DateTime`
+values. Their explicit ISO-based profile retains precision and offset presence;
+schema constraints can require or forbid offsets. See the
+[temporal syntax reference](docs/syntax.md#temporal-literals),
+[native temporal example](examples/temporal/), and
+[Python temporal example](examples/python_temporal.py). These are source-checkout
+features; the existing `0.1.0` archives predate them.
+
+Recurring calendar patterns use `!Cron "0 0 9 LW * *"`: 09:00 on the last
+weekday of each month. The [Spring cron dialect](docs/syntax.md#cron-literals)
+supports seconds and calendar rules without inventing another notation. See the
+[native cron bundle](examples/cron/) and [Python consumer](examples/python_cron.py).
+DAML validates the pattern; the consuming application owns scheduling.
 
 ## What can I use today?
 

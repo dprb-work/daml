@@ -597,6 +597,7 @@ impl<'a> Resolver<'a, '_> {
         match &node.value {
             ResolvedValue::Number(number) => self.budget.add_bytes(node, number.as_str(), path)?,
             ResolvedValue::String(text) => self.budget.add_bytes(node, text, path)?,
+            ResolvedValue::Temporal(value) => self.budget.add_bytes(node, value.as_str(), path)?,
             ResolvedValue::Sequence(items) => {
                 for (index, child) in items.iter().enumerate() {
                     let child_path = crate::pointer::join(path, &index.to_string());
@@ -1601,7 +1602,7 @@ impl<'a> Resolver<'a, '_> {
                 let tag = default_tag(default, *schema, &mut self.budget, path)?;
                 if self
                     .budget
-                    .defer_default(default, tag.as_ref(), &probe, path)?
+                    .defer_default(default, *schema, tag.as_ref(), &probe, path)?
                 {
                     continue;
                 }
@@ -2017,7 +2018,9 @@ fn from_semantic_with_keys<'a>(
         if let Some(binding) = &tag.binding {
             budget.add_semantic_scalar(&result, binding, path)?;
         }
-        if !crate::names::valid_tag(&tag.name) {
+        if !crate::names::valid_tag(&tag.name)
+            || crate::TemporalKind::from_constructor(&tag.name).is_some()
+        {
             return Err(failure(
                 ResolveErrorKind::InvalidTag,
                 &result,
@@ -2047,6 +2050,10 @@ fn from_semantic_with_keys<'a>(
         SemanticValue::String(text) => {
             budget.add_semantic_scalar(&result, text, path)?;
             ResolvedValue::String(Cow::Borrowed(text))
+        }
+        SemanticValue::Temporal(value) => {
+            budget.add_semantic_scalar(&result, value.as_str(), path)?;
+            ResolvedValue::Temporal(value.as_borrowed())
         }
         SemanticValue::Sequence(items) => {
             budget.semantic_children(&result, items.len(), path)?;
@@ -2156,6 +2163,11 @@ fn from_input<'a>(
             budget.add_bytes(&result, value, path)?;
             ResolvedValue::String(Cow::Borrowed(value))
         }
+        Value::Temporal(_) => {
+            let value = document.temporal(node).expect("admitted temporal source");
+            budget.add_bytes(&result, value.as_str(), path)?;
+            ResolvedValue::Temporal(value)
+        }
         Value::Sequence(items) => ResolvedValue::Sequence(
             items
                 .iter()
@@ -2227,7 +2239,7 @@ fn from_default<'a>(
             path,
         ));
     }
-    node.opaque = budget.defer_default(value, node.tag.as_ref(), &node, path)?;
+    node.opaque = budget.defer_default(value, schema, node.tag.as_ref(), &node, path)?;
     // An opaque preset cannot contribute to an existing destination. Discard
     // it before expanding descendants or accumulating competing baselines.
     if node.opaque && (supplied.is_some() || scope_kind == stage::DefaultScope::Project) {
@@ -2240,6 +2252,7 @@ fn from_default<'a>(
     {
         node.tag = None;
     }
+    let temporal = schema.default_temporal(value);
     node.value = match value {
         JsonValue::Null => ResolvedValue::Null,
         JsonValue::Bool(value) => ResolvedValue::Bool(*value),
@@ -2259,7 +2272,10 @@ fn from_default<'a>(
         }
         JsonValue::String(value) => {
             budget.add_bytes(&node, value, path)?;
-            ResolvedValue::String(Cow::Borrowed(value))
+            match temporal {
+                Some(value) => ResolvedValue::Temporal(value),
+                None => ResolvedValue::String(Cow::Borrowed(value)),
+            }
         }
         JsonValue::Array(values) => ResolvedValue::Sequence(
             values

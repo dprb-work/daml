@@ -5,9 +5,12 @@ seeing a configuration work.
 
 ## Find your starting point
 
-- **Show me why I'd use this.** [Build a service configuration](tutorial.md).
-  Run a small example, make a choice, see an error, then swap providers without
-  changing the service's requirements. This path uses a source checkout and Rust.
+- **Use the types already in my Python program.** [Configure a Python program](python-quickstart.md).
+  Derive a schema from a Pydantic model or dataclass, author a DAML file, and see
+  defaults and validation work. This path builds the Python bindings from source.
+- **Compose independent providers.** [Build a service configuration](tutorial.md).
+  Write native DAML definitions, then swap providers without changing the
+  service's requirements. This path uses a source checkout and Rust.
 - **Let me try editing a file.** [Install and format your first file](getting-started.md).
   Use the native formatter and language server without building Rust or Python.
 - **Explain the model first.** [Data and schema](data-and-schema.md) follows one
@@ -17,10 +20,11 @@ seeing a configuration work.
   cover Rust, Python, and browser JavaScript. [The examples catalogue](../examples/README.md)
   links the runnable files.
 
-The tutorial uses handwritten DAML definitions to show native composition. A
-separate bounded Python workflow derives in-memory schema modules from explicitly
-named Pydantic models or dataclasses; it does not generate native `.daml` files.
-See the [Python API guide](python.md#derive-schemas-from-python-types).
+Both tutorials separate the schema (what values must satisfy) from the data
+(one concrete configuration). Choose Python type derivation when your program
+already owns the types, or native definitions when you want to author the
+contract in DAML. The [Python API reference](python.md#derive-schemas-from-python-types)
+documents the supported type projection; it does not construct model instances.
 
 ## Understand the choices
 
@@ -53,6 +57,10 @@ These pages are references, not lessons to finish before writing a file:
 | [Resolution and schema interchange](schemas.md) | Completion, validation, and the registered-schema API |
 | [Python API](python.md) | Installation, operations, value representation, and errors |
 | [Browser SDK](../bindings/browser/README.md) | Setup, explicit resources, generated types, and handle lifecycle |
+
+The [cron syntax reference](syntax.md#cron-literals) specifies the selected
+Spring dialect. [Cron examples](../examples/README.md#cron-patterns) show native
+constraints, concrete patterns, default completion and Python editing.
 
 For Rust API documentation, run `cargo doc --all-features --no-deps --locked`
 from a source checkout. [Development setup](development/building.md) covers the

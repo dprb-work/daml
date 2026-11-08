@@ -1,0 +1,11 @@
+closed !Object {
+  weekday_morning: !Cron
+  month_end: !Cron
+  last_weekday: !Cron
+  third_friday: !Cron
+} = {
+  weekday_morning: !Cron "0 0 9 * * MON-FRI"
+  month_end: !Cron "0 0 9 L * *"
+  last_weekday: !Cron "0 0 9 LW * *"
+  third_friday: !Cron "0 0 9 * * FRI#3"
+}

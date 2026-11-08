@@ -18,6 +18,22 @@ export async function consumePublicSdkTypes(
   const originalSource: string = document.source;
   const parsedValue: SemanticNode = document.value();
   const formattedDocument: string = document.format();
+  const temporalDocument = parse('!Time "09:30:00.123456789123"');
+  const temporalValue: SemanticNode = temporalDocument.value();
+  if (temporalValue.kind !== 'time') throw new Error('temporal semantic union lost its time discriminator');
+  const exactTemporalIso: string = temporalValue.value;
+  if (exactTemporalIso !== '09:30:00.123456789123') throw new Error('temporal semantic union lost precision');
+  const cronDocument = parse('!Cron "@weekly"');
+  const cronValue: SemanticNode = cronDocument.value();
+  if (cronValue.kind !== 'cron') throw new Error('semantic union lost the cron discriminator');
+  const expression: string = cronValue.value;
+  const authoredCron: SemanticNode = { kind: 'cron', value: expression };
+  const cronSource: string = write(authoredCron);
+  // @ts-expect-error Cron transport is expression text, never a JavaScript Date.
+  const unsafeCron: SemanticNode = { kind: 'cron', value: new Date() };
+  void unsafeCron;
+  void cronSource;
+  cronDocument.free();
   const formattedDefinition: string = formatDefinition(sources['Config.daml'] ?? '', 80);
 
   const bundle = new Bundle('.', sources);
@@ -37,6 +53,7 @@ export async function consumePublicSdkTypes(
   const unsafeInteger: SemanticNode = { kind: 'number', value: 9007199254740993 };
   const canonical: string = schemas.write(resolvedValue);
   const plainParsed: string = write(parsedValue, 80);
+  temporalDocument.free();
   const plainInteger: string = write(exactInteger);
   void unsafeInteger;
 

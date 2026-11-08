@@ -174,3 +174,25 @@ SDK tarballs carry the canonical MIT license and this inventory.
 the build source/output provenance. The [SDK guide](bindings/browser/README.md)
 owns exact values, resource admission, lifecycle, build, and package contracts.
 Registry publication and promotion to a versioned release are separate actions.
+
+## Spring cron reference
+
+Cron admission is independently authored Rust against
+[Spring Framework 7.0.10 `CronExpression`](https://docs.spring.io/spring-framework/docs/7.0.10/javadoc-api/org/springframework/scheduling/support/CronExpression.html)
+and the [pinned source](https://github.com/spring-projects/spring-framework/tree/v7.0.10/spring-context/src/main/java/org/springframework/scheduling/support).
+No Spring implementation or test text is copied or translated into DAML.
+Macro expansions and month/weekday names are expression-contract data.
+
+The independently authored compatibility cases in
+[`tests/fixtures/spring-cron.json`](tests/fixtures/spring-cron.json) record
+observations from the actual `spring-context` and `spring-core` 7.0.10 artifacts.
+The fixture records artifact checksums, reference runtime and reproduction
+instructions. The optional
+[`CronOracle.java`](tests/support/cron-reference/CronOracle.java) adapter calls
+the reference parser; it is not an alternative DAML parser. Spring's artifacts
+are Apache-2.0 licensed and remain external verification inputs, not bundled
+runtime dependencies. JARs and a JDK are not required by DAML's normal checks or
+distributed packages.
+
+The [cron syntax contract](docs/syntax.md#cron-literals) owns supported expression
+behavior and the boundary between a validated pattern and scheduler execution.

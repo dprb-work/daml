@@ -1,13 +1,16 @@
 # DAML examples
 
-Run source-checkout commands below from the repository root with the pinned Rust
-toolchain installed. For native binaries without a checkout, start with
-[the getting-started guide](../docs/getting-started.md).
+Start with the [Python quickstart](../docs/python-quickstart.md) to derive schemas
+from your program's types and author their values in DAML. The native examples
+below use handwritten definitions and the pinned Rust toolchain. Run commands
+from the repository root. For editing without a source build, use
+[the formatter and editor guide](../docs/getting-started.md).
 
 ## Learn in order
 
 | Example | What to observe |
 |---|---|
+| [Python types](python_types.py) | Pydantic and dataclass schemas, a completed default, an override, and an invalid value |
 | [Plain configuration](tutorial/data/plain.daml) | Explicit object structure and quoted string values |
 | [Worker definition](tutorial/app/Worker.daml) | Schema layer: field constraints and an explicit preset |
 | [Worker data](tutorial/data/worker.daml) | Data layer: particular values and a root assertion; resolution supplies retries |
@@ -18,10 +21,68 @@ toolchain installed. For native binaries without a checkout, start with
 | [Third-party provider](tutorial/data/external.daml) | The same consumer accepts a different structural definition |
 | [Invalid endpoint](tutorial/invalid/endpoint.daml) | Expected validation failure at `/adapter/endpoint` |
 
+## Temporal values
+
+The standalone [temporal bundle](temporal/) demonstrates intrinsic Date, Time,
+and DateTime values, explicit offset requirements, precision preservation, and
+default completion. Its `daml.bundle` is `{}` and its expected root is
+`self.Schedule`.
+
+```sh
+cargo run --locked --example native -- examples/temporal examples/temporal/data.daml
+```
+
+The checked-in `invalid.daml` uses an impossible calendar date and is intended
+to fail temporal admission. See the [Python temporal example](python_temporal.py)
+for type-derived schemas, dedicated Python values, and explicit conversion
+limits. Neither example implies that temporal features have been published in a
+release.
+
+## Cron patterns
+
+The [cron bundle](cron/) separates a native `!Cron` schema from concrete
+Spring expressions. Its preset supplies weekday mornings, month-end, the last
+weekday and the third Friday; the data overrides only month-end to 17:00.
+
+```sh
+cargo run --locked --example native -- examples/cron examples/cron/data.daml
+uv run --project bindings/python --locked --python 3.12 python examples/python_cron.py
+```
+
+The native command prints expression strings as plain JSON. The Python consumer
+shows dedicated Cron values, default completion and contextual semantic editing.
+`cron/invalid.daml` deliberately uses a five-field pattern and fails source
+admission: Spring requires six fields, including seconds. Neither example
+calculates occurrences or executes jobs.
+
+
 Follow the [tutorial](../docs/tutorial.md) for definitions, commands, and expected
 results. [The example bundle](tutorial/README.md) is the canonical source of those
 files. Files under `tutorial/invalid/` are deliberately invalid against the
 selected definitions, not templates to copy.
+
+## Raw multiline Regex
+
+The [Regex bundle](regex/) uses a literal block and inline `(?x)` to separate a
+code pattern into commented groups. Its [valid input](regex/data.daml) is
+`AB-1234`; the [invalid input](regex/invalid.daml) has an extra digit and fails
+full-string validation.
+
+```sh
+cargo run --locked --example native -- examples/regex examples/regex/data.daml
+cargo run --locked --bin daml-fmt -- examples/regex/Code.daml
+```
+
+[FoldedCode.daml](regex/FoldedCode.daml) uses `'''` without verbose mode, so its
+inserted space is significant. Run it with:
+
+```sh
+cargo run --locked --example native -- examples/regex examples/regex/folded.daml
+```
+
+Backslashes are raw in every native Regex form. Neither multiline syntax nor
+formatting enables flags or turns Regex into an instance-data object.
+
 
 ## Inspect and consume
 
@@ -41,7 +102,10 @@ These examples show how a program consumes DAML, rather than only its syntax:
 | Language or operation | Code and reading path |
 |---|---|
 | Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
-| Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
+| Python type-derived schemas and resolution | [Python quickstart](../docs/python-quickstart.md), [runnable Pydantic/dataclass example](python_types.py), and [API guide](../docs/python.md#derive-schemas-from-python-types) |
+| Python temporal values and type-derived schemas | [Runnable example](python_temporal.py) |
+| Python cron values, native defaults and semantic editing | [Runnable example](python_cron.py) |
+| Native raw Regex, verbose flags and literal/folded layout | [Runnable Regex bundle](regex/) and [syntax contract](../docs/syntax.md#native-regex-literals) |
 
 Start with [values versus requirements](../docs/data-and-schema.md) if the
 schema/data distinction is new. That explanation also maps DAML concepts to

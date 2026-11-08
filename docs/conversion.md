@@ -32,6 +32,7 @@ A file converter would need to decide what to accept and what to preserve:
 | Object keys | JSON and YAML can represent keys outside DAML's unquoted key grammar. Such keys cannot simply be emitted as quoted DAML keys. |
 | Tags | Plain JSON has no DAML assertion metadata; dropping assertions changes what can be validated on re-admission. |
 | Numbers | Do not route exact decimals or large integers through a floating-point representation that rounds them. |
+| Temporal values | Plain JSON projects Date/Time/DateTime and Cron to strings, losing intrinsic kind. Semantic transport preserves kind plus admitted text; do not infer kinds from ISO- or cron-looking strings. |
 | Defaults | Authored data and completed data are different export choices; a converter must say which it uses. |
 | YAML graphs | Anchors, aliases, and cycles need an admitted profile; DAML documents are trees. |
 | YAML values | Non-string mapping keys, custom tags, non-finite numbers, and multiple documents cannot be silently coerced. |

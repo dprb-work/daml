@@ -1,0 +1,1 @@
+J{"types":{"fuzz.Config":{"schema":{"type":"object","properties":{"when":{"x-daml-scalar":{"kind":"cron"},"default":"@weekly","x-daml-default-temporals":[{"path":"","kind":"cron"}]}}}}}}

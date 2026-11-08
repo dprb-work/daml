@@ -6,7 +6,7 @@ mod error;
 mod format;
 mod syntax;
 
-use crate::{Node, Span};
+use crate::{Node, Span, StringValue};
 
 pub use bundle::{BUNDLE_MANIFEST, Bundle};
 pub use error::{NativeError, NativeErrorKind};
@@ -56,7 +56,12 @@ impl Expression {
 #[derive(Debug, PartialEq)]
 pub(crate) enum ExpressionKind {
     Literal(Node),
-    Regex(Span),
+    Regex {
+        // Admitted text borrows the retained source unless layout changed it.
+        pattern: StringValue,
+        // Complete original quoted token, independent of any syntax-only default.
+        payload: Span,
+    },
     Tagged {
         name: Span,
         body: Option<Box<Expression>>,

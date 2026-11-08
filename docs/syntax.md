@@ -86,6 +86,111 @@ are errors. Use a triple form for source text spanning physical lines.
 Unescaped ordinary content references the original source without a second
 string allocation. Escaped content owns its decoded text.
 
+## Temporal literals
+
+`!Date`, `!Time`, and `!DateTime` construct typed values in data documents:
+
+```daml
+!Object {
+  day: !Date "2026-10-29"
+  starts: !Time "09:30"
+  deadline: !DateTime "2026-10-29T10:30:00.123456789123Z"
+}
+```
+
+The constructor names are reserved. A generic assertion may precede one
+constructor, as in `!app.EventDate !Date "2026-10-29"`. Arbitrary assertion
+stacking remains invalid. A date-looking quoted string without a constructor
+is still an ordinary string; parsing never guesses temporal types.
+
+The accepted profile is an ISO 8601-1:2019 extended-calendar subset, informed by
+the relevant 2022 amendment. It is not a claim of full ISO 8601 conformance.
+Dates use Gregorian `YYYY-MM-DD` with four year digits, optionally preceded by
+`-` for a nonzero year before year zero. The supported range is -9999 through
+9999, including year zero. Month lengths and Gregorian leap years are checked.
+
+Times use `HH`, `HH:MM`, or `HH:MM:SS`. Standalone `Time` also accepts an
+optional leading uppercase `T`. `DateTime` joins a complete date and clock with
+uppercase `T`. An optional fraction follows seconds only, uses `.` or `,`, and
+must contain ASCII digits. Lower-order omitted clock fields become zero;
+fractions on hours/minutes and basic/compact clock spellings are unsupported.
+
+Time and DateTime may end with uppercase `Z` or signed `HH`/`HH:MM` offsets.
+Offset fields are bounded by 23 hours and 59 minutes; negative zero is rejected.
+No offset stays absent, never local or UTC by inference. Canonical values use
+full clock fields, a dot fraction, uppercase `T`/`Z`, and `±HH:MM`; zero offsets
+write as `Z`. Every supplied fractional digit is retained.
+
+Hour 24 is accepted only when lower fields and fraction are zero. It remains
+`24:00:00` on the authored date; it does not roll over. Second 60 is preserved
+as a leap-second label, but DAML does not check whether it occurred on a
+particular date. With an explicit offset, the corresponding UTC minute must be
+23:59. DAML does not consult IERS data, a clock, or a network service.
+
+Temporal values are distinct from strings and from each other. Native
+`!String` does not accept a temporal value. A native `!Date`, `!Time`, or
+`!DateTime` constraint checks the corresponding intrinsic kind; Time and
+DateTime can additionally require or forbid an explicit offset. See
+[native temporal constraints](native-authoring.md#temporal-values).
+
+JSON has no temporal primitive. Plain JSON export writes canonical ISO text and
+loses the intrinsic kind. Semantic representations retain a `date`, `time`, or
+`datetime` discriminator with canonical text.
+
+## Cron literals
+
+`!Cron` constructs a typed recurrence pattern, distinct from an ordinary string:
+
+```daml
+month_end: !Cron "0 0 9 L * *"
+last_weekday: !Cron "0 0 9 LW * *"
+third_friday: !Cron "0 0 9 * * FRI#3"
+```
+
+DAML uses the complete
+[Spring Framework 7.0.10 cron expression dialect](https://docs.spring.io/spring-framework/docs/7.0.10/javadoc-api/org/springframework/scheduling/support/CronExpression.html),
+not a DAML-specific subset. Its six fields are **second, minute, hour,
+day-of-month, month, day-of-week**. A five-field Kubernetes expression or a
+seventh Quartz year field is not accepted.
+
+The dialect supports numbers, `*`, lists, ascending ranges, `/` steps and
+case-insensitive three-letter English month/weekday names. Sunday is `0` or `7`,
+Monday is `1`. A `?` in a day field means `*`. Calendar rules include:
+
+| Form | Meaning |
+|---|---|
+| `L`, `L-n` in day-of-month | Last day of the month, or an offset before it |
+| `nW`, `LW` | Nearest Monday–Friday day to day n, or last weekday of the month |
+| `FRIL` | Last Friday of the month |
+| `FRI#3` | Third Friday of the month |
+
+Weekdays are not a holiday-aware business calendar. Both day conditions must
+match: `0 0 9 13 * FRI` describes 09:00 on Fridays that fall on the thirteenth.
+This differs from Unix cron's historical OR rule and Quartz's day-field
+restriction. Overflowing hour ranges such as `22-2`, hash/jitter syntax and
+other dialect extensions are not added.
+
+Spring's macros are accepted: `@yearly`/`@annually`, `@monthly`, `@weekly`,
+`@daily`/`@midnight` and `@hourly`. Admission uses the pinned reference's trimming,
+field parsing and macro expansion, not an arbitrary whitespace rewrite.
+Semantic values retain the resolved expression text; `@daily` becomes
+`0 0 0 * * *`. Other accepted expression spelling stays intact. Source formatting
+retains the authored scalar spelling. Cron equality compares retained resolved
+expression text, not sets of future occurrences.
+
+The reserved constructor may follow an ordinary assertion, as in
+`!app.Pattern !Cron "0 0 9 LW * *"`. Native `!Cron` requires the intrinsic kind,
+not a string that resembles a schedule. Cron has no offset facet. Plain JSON
+projects it to an expression string and loses intrinsic kind; semantic values
+use `kind: "cron"` with expression text in `value`.
+
+DAML validates and transports the pattern. It does not execute jobs, calculate
+the next occurrence, infer a timezone or choose daylight-saving/catch-up policy.
+Keep any timezone or execution policy in the consuming application's schema.
+See the [native example](../examples/cron/) and
+[Python consumer](../examples/python_cron.py).
+
+
 ## Native Regex literals
 
 Native definitions add one typed scalar that ordinary data documents do not:
@@ -94,14 +199,41 @@ Native definitions add one typed scalar that ordinary data documents do not:
 pattern: !Regex "\d{4}-\d{2}-\d{2}"
 ```
 
-The double quotes delimit the Regex body. Backslashes and other characters
-inside remain raw source for Rust `regex`; ordinary DAML string escapes are not
-decoded. The body must stay on one physical line and cannot contain a double
-quote; use the regex escape `\x22` when matching one. The body remains subject
-to the scalar-size limit. The formatter preserves its contents exactly.
-Semantic compilation, full-string matching, and
-the valid position under `String.pattern` belong to the
-[native authoring contract](native-authoring.md).
+Regex accepts ordinary double quotes and both triple forms. Pattern backslashes
+remain raw in every form: `\d` reaches the Rust Regex engine unchanged, and `\\`
+is not collapsed by DAML. Ordinary single quotes remain unsupported.
+
+The single-line form ends at the next double quote, even after a backslash.
+Use `\x22` to match a quote in that form. Triple forms use the
+[shared boundaries and layout](#triple-string-boundaries): `"""` dedents literal
+lines, while `'''` folds nonblank lines into one space-separated pattern.
+Line endings normalize to LF. Regex does not perform DAML string escape decoding
+or backslash-newline continuation; an escape before a triple delimiter remains
+in the raw pattern after preventing that delimiter from closing the payload.
+
+For readable patterns with comments, enable verbose mode explicitly:
+
+```daml
+!String {
+  pattern: !Regex """
+    (?x)
+    [A-Z]{2}  # prefix
+    -
+    \d{4}     # identifier
+  """
+}
+```
+
+`(?x)` makes pattern whitespace insignificant and enables `#` line comments.
+It is not enabled by multiline syntax. Prefer `"""` for verbose comments:
+folding `'''` removes the line boundaries that end those comments. Use `\x20`
+for a literal space in verbose mode. Other supported flags also remain inline.
+
+The formatter preserves authored pattern spelling and matching behavior.
+Single-line payload limits remain compatible; triple source tokens and
+normalized patterns are bounded like other multiline strings. Compilation,
+bounded full-string matching and the valid position under `String.pattern`
+belong to the [native authoring contract](native-authoring.md).
 
 ## Triple string boundaries
 
@@ -114,11 +246,15 @@ The opening line ending and one line ending immediately before the closing
 line are syntax, not content. Closing-line indentation is not content. Extra
 blank lines inside literal strings remain data; there is no chomping suffix.
 
-`\\` produces a literal backslash in either triple form. A backslash immediately
-before that form's matching triple delimiter makes the delimiter literal. Other
-backslashes remain data, except the continuation rule for triple-double strings.
-For example, a literal `\n` remains those two characters in triple text; it is not
-an ordinary-string newline escape.
+For ordinary and temporal strings, `\\` produces a literal backslash in either
+triple form. A backslash immediately before that form's matching triple delimiter
+makes the delimiter literal. Other backslashes remain data, except the
+continuation rule for triple-double strings. For example, a literal `\n` remains
+those two characters in triple text; it is not an ordinary-string newline escape.
+
+Native Regex shares these boundaries and layout rules but keeps every pattern
+backslash, including a backslash used to escape a delimiter. It does not perform
+the decoded-string escape or continuation steps.
 
 ### Triple double quotes: literal, mandatory dedent
 
@@ -132,17 +268,19 @@ an ordinary-string newline escape.
    lines, preserving remaining data and the number of internal line breaks.
 4. If the complete body is blank, instead remove all spaces/tabs from every
    content line while preserving the number of internal line breaks.
-5. Decode escaped backslashes/delimiters and process explicit continuations.
+5. For ordinary and temporal strings, decode escaped backslashes/delimiters and
+   process explicit continuations. Native Regex instead retains raw pattern text.
 
 The closing delimiter's column and enclosing node depth do not set the margin.
 Moving equivalent content deeper into a map/list must preserve its decoded
 bytes. Additional indentation within the text remains meaningful.
 
-An unescaped backslash directly before an internal line ending removes itself,
-the line ending, and the next line's leading spaces/tabs. Joining inserts no
-space: a space before the backslash stays data. A backslash followed by spaces/
-tabs before the newline is an error. Escaped backslashes do not continue lines.
-A dangling continuation at the excluded closing boundary is an error.
+For ordinary and temporal strings, an unescaped backslash directly before an
+internal line ending removes itself, the line ending, and the next line's leading
+spaces/tabs. Joining inserts no space: a space before the backslash stays data.
+A backslash followed by spaces/tabs before the newline is an error. Escaped
+backslashes do not continue lines. A dangling continuation at the excluded closing
+boundary is an error. Native Regex does not use this continuation rule.
 
 Dedent precedes joining because a continuation can consume the physical line
 that establishes the minimum margin. It must not change that margin retroactively.

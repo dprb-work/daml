@@ -29,6 +29,11 @@ fn same_value(a: &Document, left: &Node, b: &Document, right: &Node) -> bool {
         (Value::Bool(left), Value::Bool(right)) => left == right,
         (Value::Number(left), Value::Number(right)) => a.slice(*left) == b.slice(*right),
         (Value::String(_), Value::String(_)) => a.string(left) == b.string(right),
+        (Value::Temporal(_), Value::Temporal(_)) => {
+            let left = a.temporal(left).unwrap();
+            let right = b.temporal(right).unwrap();
+            left.kind() == right.kind() && left.as_str() == right.as_str()
+        }
         (Value::Sequence(left), Value::Sequence(right)) => {
             left.len() == right.len()
                 && left
@@ -66,6 +71,7 @@ fn check_node(document: &Document, node: &Node) -> usize {
             check_span(document.source(), *span);
             assert!(document.slice(*span).is_some());
         }
+        Value::Temporal(_) => assert!(document.temporal(node).is_some()),
         Value::String(StringValue::Decoded(_)) | Value::Null | Value::Bool(_) => {}
         Value::Sequence(items) => {
             for child in items {
@@ -122,6 +128,36 @@ pub fn exercise_format(data: &[u8]) {
             formatted.source(),
             "native formatting is idempotent"
         );
+        // Native ASTs are intentionally private: exercise semantic preservation
+        // through real bundle compilation and full-string matching instead.
+        if source.len() <= SCHEMA_INPUT_LIMIT && formatted.source().len() <= SCHEMA_INPUT_LIMIT {
+            let bundle = |text: &str| {
+                daml::Bundle::from_sources(
+                    ".",
+                    [
+                        ("daml.bundle".to_owned(), "{}".to_owned()),
+                        ("Pattern.daml".to_owned(), text.to_owned()),
+                    ],
+                )
+                .unwrap()
+            };
+            let input = parse_with_limits("\"\"", PARSE_LIMITS).unwrap();
+            if let Ok(original) = bundle(source).compile(&input, Some("self.Pattern")) {
+                let rewritten = bundle(formatted.source())
+                    .compile(&input, Some("self.Pattern"))
+                    .expect("native formatting preserves compilable definitions");
+                for value in ["", "a", "abc", "ab", "12\\x", "a\nb"] {
+                    let input =
+                        parse_with_limits(serde_json::to_string(value).unwrap(), PARSE_LIMITS)
+                            .unwrap();
+                    assert_eq!(
+                        original.resolve_as(&input, "self.Pattern").is_ok(),
+                        rewritten.resolve_as(&input, "self.Pattern").is_ok(),
+                        "native formatting preserves validation"
+                    );
+                }
+            }
+        }
         if let Ok(original) = &document {
             let formatted_data = parse_with_limits(formatted.source(), limits)
                 .expect("native formatting preserves data syntax");
@@ -228,6 +264,10 @@ fn native_fixture() -> &'static NativeFixture {
                     "items": {"type": "array", "items": {"type": "integer"}, "uniqueItems": true, "default": [1, 2]},
                     "nullable": {"default": null},
                     "adapter": {"type": "object"},
+                    "when": {
+                        "x-daml-scalar": {"kind": "cron"}, "default": "@weekly",
+                        "x-daml-default-temporals": [{"path": "", "kind": "cron"}]
+                    },
                     "choice": {"anyOf": [{"type": "string", "default": "left"}, {"type": "string", "default": "right"}]}
                 },
                 "required": ["name", "count", "items"], "additionalProperties": true
@@ -289,6 +329,7 @@ fn fixed_documents() -> &'static [Document] {
         "!fuzz.Config { name: null\n count: 0\n items: []\n choice: \"selected\"\n adapter: !fuzz.NativeProvider { enabled: true } }",
         "!fuzz.Item { id: 42\n metadata: { label: \"wide\" } }",
         "!fuzz.List [!fuzz.Count 1\n!fuzz.Count 2]",
+        "!fuzz.Config { choice: \"selected\"\n when: !Cron \"0 17 9 LW * *\" }",
     ].into_iter().map(|source| parse_with_limits(source, PARSE_LIMITS).expect("fixed document")).collect()
     });
     &DOCUMENTS
@@ -387,6 +428,7 @@ pub fn exercise_schema(data: &[u8]) {
             "!fuzz.Config 1e400",
             "!fuzz.Config \"é\"",
             "!fuzz.Config null",
+            "!fuzz.Config { when: !Cron \"0 17 9 ? * FRI#3\" }",
             "{}",
         ]
         .into_iter()

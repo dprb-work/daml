@@ -183,20 +183,95 @@ identifier: !String {
 }
 ```
 
-The quotes delimit the Regex but do not invoke DAML string escapes; the compiler
-passes backslashes through to Rust `regex`. Regex literals are single-line,
-compile during schema admission under the same 1 MiB program/DFA limits as
-interchange patterns, and match the complete string. Rust syntax and Unicode
-classes apply directly; look-around and backreferences are unsupported. A Regex
-literal is valid only as `String.pattern`, not as an instance-data type.
+Quotes delimit Regex text without invoking DAML string escapes. Backslashes
+reach Rust Regex unchanged in the single-line form and both multiline forms.
+Patterns compile during schema admission under the same 1 MiB program/DFA limits
+as interchange patterns and match the complete string. Rust syntax and Unicode
+classes apply directly; look-around and backreferences are unsupported. Regex
+is valid only as `String.pattern`, not as an instance-data type.
+
+Use triple-double quotes and inline `(?x)` for visual grouping and comments:
+
+```daml
+identifier: !String {
+  pattern: !Regex """
+    (?x)
+    [A-Z]{2}  # prefix
+    -
+    \d{4}     # identifier
+  """
+}
+```
+
+This matches `AB-1234`, not surrounding text. No flag is implicit: without
+`(?x)`, spaces and line breaks remain significant. Triple-single quotes fold
+lines into spaces, so they are unsuitable for preserving verbose line comments.
+The [Regex literal contract](syntax.md#native-regex-literals) defines raw
+backslashes, layout, delimiters and limits. See the
+[runnable Regex bundle](../examples/regex/).
 
 Unknown constructor metadata is rejected rather than ignored. Broader JSON
 Schema constraints remain available through the
 [bounded interchange profile](schemas.md); native syntax exposes a smaller set.
+### Temporal values
+
+`!Date`, `!Time`, and `!DateTime` constrain intrinsic temporal values, not
+strings that happen to contain ISO-looking text. Time and DateTime accept the
+metadata facet `offset: "optional"`, `"required"`, or `"forbidden"`; optional
+is the default. Date does not accept offset metadata.
+
+```daml
+closed !Object {
+  date: !Date
+  starts: !Time { offset: "required" }
+  deadline: !DateTime { offset: "forbidden" }
+} = {
+  date: !Date "2026-10-29"
+  starts: !Time "09:30:00+01:00"
+  deadline: !DateTime "2026-10-29T10:30"
+}
+```
+
+A constructor followed by quoted text is a typed temporal literal. A bare
+constructor in a definition is a kind constraint. A generic assertion on a
+temporal value is separate from construction; it does not make strings or
+arbitrary stacked assertions temporal.
+
+The exact supported ISO-based grammar, calendar and clock limits, canonical
+writing, exceptional labels, and JSON boundary are specified in the
+[syntax reference](syntax.md#temporal-literals). The profile is an explicit
+extended-calendar subset, not full ISO conformance.
+
+Native defaults retain temporal kinds through completion and semantic transport.
+Plain JSON output contains canonical ISO strings and cannot retain those kinds.
+Low-level schema adapters that need temporal defaults use
+`x-daml-default-temporals`, described in [default annotations](schemas.md#annotate-temporal-defaults).
+
+### Cron patterns
+
+`!Cron` constrains a Spring cron pattern rather than an ordinary string.
+Quoted text constructs a value or typed constant; the bare constructor is a
+kind constraint:
+
+```daml
+closed !Object {
+  month_end: !Cron
+  third_friday: !Cron
+} = {
+  month_end: !Cron "0 0 9 L * *"
+  third_friday: !Cron "0 0 9 * * FRI#3"
+}
+```
+
+Cron reuses temporal default annotations with `kind: "cron"` and preserves its
+kind through defaults, semantic edits and staged summaries. It does not support
+an offset facet or add scheduling metadata to the constructor. The
+[cron syntax contract](syntax.md#cron-literals) names the reference version,
+calendar rules, macros and execution boundary.
+
 
 Unqualified names are native built-ins. Loaded definitions use a bundle prefix.
 Low-level explicitly composed interchange bindings remain a separate API.
-
 ## Composition, records, and positions
 
 `A | B` accepts either constraint inclusively. `A & B` requires both. `&` binds

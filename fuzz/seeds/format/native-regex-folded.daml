@@ -1,0 +1,7 @@
+!Object { nested: !String {
+  pattern: !Regex '''
+    \d+
+
+    \\x
+    '''
+}}

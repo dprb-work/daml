@@ -1,8 +1,9 @@
 # Install and format your first DAML file
 
-Want to get a feel for DAML before building anything? Start with a file you can
-format and edit. You'll see how the structure reads and what the editor catches;
-[the tutorial](tutorial.md) adds definitions, defaults, and validation afterward.
+This guide gets you editing a DAML file without building Rust or Python.
+To see configuration defaults and validation first, follow the
+[Python quickstart](python-quickstart.md). The [native tutorial](tutorial.md)
+shows handwritten definitions and independent providers.
 
 ## 1. Get the native tools
 
@@ -78,9 +79,10 @@ the language server does today. For another LSP-capable editor, use
 
 ## Next: give the file some requirements
 
-[Build a service configuration](tutorial.md) to see a retry default appear, a bad
-value rejected, and an independent provider selected. It uses checked-in examples
-and a source-built Rust consumer. If you want the distinction between a
-configuration and its requirements first, read [data and schema](data-and-schema.md).
+[Configure a Python program](python-quickstart.md) to derive requirements from a
+Pydantic model or dataclass, or [build a service configuration](tutorial.md)
+with native DAML definitions. Both paths show a default appear and a bad value
+rejected. Read [data and schema](data-and-schema.md) for the distinction between
+values and their requirements.
 Use [syntax](syntax.md) for lookup and [design principles](design-principles.md)
 for the reasons behind the choices.

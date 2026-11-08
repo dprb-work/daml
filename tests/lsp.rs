@@ -349,6 +349,42 @@ fn formatting_cannot_push_a_valid_literal_past_native_scalar_limits() {
 }
 
 #[test]
+fn cron_intrinsics_and_native_constraints_use_real_lsp_admission_and_formatting() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    let uri = "untitled:spring-cron";
+    let source = "!Object {when:!Cron}={when:!Cron \" @weekly \"}";
+    open(&mut server, uri, 1, source);
+    diagnostics(&server, uri, 1, 0);
+    let edits = format_request(&mut server, 2, uri).response_result.unwrap();
+    let formatted = edits[0]["newText"].as_str().unwrap();
+    assert!(formatted.contains("!Cron"));
+    assert!(formatted.contains("\" @weekly \""));
+    daml::parse_definition(formatted).unwrap();
+    server.notify(
+        "textDocument/didChange",
+        json!({"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": formatted}]}),
+    );
+    diagnostics(&server, uri, 2, 0);
+    assert_eq!(
+        format_request(&mut server, 3, uri).response_result.unwrap(),
+        json!([])
+    );
+    server.notify(
+        "textDocument/didChange",
+        json!({"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": "!Cron \"0 0 24 * * *\""}]}),
+    );
+    diagnostics(&server, uri, 3, 1);
+    assert!(format_request(&mut server, 4, uri).response_result.is_err());
+    server
+        .request(5, "shutdown", Value::Null)
+        .response_result
+        .unwrap();
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+}
+
+#[test]
 fn invalid_initialization_delivers_error_and_allows_client_correction() {
     let mut server = LanguageServer::start();
     let before_init = format_request(&mut server, 1, "untitled:not-initialized");
@@ -386,5 +422,73 @@ fn disconnected_initialization_returns_a_transport_error() {
         drop(client);
         let error = daml::lsp::serve(server).unwrap_err();
         assert!(std::error::Error::source(&error).is_some());
+    }
+}
+
+#[test]
+fn native_regex_multiline_stdio_formatting_and_utf16_diagnostics() {
+    for delimiter in ["\"\"\"", "'''"] {
+        let mut server = LanguageServer::start();
+        initialize(&mut server, None, "utf-16");
+        let uri = "untitled:raw-multiline-regex";
+        let invalid = format!("!Regex {delimiter}\n  😀é\0\n  {delimiter}");
+        open(&mut server, uri, 1, &invalid);
+        let error = diagnostics(&server, uri, 1, 1);
+        assert_eq!(
+            error["diagnostics"][0]["range"],
+            json!({"start": {"line": 1, "character": 5}, "end": {"line": 1, "character": 6}})
+        );
+        assert_eq!(
+            format_request(&mut server, 2, uri)
+                .response_result
+                .unwrap_err()
+                .code,
+            -32803
+        );
+        let source = format!(
+            "# 😀 head\n!String{{pattern:!Regex {delimiter}\n  \\d+\\\\x\n  {delimiter} # tail\n}}"
+        );
+        server.notify(
+            "textDocument/didChange",
+            json!({"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": source}]}),
+        );
+        diagnostics(&server, uri, 2, 0);
+        let edits = format_request(&mut server, 3, uri).response_result.unwrap();
+        let formatted = edits[0]["newText"].as_str().expect("real formatting edit");
+        assert!(formatted.contains("# 😀 head"));
+        assert!(formatted.contains("# tail"));
+        assert!(formatted.contains(delimiter));
+        assert!(formatted.contains("\\d+\\\\x"));
+        let bundle = daml::Bundle::from_sources(
+            ".",
+            [
+                ("daml.bundle".to_owned(), "{}".to_owned()),
+                ("Pattern.daml".to_owned(), formatted.to_owned()),
+            ],
+        )
+        .unwrap();
+        let valid = daml::parse(r#""12\\x""#).unwrap();
+        let schemas = bundle.compile(&valid, Some("self.Pattern")).unwrap();
+        assert!(schemas.resolve_as(&valid, "self.Pattern").is_ok());
+        assert!(
+            schemas
+                .resolve_as(&daml::parse("\"12x\"").unwrap(), "self.Pattern")
+                .is_err()
+        );
+        server.notify(
+            "textDocument/didChange",
+            json!({"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": formatted}]}),
+        );
+        diagnostics(&server, uri, 3, 0);
+        assert_eq!(
+            format_request(&mut server, 4, uri).response_result.unwrap(),
+            json!([])
+        );
+        server
+            .request(5, "shutdown", Value::Null)
+            .response_result
+            .unwrap();
+        server.notify("exit", json!({}));
+        assert!(wait_for_exit(&mut server.child).success());
     }
 }

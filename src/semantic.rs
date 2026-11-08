@@ -32,6 +32,8 @@ pub enum SemanticValue {
     Number(Number),
     /// String data.
     String(String),
+    /// An admitted temporal scalar with retained ISO text or Spring cron expression.
+    Temporal(crate::TemporalValue<'static>),
     /// Ordered sequence entries.
     Sequence(Vec<SemanticNode>),
     /// Literal mapping keys and their values.
@@ -59,6 +61,12 @@ impl SemanticNode {
                         .string(node)
                         .expect("parsed string has valid data")
                         .to_owned(),
+                ),
+                crate::Value::Temporal(_) => SemanticValue::Temporal(
+                    document
+                        .temporal(node)
+                        .expect("admitted temporal source")
+                        .into_owned(),
                 ),
                 crate::Value::Sequence(items) => SemanticValue::Sequence(
                     items.iter().map(|item| convert(document, item)).collect(),
@@ -94,6 +102,9 @@ impl SemanticNode {
             ResolvedValue::Bool(value) => SemanticValue::Bool(*value),
             ResolvedValue::Number(value) => SemanticValue::Number(value.as_ref().clone()),
             ResolvedValue::String(value) => SemanticValue::String(value.to_string()),
+            ResolvedValue::Temporal(value) => {
+                SemanticValue::Temporal(value.as_borrowed().into_owned())
+            }
             ResolvedValue::Sequence(items) => {
                 SemanticValue::Sequence(items.iter().map(Self::from_resolved).collect())
             }
@@ -259,7 +270,7 @@ impl fmt::Write for BoundedOutput {
 }
 
 fn validate_tag(name: &str, path: &[String]) -> Result<(), SemanticError> {
-    if names::valid_tag(name) {
+    if names::valid_tag(name) && crate::TemporalKind::from_constructor(name).is_none() {
         Ok(())
     } else {
         Err(error(
@@ -372,6 +383,31 @@ fn build_doc<'node: 'doc, 'doc>(
             }
             *bytes = bytes.saturating_add(encoded_len);
             arena.text(quote(value, path)?)
+        }
+        SemanticValue::Temporal(value) => {
+            let encoded_len = if value.kind() == crate::TemporalKind::Cron {
+                escaped_len(value.as_str())
+            } else {
+                value.as_str().len().saturating_add(2)
+            };
+            if encoded_len > MAX_SCALAR_BYTES {
+                return Err(error(
+                    SemanticErrorKind::LimitExceeded,
+                    path,
+                    "temporal exceeds scalar byte bound",
+                ));
+            }
+            *bytes = bytes.saturating_add(encoded_len + value.kind().constructor().len() + 2);
+            let payload = if value.kind() == crate::TemporalKind::Cron {
+                arena.text(quote(value.as_str(), path)?)
+            } else {
+                arena.text("\"").append(value.as_str()).append("\"")
+            };
+            arena
+                .text("!")
+                .append(value.kind().constructor())
+                .append(" ")
+                .append(payload)
         }
         SemanticValue::Sequence(items) => {
             if items.len() > MAX_NODES.saturating_sub(*nodes) {

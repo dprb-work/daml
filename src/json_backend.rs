@@ -26,7 +26,7 @@ impl<'a> NodeRef<'a> {
         Self::Value(node)
     }
 
-    fn value(self) -> Option<&'a ResolvedValue<'a>> {
+    pub(crate) fn value(self) -> Option<&'a ResolvedValue<'a>> {
         match self {
             Self::Value(node) => Some(&node.value),
             Self::Property(_) | Self::Dispatch { .. } => None,
@@ -59,6 +59,7 @@ pub(crate) fn equal_resolved(
                 || jsonschema::json::cmp::equal_numbers(&NumberRef(left.as_ref()), right.as_ref())
         }
         (ResolvedValue::String(left), ResolvedValue::String(right)) => left == right,
+        (ResolvedValue::Temporal(left), ResolvedValue::Temporal(right)) => left == right,
         (ResolvedValue::Sequence(left), ResolvedValue::Sequence(right)) => {
             left.len() == right.len()
                 && left
@@ -149,6 +150,10 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
                 value: ResolvedValue::String(text),
                 ..
             }) => Some(Cow::Borrowed(text.as_ref())),
+            Self::Value(ResolvedNode {
+                value: ResolvedValue::Temporal(value),
+                ..
+            }) => Some(Cow::Borrowed(value.as_str())),
             Self::Property(text) => Some(Cow::Borrowed(text)),
             _ => None,
         }
@@ -184,7 +189,7 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
                 ResolvedValue::Null => JsonType::Null,
                 ResolvedValue::Bool(_) => JsonType::Boolean,
                 ResolvedValue::Number(_) => JsonType::Number,
-                ResolvedValue::String(_) => JsonType::String,
+                ResolvedValue::String(_) | ResolvedValue::Temporal(_) => JsonType::String,
                 ResolvedValue::Sequence(_) => JsonType::Array,
                 ResolvedValue::Mapping(_) => JsonType::Object,
             },
@@ -207,6 +212,9 @@ impl<'a> Node<'a, DamlJson> for NodeRef<'a> {
                     jsonschema::json::cmp::equal_numbers(&NumberRef(value.as_ref()), expected)
                 }
                 (ResolvedValue::String(value), Value::String(expected)) => value == expected,
+                (ResolvedValue::Temporal(value), Value::String(expected)) => {
+                    value.as_str() == expected
+                }
                 (ResolvedValue::Sequence(items), Value::Array(expected)) => {
                     items.len() == expected.len()
                         && items

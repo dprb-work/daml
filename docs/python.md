@@ -6,6 +6,10 @@ no PyPI package or release wheel is provided. It is separate from the native
 `daml-fmt` and `daml-lsp` archives. Neither the Rust library nor those executables
 requires Python at runtime.
 
+Start with [Configure a Python program with DAML](python-quickstart.md) for a
+complete type-derived schema, a configuration file, and visible results.
+This page is the API reference.
+
 ## Install from source
 
 Install [Rust through rustup](https://rustup.rs/) and
@@ -99,14 +103,71 @@ Other type expressions, including named alias targets, must likewise contain
 resolved types rather than string forward references.
 
 The default exporter supports declarative JSON-shaped fields, constraints and
-static defaults. Python model behavior that cannot be represented declaratively
-is rejected: custom validators/serializers, schema overrides, normalization,
-custom-init/post-init behavior, factories and other unsupported core-schema
-forms are not run or silently discarded. Default factories are not invoked.
-`format` assertions at schema positions are rejected because format validation
-is disabled; this includes temporal types such as date/time. Temporal support
-remains unimplemented. Python type expressions and exporter hooks are trusted
-caller code and may execute code during export.
+static defaults, plus standard-library `date`, `time`, and `datetime` fields
+with representable static defaults. Temporal annotations become DAML temporal
+values; they do not make the resolver construct Python model instances.
+Pydantic `AwareDatetime` requires an explicit offset and `NaiveDatetime`
+forbids one. A plain `datetime` permits either. Unsupported comparisons such as
+temporal bounds, relative-now rules, and fixed-offset requirements fail rather
+than disappear. Default factories are not invoked.
+
+Temporal defaults are recognized from actual Python date/time/datetime objects.
+A date-looking string is not promoted to a date. The optional
+[temporal example](../examples/python_temporal.py) derives both a Pydantic model
+and dataclass, resolves precise typed input, and demonstrates an explicit
+standard-library conversion failure.
+
+The exporter still rejects Python behavior it cannot represent declaratively:
+custom validators/serializers, schema overrides, normalization, factories,
+custom-init/post-init behavior, and unsupported core-schema forms. `format`
+assertions supplied as schema positions are rejected because format validation
+is disabled; they are not reinterpreted as DAML temporal constructors. Python
+type expressions and exporter hooks are trusted caller code and may execute code
+during export.
+
+### Work with temporal values
+
+`Document.to_python()` and `ResolvedDocument.to_python()` return immutable
+`daml.Date`, `daml.Time`, and `daml.DateTime` objects for intrinsic temporal
+values. Construct one from supported ISO text, then use `isoformat()` or `str()`
+to get its canonical text. Time and DateTime expose `offset_minutes`; `None`
+means no authored offset, while `0` means an explicit UTC offset.
+
+Call `to_date()`, `to_time()`, or `to_datetime()` only when you need a Python
+standard-library value. These methods require an exact conversion: unsupported
+years, leap-second/end-of-day labels, or nonzero precision beyond microseconds
+raise `ValueError`. Extra trailing zero fraction digits can convert exactly;
+the DAML value itself retains its original precision either way. DAML temporal
+objects are not `datetime` subclasses and are not implicitly converted.
+
+The semantic editing representation uses `kind: "date"`, `"time"`, `"datetime"`,
+or `"cron"` with canonical ISO or resolved cron expression text in `value`.
+The core Rust `to_json()` projection instead emits canonical strings and loses
+intrinsic temporal identity; Python objects require an explicit JSON serialization
+choice. Do not use date-looking strings to request typed values; use a temporal
+constructor or a real Python temporal object as a static default.
+
+Cron patterns use the same intrinsic lifecycle but expose a different Python API:
+
+```python
+pattern = daml.parse('!Cron "0 0 9 LW * *"').to_python()
+print(pattern.expression)  # 0 0 9 LW * *
+print(str(daml.Cron("@daily")))  # 0 0 0 * * *
+```
+
+`daml.Cron` is immutable and validates the
+[Spring cron dialect](syntax.md#cron-literals). Its read-only `expression`
+contains the resolved pattern. It has no ISO formatting, standard-library
+datetime conversion or next-run method. Resolved defaults return the same kind
+of object. Equality compares retained resolved expression text, not future
+occurrence sets. Plain Python strings do not become Cron values by inference.
+
+There is no standard-library Cron annotation to project. This feature does not
+add third-party cron adapters or custom Pydantic hooks to `schema_from_types`;
+use native `!Cron`, explicit schema metadata or the existing custom-exporter
+boundary. The [runnable cron example](../examples/python_cron.py) resolves a
+native bundle and edits its typed patterns.
+
 
 An explicit `exporter(type) -> JSON Schema object or boolean` owns its translation
 conventions and errors; exceptions propagate without fallback. For example, a
@@ -235,8 +296,10 @@ JSON/YAML; it is not silently converted to float.
 
 `Document.value()` and `ResolvedDocument.value()` return editable semantic trees,
 not ordinary JSON-shaped values. Each node has `kind`: `null`, `bool`, `number`,
-`string`, `list`, or `map`. Numbers carry an exact JSON numeric string in `value`;
-lists use `items`; maps use `entries` of `{"key": ..., "value": ...}` records.
+`string`, `date`, `time`, `datetime`, `cron`, `list`, or `map`. Numbers carry an
+exact JSON numeric string in `value`; temporal nodes carry canonical ISO text
+or resolved cron expression text. Lists use
+`items`; maps use `entries` of `{"key": ..., "value": ...}` records.
 An optional `tag` retains the assertion name and, after resolution, its opaque
 binding identity. Numeric strings in this representation are number nodes, not
 string data.

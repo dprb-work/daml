@@ -499,12 +499,12 @@ pub(super) fn compile<'names>(
             .at_path(&check.path)
             .at_span(check.span)
         })?;
-        let annotations = origin
-            .value()
-            .get("x-daml-default-tags")
-            .and_then(Json::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let annotations = schema_default_annotations(
+            origin
+                .value()
+                .as_object()
+                .expect("literal default belongs to an object schema"),
+        );
         admit_copy(
             &mut compiler.materialized_nodes,
             &mut compiler.materialized_bytes,
@@ -525,7 +525,7 @@ pub(super) fn compile<'names>(
             resource: format!("file://{}", check.path.display()),
             pointer: "/default".into(),
         };
-        let node = resolved_node(value, annotations, &location, "", check.span)?;
+        let node = resolved_node(value, origin, &location);
         validation
             .complete_partial_default(
                 &check.schema_type,
@@ -623,6 +623,11 @@ fn relax_schema(schema: &mut Json) {
     let Some(object) = schema.as_object_mut() else {
         return;
     };
+    // Composite value literals remain atomic: their descendant presence
+    // constraints are part of the literal, not an incomplete object preset.
+    if object.get("x-daml-native-literal").and_then(Json::as_bool) == Some(true) {
+        return;
+    }
     object.remove("required");
     object.remove("minProperties");
     crate::schema::profile::for_each_child_mut(schema, relax_schema);
@@ -1419,26 +1424,27 @@ impl Compiler<'_> {
             if path.is_empty() {
                 changed |= object.remove("default").is_some();
                 changed |= object.remove("x-daml-default-tags").is_some();
+                changed |= object.remove("x-daml-default-temporals").is_some();
             } else {
                 if let Some(default) = object.get_mut("default") {
                     changed |= remove_default_component(default, path);
                 }
                 let pointer = default_path_pointer(path);
                 let prefix = format!("{pointer}/");
-                if let Some(tags) = object
-                    .get_mut("x-daml-default-tags")
-                    .and_then(Json::as_array_mut)
-                {
-                    let prior = tags.len();
-                    tags.retain(|annotation| {
-                        annotation
-                            .get("path")
-                            .and_then(Json::as_str)
-                            .is_none_or(|path| path != pointer && !path.starts_with(&prefix))
-                    });
-                    changed |= tags.len() != prior;
-                    if tags.is_empty() {
-                        object.remove("x-daml-default-tags");
+                for keyword in ["x-daml-default-tags", "x-daml-default-temporals"] {
+                    if let Some(annotations) = object.get_mut(keyword).and_then(Json::as_array_mut)
+                    {
+                        let prior = annotations.len();
+                        annotations.retain(|annotation| {
+                            annotation
+                                .get("path")
+                                .and_then(Json::as_str)
+                                .is_none_or(|path| path != pointer && !path.starts_with(&prefix))
+                        });
+                        changed |= annotations.len() != prior;
+                        if annotations.is_empty() {
+                            object.remove(keyword);
+                        }
                     }
                 }
             }
@@ -1605,6 +1611,30 @@ impl Compiler<'_> {
                 .at_span(member.span));
             }
             match (name, key) {
+                ("Time" | "DateTime", "offset") => {
+                    let K::Literal(node) = &member.constraint.kind else {
+                        return Err(NativeError::new(
+                            NativeErrorKind::InvalidDefinition,
+                            "offset policy requires a string literal",
+                        )
+                        .at_path(file)
+                        .at_span(member.constraint.span));
+                    };
+                    let policy = self.materialize_node(source, node, file)?;
+                    if !matches!(policy.as_str(), Some("optional" | "required" | "forbidden")) {
+                        return Err(NativeError::new(
+                            NativeErrorKind::InvalidDefinition,
+                            "offset policy must be optional, required or forbidden",
+                        )
+                        .at_path(file)
+                        .at_span(node.span));
+                    }
+                    let kind = if name == "Time" { "time" } else { "datetime" };
+                    schema.insert(
+                        "x-daml-scalar".into(),
+                        serde_json::json!({"kind":kind,"offset":policy}),
+                    );
+                }
                 (
                     "Int" | "Number",
                     "min" | "max" | "exclusiveMin" | "exclusiveMax" | "multipleOf",
@@ -1663,7 +1693,7 @@ impl Compiler<'_> {
                     schema.insert(keyword.into(), Json::Number(Number::from(bound)));
                 }
                 ("String", "pattern") => {
-                    let K::Regex(pattern) = &member.constraint.kind else {
+                    let K::Regex { pattern, payload } = &member.constraint.kind else {
                         return Err(NativeError::new(
                             NativeErrorKind::InvalidDefinition,
                             "String facet \"pattern\" requires a Regex",
@@ -1676,11 +1706,23 @@ impl Compiler<'_> {
                         .next_regex_origin
                         .checked_add(1)
                         .expect("Regex origins are bounded by schema nodes");
+                    // The admitted token retains its original delimiters; diagnostics
+                    // refer to the original interior, never offsets into laid-out text.
+                    let delimiter_bytes = if source[payload.start..].starts_with("\"\"\"")
+                        || source[payload.start..].starts_with("'''")
+                    {
+                        3
+                    } else {
+                        1
+                    };
                     self.schema_origins.insert(
                         crate::schema::native_regex_origin(origin),
                         SchemaOrigin {
                             path: file.to_path_buf(),
-                            span: *pattern,
+                            span: Span {
+                                start: payload.start + delimiter_bytes,
+                                end: payload.end - delimiter_bytes,
+                            },
                         },
                     );
                     schema.insert(
@@ -1688,12 +1730,12 @@ impl Compiler<'_> {
                         Json::Object(Map::from_iter([
                             (
                                 "pattern".into(),
-                                Json::String(
-                                    source
-                                        .get(pattern.start..pattern.end)
-                                        .unwrap_or("")
-                                        .to_owned(),
-                                ),
+                                Json::String(match pattern {
+                                    StringValue::Source(span) => {
+                                        source[span.start..span.end].to_owned()
+                                    }
+                                    StringValue::Decoded(text) => text.clone(),
+                                }),
                             ),
                             ("origin".into(), Json::Number(Number::from(origin))),
                         ])),
@@ -1952,7 +1994,18 @@ impl Compiler<'_> {
         if tag == "Tuple" {
             schema.extend(self.lower_tuple_tag(name, body, context, validate_children)?);
         } else if let Some(body) = body {
-            if matches!(tag, "String" | "Int" | "Number" | "List" | "Map") {
+            if matches!(
+                tag,
+                "String"
+                    | "Int"
+                    | "Number"
+                    | "List"
+                    | "Map"
+                    | "Date"
+                    | "Time"
+                    | "DateTime"
+                    | "Cron"
+            ) {
                 schema.extend(self.lower_metadata(
                     tag,
                     body,
@@ -2097,6 +2150,113 @@ impl Compiler<'_> {
         result
     }
 
+    fn lower_literal(
+        &mut self,
+        node: &Node,
+        source: &str,
+        file: &Path,
+    ) -> Result<Map<String, Json>, NativeError> {
+        let mut schema = self.lower_literal_shape(node, source, file)?;
+        if matches!(&node.value, Value::Sequence(_) | Value::Mapping(_)) {
+            // Keep exact presence throughout the literal's typed shape without
+            // imposing JSON string equality on intrinsic temporal descendants.
+            admit_copy_cost(
+                &mut self.materialized_nodes,
+                &mut self.materialized_bytes,
+                1,
+                "x-daml-native-literal".len() + std::mem::size_of::<bool>(),
+                file,
+                Some(node.span),
+            )?;
+            schema.insert("x-daml-native-literal".into(), Json::Bool(true));
+        }
+        Ok(schema)
+    }
+
+    fn lower_literal_shape(
+        &mut self,
+        node: &Node,
+        source: &str,
+        file: &Path,
+    ) -> Result<Map<String, Json>, NativeError> {
+        let mut schema = Map::new();
+        match &node.value {
+            Value::Temporal(value) => {
+                let value = value.value(source).expect("admitted temporal source");
+                admit_copy_cost(
+                    &mut self.materialized_nodes,
+                    &mut self.materialized_bytes,
+                    4,
+                    value.as_str().len() + 32,
+                    file,
+                    Some(node.span),
+                )?;
+                schema.insert("type".into(), Json::String("string".into()));
+                schema.insert(
+                    "x-daml-scalar".into(),
+                    serde_json::json!({"kind":value.kind().as_str(),"const":value.as_str()}),
+                );
+            }
+            Value::Sequence(items) => {
+                admit_copy_cost(
+                    &mut self.materialized_nodes,
+                    &mut self.materialized_bytes,
+                    6,
+                    64,
+                    file,
+                    Some(node.span),
+                )?;
+                schema.insert("type".into(), Json::String("array".into()));
+                if !items.is_empty() {
+                    let children = items
+                        .iter()
+                        .map(|item| {
+                            self.lower_literal_shape(item, source, file)
+                                .map(Json::Object)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    schema.insert("prefixItems".into(), Json::Array(children));
+                }
+                schema.insert("minItems".into(), Json::from(items.len()));
+                schema.insert("maxItems".into(), Json::from(items.len()));
+            }
+            Value::Mapping(entries) => {
+                let key_bytes = entries.iter().fold(0usize, |bytes, entry| {
+                    bytes.saturating_add((entry.key.end - entry.key.start).saturating_mul(2))
+                });
+                admit_copy_cost(
+                    &mut self.materialized_nodes,
+                    &mut self.materialized_bytes,
+                    entries.len().saturating_add(6),
+                    key_bytes.saturating_add(64),
+                    file,
+                    Some(node.span),
+                )?;
+                let mut properties = Map::new();
+                let mut required = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    let key = &source[entry.key.start..entry.key.end];
+                    properties.insert(
+                        key.into(),
+                        Json::Object(self.lower_literal_shape(&entry.value, source, file)?),
+                    );
+                    required.push(Json::String(key.into()));
+                }
+                schema.insert("type".into(), Json::String("object".into()));
+                schema.insert("properties".into(), Json::Object(properties));
+                schema.insert("required".into(), Json::Array(required));
+                schema.insert("additionalProperties".into(), Json::Bool(false));
+            }
+            _ => {
+                schema.insert("const".into(), self.materialize_node(source, node, file)?);
+                if matches!(node.value, Value::String(_)) {
+                    schema.insert("x-daml-scalar".into(), serde_json::json!({"kind":"string"}));
+                }
+            }
+        }
+        Ok(schema)
+    }
+
     fn lower_expression_inner(
         &mut self,
         expression: &crate::native::Expression,
@@ -2111,9 +2271,9 @@ impl Compiler<'_> {
         let mut schema = Map::new();
         match &expression.kind {
             K::Literal(node) => {
-                schema.insert("const".into(), self.materialize_node(source, node, file)?);
+                schema = self.lower_literal(node, source, file)?;
             }
-            K::Regex(_) => {
+            K::Regex { .. } => {
                 return Err(NativeError::new(
                     NativeErrorKind::InvalidDefinition,
                     "Regex is only valid as a String pattern facet",
@@ -2210,9 +2370,7 @@ impl Compiler<'_> {
                         self.materialize_node(source, value, file)?,
                     );
                     let tags = self.default_annotations(value, source, root, file)?;
-                    if !tags.is_empty() {
-                        schema.insert("x-daml-default-tags".into(), Json::Array(tags));
-                    }
+                    insert_default_annotations(&mut schema, tags);
                 }
                 DefaultValue::Inherited | DefaultValue::Unset => {}
             }
@@ -2900,15 +3058,13 @@ impl Compiler<'_> {
         let schema = normalized.as_ref().unwrap_or(schema);
         if let Some(object) = schema.as_object() {
             if let Some(value) = object.get("default") {
-                let tags = object.get("x-daml-default-tags");
+                let mut annotations = Vec::new();
                 budget.charge_copy(value)?;
-                if let Some(tags) = tags {
-                    budget.charge_copy(tags)?;
+                for annotation in schema_default_annotations(object) {
+                    budget.charge_copy(annotation)?;
+                    annotations.push(annotation.clone());
                 }
-                found.push((
-                    value.clone(),
-                    tags.and_then(Json::as_array).cloned().unwrap_or_default(),
-                ));
+                found.push((value.clone(), annotations));
             }
             if let Some(reference) = object.get("$ref").and_then(Json::as_str)
                 && visited.insert(reference.to_owned())
@@ -3322,9 +3478,9 @@ impl Compiler<'_> {
                             for annotation in &preset.annotations {
                                 budget.charge_copy(annotation)?;
                             }
-                            default_schema.insert(
-                                "x-daml-default-tags".into(),
-                                Json::Array(preset.annotations.clone()),
+                            insert_default_annotations(
+                                &mut default_schema,
+                                preset.annotations.clone(),
                             );
                         }
                         all_of.push(Json::Object(default_schema));
@@ -3417,7 +3573,7 @@ impl Compiler<'_> {
                     )?;
                 }
             }
-            K::Literal(_) | K::Regex(_) => {}
+            K::Literal(_) | K::Regex { .. } => {}
             K::Intersection(items) => {
                 if let Some(branches) = local_schema.get_mut("allOf").and_then(Json::as_array_mut) {
                     for (item, branch) in items.iter().zip(branches) {
@@ -3537,6 +3693,18 @@ impl Compiler<'_> {
                     ("tag".into(), Json::String(tag.to_owned())),
                     ("binding".into(), Json::String(binding)),
                 ])));
+            }
+            if let Value::Temporal(value) = &node.value {
+                let value = value.value(source).expect("admitted temporal source");
+                let annotation = serde_json::json!({"path":path,"kind":value.kind().as_str()});
+                admit_copy(
+                    &mut compiler.materialized_nodes,
+                    &mut compiler.materialized_bytes,
+                    &annotation,
+                    file,
+                    Some(node.span),
+                )?;
+                out.push(annotation);
             }
             match &node.value {
                 Value::Sequence(items) => {
@@ -3923,6 +4091,7 @@ fn preserve_narrowing_annotations(
         "$id",
         "default",
         "x-daml-default-tags",
+        "x-daml-default-temporals",
         "x-daml-native-optional",
     ] {
         if let Some(value) = source.get(keyword)
@@ -4001,7 +4170,7 @@ fn supports_default_override_projection(expression: &crate::native::Expression) 
             .as_deref()
             .is_some_and(supports_default_override_projection),
         K::Closed(inner) | K::Group(inner) => supports_default_override_projection(inner),
-        K::Literal(_) | K::Regex(_) | K::Union(_) | K::Intersection(_) => false,
+        K::Literal(_) | K::Regex { .. } | K::Union(_) | K::Intersection(_) => false,
     }
 }
 
@@ -4047,7 +4216,7 @@ fn collect_default_override_paths(
                 prefix.pop();
             }
         }
-        K::Literal(_) | K::Regex(_) => {}
+        K::Literal(_) | K::Regex { .. } => {}
     }
 }
 
@@ -4099,7 +4268,7 @@ fn collect_unconditional_default_override_paths(
                 prefix.pop();
             }
         }
-        K::Literal(_) | K::Regex(_) => {}
+        K::Literal(_) | K::Regex { .. } => {}
     }
 }
 
@@ -4183,6 +4352,24 @@ fn admit_copy_cost(
     *copied_nodes += nodes;
     *copied_bytes += bytes;
     Ok(())
+}
+
+fn schema_default_annotations(schema: &Map<String, Json>) -> impl Iterator<Item = &Json> {
+    ["x-daml-default-tags", "x-daml-default-temporals"]
+        .into_iter()
+        .filter_map(|keyword| schema.get(keyword).and_then(Json::as_array))
+        .flatten()
+}
+fn insert_default_annotations(schema: &mut Map<String, Json>, annotations: Vec<Json>) {
+    let (temporals, tags): (Vec<_>, Vec<_>) = annotations
+        .into_iter()
+        .partition(|annotation| annotation.get("kind").is_some());
+    if !tags.is_empty() {
+        schema.insert("x-daml-default-tags".into(), Json::Array(tags));
+    }
+    if !temporals.is_empty() {
+        schema.insert("x-daml-default-temporals".into(), Json::Array(temporals));
+    }
 }
 
 fn extract_preset_component(
@@ -4314,6 +4501,15 @@ fn builtin(name: &str) -> Option<Map<String, Json>> {
     match name {
         "String" => {
             schema.insert("type".into(), Json::String("string".into()));
+            schema.insert("x-daml-scalar".into(), serde_json::json!({"kind":"string"}));
+        }
+        "Date" | "Time" | "DateTime" | "Cron" => {
+            let kind = crate::TemporalKind::from_constructor(name).expect("matched intrinsic");
+            schema.insert("type".into(), Json::String("string".into()));
+            schema.insert(
+                "x-daml-scalar".into(),
+                serde_json::json!({"kind":kind.as_str()}),
+            );
         }
         "Bool" => {
             schema.insert("type".into(), Json::String("boolean".into()));
@@ -4350,6 +4546,13 @@ fn node_json_cost(source: &str, node: &Node) -> (usize, usize) {
         Value::String(StringValue::Source(span)) | Value::Number(span) => {
             bytes = source.get(span.start..span.end).map_or(0, str::len);
         }
+        Value::Temporal(value) => {
+            bytes = value
+                .value(source)
+                .expect("admitted temporal source")
+                .as_str()
+                .len()
+        }
         Value::Sequence(items) => {
             for item in items {
                 let (child_nodes, child_bytes) = node_json_cost(source, item);
@@ -4384,7 +4587,7 @@ fn has_default_in_expression_tree(expression: &crate::native::Expression) -> boo
         K::Union(items) | K::Intersection(items) => {
             items.iter().any(has_default_in_expression_tree)
         }
-        K::Literal(_) | K::Regex(_) | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => false,
+        K::Literal(_) | K::Regex { .. } | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => false,
     }
 }
 
@@ -4398,7 +4601,7 @@ fn first_unset_default_assignment(expression: &crate::native::Expression) -> Opt
         K::Union(items) | K::Intersection(items) => {
             items.iter().find_map(first_unset_default_assignment)
         }
-        K::Literal(_) | K::Regex(_) | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => None,
+        K::Literal(_) | K::Regex { .. } | K::Tagged { .. } | K::Record(_) | K::Tuple(_) => None,
     }
 }
 
@@ -4434,6 +4637,13 @@ fn node_json(source: &str, node: &Node) -> Result<Json, NativeError> {
             })?;
             Json::String(text.to_owned())
         }
+        Value::Temporal(value) => Json::String(
+            value
+                .value(source)
+                .expect("admitted temporal source")
+                .as_str()
+                .to_owned(),
+        ),
         Value::Sequence(items) => Json::Array(
             items
                 .iter()
@@ -4453,76 +4663,56 @@ fn node_json(source: &str, node: &Node) -> Result<Json, NativeError> {
 }
 
 fn resolved_node<'a>(
-    value: &Json,
-    annotations: &[Json],
+    value: &'a Json,
+    schema: crate::schema::SchemaView<'a>,
     location: &'a crate::SchemaLocation,
-    path: &str,
-    span: Span,
-) -> Result<crate::ResolvedNode<'a>, NativeError> {
+) -> crate::ResolvedNode<'a> {
     use crate::resolved::ResolvedTag;
     use crate::{Origin, ResolvedNode, ResolvedValue};
     use std::{borrow::Cow, collections::BTreeMap};
     let origin = Origin::Default(location);
-    let annotation = annotations
-        .iter()
-        .find(|entry| entry.get("path").and_then(Json::as_str) == Some(path));
-    let tag = annotation.and_then(|entry| {
-        Some(ResolvedTag {
-            name: Cow::Owned(entry.get("tag")?.as_str()?.to_owned()),
-            binding: entry
-                .get("binding")
-                .and_then(Json::as_str)
-                .map(|binding| Cow::Owned(binding.to_owned())),
+    // Registry admission owns tag and temporal identity, including descendants.
+    // Reconstruct the candidate before Core suppresses its own root payload.
+    let tag = schema
+        .default_tag(value)
+        .map(|(name, binding)| ResolvedTag {
+            name: Cow::Owned(name.to_owned()),
+            binding: binding.map(|binding| Cow::Owned(binding.to_owned())),
             origin,
             supplied: false,
-        })
-    });
+        });
     let resolved = match value {
         Json::Null => ResolvedValue::Null,
         Json::Bool(value) => ResolvedValue::Bool(*value),
         Json::Number(value) => ResolvedValue::Number(Cow::Owned(value.clone())),
-        Json::String(value) => ResolvedValue::String(Cow::Owned(value.clone())),
+        Json::String(text) => match schema.default_temporal(value) {
+            Some(value) => ResolvedValue::Temporal(value.into_owned()),
+            None => ResolvedValue::String(Cow::Owned(text.clone())),
+        },
         Json::Array(items) => ResolvedValue::Sequence(
             items
                 .iter()
-                .enumerate()
-                .map(|(index, item)| {
-                    resolved_node(
-                        item,
-                        annotations,
-                        location,
-                        &format!("{path}/{index}"),
-                        span,
-                    )
-                })
-                .collect::<Result<_, _>>()?,
+                .map(|item| resolved_node(item, schema, location))
+                .collect(),
         ),
         Json::Object(fields) => {
             let mut resolved = BTreeMap::new();
             for (key, item) in fields {
-                let escaped = key.replace('~', "~0").replace('/', "~1");
                 resolved.insert(
                     Cow::Owned(key.clone()),
-                    resolved_node(
-                        item,
-                        annotations,
-                        location,
-                        &format!("{path}/{escaped}"),
-                        span,
-                    )?,
+                    resolved_node(item, schema, location),
                 );
             }
             ResolvedValue::Mapping(resolved)
         }
     };
-    let _ = span;
-    Ok(ResolvedNode {
+    ResolvedNode {
         value: resolved,
         tag,
         origin,
         opaque: false,
         number_class: 0,
-    })
+    }
 }
 fn definition_identity(root: &Path, relative: &Path) -> String {
     let root = root.as_os_str().as_encoded_bytes();

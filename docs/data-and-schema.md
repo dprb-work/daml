@@ -98,26 +98,23 @@ supplied contents* describes the same distinction.
 
 ## Derive a schema from Python types
 
-The workflow of defining configuration types in code, deriving a schema, then
-authoring concrete values in DAML is now supported in bounded form by the
-optional Python API. Explicitly bind Pydantic v2 models or standard dataclasses
-to DAML names with `daml.schema_from_types`; the returned JSON Schema module is
-composed and resolved through the existing interchange API. It is an in-memory
-interchange module, not generated native `.daml` definition text. See the
-[runnable Python example](../examples/python_types.py) and
-[Python API guide](python.md#derive-schemas-from-python-types).
+If your Python program already defines its configuration types, you don't need
+to describe the same fields again in DAML. `daml.schema_from_types` derives an
+in-memory schema module from explicitly named Pydantic v2 models or standard
+dataclasses. The DAML file still supplies concrete values; only the source of
+the requirements changes.
 
-This is not universal host-language projection. The JSON Schema projection does
-not promise exact `model_validate` behavior, strict Python type identity,
-coercion, extra-ignore behavior, or model-instance construction. DAML's
-required-container completion and mathematical JSON integer semantics remain
-unchanged; default exports support string-keyed mappings. Unsupported model
-behavior such as custom validators, factories, schema overrides, normalization
-and schema-position `format` assertions (including temporal types) is rejected.
-Type and exporter hooks are trusted caller code. Python names remain subject to
-DAML's source-key grammar. For other type libraries, a caller-supplied generic
-exporter owns its schema conventions. Native definitions remain useful for
-contracts and defaults that need native DAML features.
+The [Python quickstart](python-quickstart.md) takes that path from a model to a
+working configuration. Resolution returns ordinary values, not constructed
+model instances. The projection supports a declarative subset of Python types,
+constraints, and static defaults; it rejects custom validators and factories.
+See the [Python API reference](python.md#derive-schemas-from-python-types) for
+the exact boundary, including supported temporal fields and custom exporters.
+
+Native definitions remain another way to author the contract. They are useful
+when requirements should live in DAML rather than Python, or need native
+composition features. Neither route changes the distinction between a schema
+and the values it describes.
 
 ## A few connections for later
 

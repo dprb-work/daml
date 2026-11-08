@@ -1,0 +1,8 @@
+!String {
+  pattern: !Regex """
+    (?x)
+    [A-Z]{2}  # prefix
+    -
+    \d{4}     # identifier
+  """
+}

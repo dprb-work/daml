@@ -106,7 +106,7 @@ do not update an existing versioned archive.
 | `staged.meaning()` | Fresh selected `Uint8Array`, or `null` |
 | `staged.source` | Exact original source, or `undefined` for semantic input |
 
-Widths default to 80 and must be integers from 1 through 16384. Output uses LF and ends with a newline. Canonical semantic writing does not preserve comments, input field order, whitespace, or scalar style. It preserves exact number data, strings, literal keys, and representable tag assertions. Keys must obey DAML's unquoted key grammar; there is no quoted-key escape hatch.
+Widths default to 80 and must be integers from 1 through 16384. Output uses LF and ends with a newline. Canonical semantic writing does not preserve comments, input field order, whitespace, or scalar style. It preserves exact number data, temporal kind/precision/offset presence, strings, literal keys, and representable tag assertions. Keys must obey DAML's unquoted key grammar; there is no quoted-key escape hatch.
 
 Call `.free()` on each generated Rust-backed handle when finished. Do not use a freed handle. Returned semantic trees and origin maps are plain owned JavaScript values. Editing them never mutates a parsed document or validated resolution. A resolution snapshot survives freeing its input document and schema context.
 
@@ -188,12 +188,26 @@ type SemanticNode =
   | { kind: 'bool'; value: boolean; tag?: Tag }
   | { kind: 'number'; value: string; tag?: Tag }
   | { kind: 'string'; value: string; tag?: Tag }
+  | { kind: 'date' | 'time' | 'datetime' | 'cron'; value: string; tag?: Tag }
   | { kind: 'list'; items: SemanticNode[]; tag?: Tag }
   | { kind: 'map'; entries: { key: string; value: SemanticNode }[]; tag?: Tag };
 type Tag = { name: string; binding?: string };
 ```
 
 A number's string is a typed numeric lexeme, not string data. Do not convert it to JavaScript `Number` if exact integers or decimals matter. Map entries avoid JavaScript object-key coercion; duplicate keys are rejected on admission. Unknown fields, invalid shapes, invalid numbers, cycles, and unpaired UTF-16 surrogates are rejected rather than silently coerced.
+
+Temporal semantic values carry ISO or resolved cron expression text, not a
+JavaScript `Date`. Admission validates the kind and text through the shared
+Rust owner. Snapshots and stage summaries retain the intrinsic kind; plain JSON
+projection does not. The SDK does not infer temporal kinds from ordinary strings
+or use a machine timezone. See the [ISO profile](../../docs/syntax.md#temporal-literals)
+and [Spring cron contract](../../docs/syntax.md#cron-literals).
+
+For example, `{ kind: 'cron', value: '0 0 9 LW * *' }` is an intrinsic
+last-weekday pattern. It can pass through parsed values, typed defaults,
+resolution snapshots, staged callbacks and write/reparse without becoming
+kind `string`. The SDK validates/transports the pattern; it does not calculate
+occurrences or execute jobs.
 
 Parsed assertions have a literal name. Completed default assertions may also carry an opaque binding ID. Keep the binding when editing: removing it discards the assertion's retained identity. The plain writer rejects bound assertions. The contextual writer retains the literal name when it means the same schema, otherwise uses a deterministic root-visible equivalent name. Private bindings without such a name fail with `UnrepresentableTag`; same-shaped or constrained schemas are not interchangeable. Writing a tag never grants access to resources.
 
