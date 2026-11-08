@@ -100,6 +100,36 @@ consumer typecheck and real Chromium execution of the packed SDK, then collects
 all eight producer payloads. It runs the independent candidate corruption probe
 before retaining the bundle.
 
+### Full security suite before candidate retention
+
+Release preparation runs every configured security check after admitting the
+unchanged producer payloads and before sealing the approval manifest. There is
+no separate scanner-selection button. Ordinary PR, merge, push and branch-promotion
+verification does not invoke this suite.
+
+The configured engines are Trivy for dependency and current-source secret checks,
+Semgrep CE with local source rules, and ClamAV for the delivered payloads. Engine
+images are pinned by digest. Preparation refreshes the required advisory/signature
+data without mounting source; scans run offline against read-only snapshots.
+No credentials, platform login, source submission or malware-sample upload is used.
+See `security/README.md` for exact versions, coverage and resource requirements.
+
+The suite records per-check findings and errors. Any failed, missing, stale or
+incomplete required check prevents a publishable candidate. Independent checks
+can still report after another fails; a partial suite is never a pass.
+
+`RELEASE.json` schema 2 embeds the evidence under `security`, binding the source,
+exact payload records, policy/rules, tools and database identities. The approval
+manifest digest covers that evidence without adding another candidate file or
+mixing scanner report artifacts with the eight producer directories. Schema-1
+candidates are not eligible: prepare a new schema-2 candidate and approve its new
+manifest digest.
+
+The publisher's existing bundle admission checks this evidence both before and
+after human approval. A green job or successful scan alone does not authorize
+publication. If content changes or the evidence expires, prepare and approve a new
+candidate rather than bypassing the guard.
+
 A feature-branch `Check` preview is **not eligible for publication**. It proves
 the delivery machinery without granting write permissions or creating a tag,
 release or registry package.
@@ -135,8 +165,10 @@ python3 -B tests/release_candidate_check.py candidate \
 ```
 
 Use a new output directory; do not mix runs. Actions artifacts expire after 14
-days. If the candidate expires or its identity changes, prepare and approve a
-new candidate. Do not silently rebuild files in the publisher.
+days, but security evidence and required database freshness expire within 24
+hours under the current policy, including time spent awaiting human approval.
+If either expires or the candidate identity changes, prepare and approve a new
+candidate. Do not silently rebuild files or refresh evidence in the publisher.
 
 ## Authorize publication
 

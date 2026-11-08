@@ -11,7 +11,6 @@ admitted local bundle; all production admission/orchestration policies stay real
 
 import argparse
 import hashlib
-import importlib.util
 import io
 import json
 import os
@@ -98,21 +97,24 @@ def rewrite_vsix_license(path: Path, contents: bytes | None) -> None:
 
 
 def reseal_payload(directory: Path, filename: str) -> None:
-    """Refresh outer checksums so inner metadata, not stale envelopes, must fail."""
+    """Refresh envelopes and artifact binding so inner metadata must fail."""
     path = directory / filename
     checksum = digest(path)
+    size = path.stat().st_size
     (directory / f"{filename}.sha256").write_text(f"{checksum}  {filename}\n", encoding="utf-8")
 
     def change(manifest: dict) -> None:
-        for asset in manifest["assets"]:
-            if asset["filename"] == filename:
-                asset["sha256"] = checksum
-                asset["size"] = path.stat().st_size
-                return
-        raise AssertionError(f"missing real baseline asset: {filename}")
+        for field in ("assets", "security"):
+            records = manifest[field] if field == "assets" else manifest[field]["assets"]
+            for asset in records:
+                if asset["filename"] == filename:
+                    asset["sha256"] = checksum
+                    asset["size"] = size
+                    break
+            else:
+                raise AssertionError(f"missing real baseline asset in {field}: {filename}")
 
     rewrite_manifest(directory, change)
-
 
 def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: dict, common) -> list[str]:
     """Exercise tag-before-draft orchestration with real bytes and isolated ports."""
@@ -256,9 +258,7 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
 
 
 def check_candidate(args: argparse.Namespace) -> dict:
-    spec = importlib.util.spec_from_file_location("release_common", ROOT / "scripts" / "release_common.py")
-    common = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(common)
+    common = load_policy("release_common")
     candidate = args.directory.resolve(strict=True)
     binding = {
         "version": args.version,
@@ -327,7 +327,7 @@ def check_candidate(args: argparse.Namespace) -> dict:
 
     reject_copy("duplicate-manifest-key", duplicate_key)
     for field, value in (
-        ("schema", 2), ("schema", True), ("repository", "untrusted/daml"),
+        ("schema", 1), ("schema", 3), ("schema", True), ("repository", "untrusted/daml"),
         ("version", "0.0.0"), ("source_sha", "short"),
         ("prepare_run_id", args.prepare_run_id + 1), ("prepare_run_id", True),
         ("run_attempt", 0), ("run_attempt", True), ("unapproved_field", "extra"),
@@ -338,6 +338,44 @@ def check_candidate(args: argparse.Namespace) -> dict:
                 directory, lambda data: data.__setitem__(key, replacement),
             ),
         )
+    reject_copy(
+        "missing-security-proof",
+        lambda directory: rewrite_manifest(directory, lambda data: data.pop("security")),
+    )
+    for field, value in (
+        ("status", "failed"), ("status", "incomplete"), ("schema", 2),
+        ("source_sha", "f" * 40), ("policy_sha256", "0" * 64),
+        ("rules_sha256", "0" * 64), ("scanned_at", "2000-01-01T00:00:00Z"),
+        ("assets", []), ("checks", []),
+    ):
+        reject_copy(
+            f"security-proof-field:{field}:{value}",
+            lambda directory, key=field, replacement=value: rewrite_manifest(
+                directory, lambda data: data["security"].__setitem__(key, replacement),
+            ),
+        )
+    reject_copy(
+        "security-proof-asset-binding",
+        lambda directory: rewrite_manifest(
+            directory, lambda data: data["security"]["assets"][0].__setitem__("sha256", "0" * 64),
+        ),
+    )
+    for index, check in enumerate(manifest["security"]["checks"]):
+        reject_copy(
+            f"security-missing-required-check:{check['id']}",
+            lambda directory, row=index: rewrite_manifest(
+                directory, lambda data: data["security"]["checks"].pop(row),
+            ),
+        )
+        for field, value in (
+            ("status", "error"), ("findings", 1), ("coverage", {"complete": False}),
+        ):
+            reject_copy(
+                f"security-check:{check['id']}:{field}",
+                lambda directory, row=index, key=field, replacement=value: rewrite_manifest(
+                    directory, lambda data: data["security"]["checks"][row].__setitem__(key, replacement),
+                ),
+            )
     reject_copy(
         "forged-source-with-new-approved-digest",
         lambda directory: rewrite_manifest(directory, lambda data: data.__setitem__("source_sha", "f" * 40)),

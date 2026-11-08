@@ -23,7 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_policy(name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, {name: module}):
+    scripts = str(ROOT / "scripts")
+    with patch.dict(sys.modules, {name: module}), patch.object(
+        sys, "path", [scripts, *sys.path]
+    ):
         spec.loader.exec_module(module)
     return module
 
