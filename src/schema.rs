@@ -423,6 +423,11 @@ impl<'a> SchemaView<'a> {
                         .saturating_mul(passes.validity),
                 );
             cost = cost.saturating_add(schema.entry().local_work.saturating_mul(data_work));
+            // Negation probes its child without errors, but its own error
+            // renders the entire authored child, including annotations.
+            // Validity/marking passes never render that diagnostic.
+            cost =
+                cost.saturating_add(schema.entry().not_render_work.saturating_mul(passes.errors));
             if cost > limit || depth > MAX_SCHEMA_DEPTH {
                 return limit.saturating_add(1);
             }
@@ -647,6 +652,7 @@ struct SchemaEntry {
     dispatch_key: String,
     work: Option<usize>,
     local_work: usize,
+    not_render_work: usize,
     has_defaults: bool,
     uses_uniqueness: bool,
 }
@@ -999,6 +1005,7 @@ impl Schemas {
                 .remove(&entry.location)
                 .expect("every compiled view was preflighted");
             entry.work = info.work;
+            entry.not_render_work = info.not_render_work;
             entry.diagnostic_location = info.diagnostic_location;
             entry.has_defaults = info.defaults;
             entry.uses_uniqueness = info.uniqueness;
@@ -1212,6 +1219,7 @@ fn append_schema_entries(
             dispatch_key: entries.len().to_string(),
             work: None,
             local_work: 0,
+            not_render_work: 0,
             has_defaults: false,
             uses_uniqueness: false,
         });
@@ -1230,7 +1238,7 @@ fn append_schema_entries(
     walk_schema(&value, 0, &mut nodes)?;
     visit(&value, resource, "", entries, total)
 }
-fn canonical_reference(resource: &str, pointer: &str) -> String {
+pub(crate) fn canonical_reference(resource: &str, pointer: &str) -> String {
     let mut fragment = String::with_capacity(pointer.len());
     for byte in pointer.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
@@ -1546,6 +1554,7 @@ struct SchemaStats {
     // None denotes a graph whose evaluation needs an actual, finite instance.
     work: Option<usize>,
     helper_work: usize,
+    not_render_work: usize,
     defaults: bool,
     uniqueness: bool,
     diagnostic_location: SchemaLocation,
@@ -1756,6 +1765,9 @@ fn prepare_schema_graph(
         .map(|node| SchemaStats {
             work: None,
             helper_work: 0,
+            not_render_work: node.value.get("not").map_or(0, |child| {
+                prepared[addresses[&(child as *const Value as usize)]].own_work
+            }),
             defaults: node.value.get("default").is_some(),
             uniqueness: node.value.get("uniqueItems") == Some(&Value::Bool(true)),
             diagnostic_location: SchemaLocation {
@@ -1983,6 +1995,12 @@ fn walk_schema(v: &Value, depth: usize, n: &mut usize) -> Result<(), SchemaError
             ));
         }
         validate_default_tags(m)?;
+        if let Some(child) = m.get("not")
+            && !child.is_object()
+            && !child.is_boolean()
+        {
+            return Err(invalid("not must be an object or boolean schema"));
+        }
         if let Some(optional) = m.get("x-daml-native-optional")
             && optional != &Value::Bool(true)
         {

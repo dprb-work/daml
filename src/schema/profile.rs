@@ -155,7 +155,7 @@ impl Child<'_> {
         }
     }
 
-    pub(super) fn pointer(&self, parent: &str) -> String {
+    pub(crate) fn pointer(&self, parent: &str) -> String {
         let keyword = crate::pointer::join(parent, self.keyword);
         match &self.segment {
             Some(Segment::Key(key)) => crate::pointer::join(&keyword, key),

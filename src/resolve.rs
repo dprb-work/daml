@@ -187,6 +187,8 @@ impl Schemas {
         expected: &str,
         node: ResolvedNode<'a>,
         limits: &mut ResolutionLimits,
+        fixed_choices: &[(String, usize)],
+        candidate_origin: &str,
     ) -> Result<ResolvedNode<'a>, ResolveError> {
         let view = self.type_schema(expected).ok_or_else(|| {
             failure(
@@ -217,6 +219,66 @@ impl Schemas {
             pending_defaults: None,
         };
         let result = (|| {
+            resolver.budget.step(&node, "")?;
+            let origin = self.binding_schema(candidate_origin).ok_or_else(|| {
+                failure(
+                    ResolveErrorKind::UnknownExpectedType,
+                    &node,
+                    "native default origin references an unknown schema",
+                    None,
+                    "",
+                )
+            })?;
+            if origin.value().get("default").is_none() {
+                return Err(failure(
+                    ResolveErrorKind::SchemaViolation,
+                    &node,
+                    "native default origin has no own default",
+                    Some(origin.location().clone()),
+                    "",
+                ));
+            }
+            resolver.search.suppressed_root_default = Some(origin.id());
+            for (reference, index) in fixed_choices {
+                resolver.budget.step(&node, "")?;
+                let union = self.binding_schema(reference).ok_or_else(|| {
+                    failure(
+                        ResolveErrorKind::UnknownExpectedType,
+                        &node,
+                        "native default branch references an unknown schema",
+                        None,
+                        "",
+                    )
+                })?;
+                let branch = union.array_child("anyOf", *index).ok_or_else(|| {
+                    failure(
+                        ResolveErrorKind::SchemaViolation,
+                        &node,
+                        "native default branch index does not identify an anyOf arm",
+                        Some(union.location().clone()),
+                        "",
+                    )
+                })?;
+                if let Some(prior) = resolver.search.fixed_root_any_of.get(&union.id()) {
+                    if prior.id() != branch.id() {
+                        return Err(failure(
+                            ResolveErrorKind::SchemaViolation,
+                            &node,
+                            "native default branch assignments conflict",
+                            Some(union.location().clone()),
+                            "",
+                        ));
+                    }
+                } else {
+                    resolver.budget.add_node(&node, "")?;
+                    resolver.budget.add_byte_count(
+                        &node,
+                        std::mem::size_of::<(SchemaId, SchemaView<'_>)>(),
+                        "",
+                    )?;
+                    resolver.search.fixed_root_any_of.insert(union.id(), branch);
+                }
+            }
             resolver.known_tags(&node, "")?;
             resolver
                 .select_candidates(
@@ -461,6 +523,44 @@ impl<'a> Resolver<'a, '_> {
                     "a selected-branch obligated value is missing",
                     None,
                     path,
+                ));
+            }
+        }
+        for (id, branch) in &self.search.fixed_root_any_of {
+            self.budget.step(&root, "")?;
+            if !self
+                .search
+                .branches
+                .get("")
+                .and_then(|branches| branches.get(&(*id, "anyOf")))
+                .is_some_and(|selected| selected.id() == branch.id())
+            {
+                return Err(failure(
+                    ResolveErrorKind::SchemaViolation,
+                    &root,
+                    "a required native default branch was not selected",
+                    Some(branch.location().clone()),
+                    "",
+                ));
+            }
+        }
+        if let Some(origin) = self.search.suppressed_root_default {
+            let selected = self
+                .search
+                .branches
+                .get("")
+                .into_iter()
+                .flat_map(|branches| branches.values().copied())
+                .collect::<Vec<_>>();
+            let reachable =
+                self.schema_conjunction(root_views.iter().copied().chain(selected), &root, "")?;
+            if !reachable.iter().any(|schema| schema.id() == origin) {
+                return Err(failure(
+                    ResolveErrorKind::SchemaViolation,
+                    &root,
+                    "native default origin is outside the selected root context",
+                    None,
+                    "",
                 ));
             }
         }
@@ -760,7 +860,7 @@ impl<'a> Resolver<'a, '_> {
                 {
                     continue;
                 }
-                let Some(default) = schema.value().get("default") else {
+                let Some(default) = self.default_value(*schema, path) else {
                     continue;
                 };
                 if !default.is_object() {
@@ -802,7 +902,7 @@ impl<'a> Resolver<'a, '_> {
                     if !fallback_ids.contains(&schema.id()) {
                         continue;
                     }
-                    let Some(default) = schema.value().get("default") else {
+                    let Some(default) = self.default_value(*schema, path) else {
                         continue;
                     };
                     if !default.is_object() {
@@ -897,7 +997,7 @@ impl<'a> Resolver<'a, '_> {
             {
                 continue;
             }
-            let Some(default) = schema.value().get("default") else {
+            let Some(default) = self.default_value(*schema, path) else {
                 continue;
             };
             let candidate =
@@ -929,7 +1029,7 @@ impl<'a> Resolver<'a, '_> {
                 if !fallback_ids.contains(&schema.id()) {
                     continue;
                 }
-                let Some(default) = schema.value().get("default") else {
+                let Some(default) = self.default_value(*schema, path) else {
                     continue;
                 };
                 let Some(candidate) = from_default(
@@ -1077,6 +1177,15 @@ impl<'a> Resolver<'a, '_> {
             for keyword in ["anyOf", "oneOf"] {
                 if skipped.contains(&(schema.id(), keyword)) {
                     continue;
+                }
+                if path.is_empty()
+                    && keyword == "anyOf"
+                    && self.search.fixed_root_any_of.contains_key(&schema.id())
+                {
+                    return Ok(Some(Union {
+                        schema: *schema,
+                        keyword,
+                    }));
                 }
                 for branch in schema.array_children(keyword) {
                     self.budget.step(node, path)?;
@@ -1463,6 +1572,14 @@ impl<'a> Resolver<'a, '_> {
             )
         })
     }
+    fn default_value(&self, schema: SchemaView<'a>, path: &str) -> Option<&'a JsonValue> {
+        if path.is_empty() && self.search.suppressed_root_default == Some(schema.id()) {
+            None
+        } else {
+            schema.value().get("default")
+        }
+    }
+
     fn discover_default_tag(
         &mut self,
         schemas: &[SchemaView<'a>],
@@ -1471,7 +1588,7 @@ impl<'a> Resolver<'a, '_> {
     ) -> Result<Option<ResolvedTag<'a>>, ResolveError> {
         let mut discovered: Option<ResolvedTag<'a>> = None;
         for schema in schemas {
-            let Some(default) = schema.value().get("default") else {
+            let Some(default) = self.default_value(*schema, path) else {
                 continue;
             };
             // Existing data only merges object defaults. A tag on a skipped
@@ -1653,6 +1770,8 @@ struct CompletionSearch<'a> {
     choices: Vec<usize>,
     arities: Vec<usize>,
     branches: HashMap<String, HashMap<(SchemaId, &'static str), SchemaView<'a>>>,
+    fixed_root_any_of: HashMap<SchemaId, SchemaView<'a>>,
+    suppressed_root_default: Option<SchemaId>,
     conflict: Option<ResolveError>,
 }
 
@@ -1682,11 +1801,20 @@ impl<'a> CompletionSearch<'a> {
         {
             return *view;
         }
-        let selected = self.choose(union.schema.array_children(keyword).len());
-        let branch = union
-            .schema
-            .array_child(keyword, selected)
-            .expect("search selects an existing union branch");
+        let fixed = if path.is_empty() && keyword == "anyOf" {
+            self.fixed_root_any_of.get(&id).copied()
+        } else {
+            None
+        };
+        let branch = if let Some(branch) = fixed {
+            branch
+        } else {
+            let selected = self.choose(union.schema.array_children(keyword).len());
+            union
+                .schema
+                .array_child(keyword, selected)
+                .expect("search selects an existing union branch")
+        };
         self.branches
             .entry(path.to_owned())
             .or_default()

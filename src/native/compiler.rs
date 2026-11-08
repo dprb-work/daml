@@ -19,17 +19,20 @@ struct SourceContext<'a> {
 enum SchemaSource {
     Type(String),
     Resource(usize),
+    Normalization(usize),
+    Validation(usize),
+    Position(usize),
 }
 
 struct DefaultCheck {
     schema_type: String,
-    value: Json,
-    annotations: Vec<Json>,
     path: PathBuf,
     span: Span,
+    candidate_origin: String,
+    fixed_choices: Vec<(String, usize)>,
 }
 #[derive(Clone)]
-struct RegexOrigin {
+struct SchemaOrigin {
     path: PathBuf,
     span: Span,
 }
@@ -51,20 +54,52 @@ struct SchemaPosition {
     key: Option<String>,
     index: Option<usize>,
 }
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 enum DefaultPathStep {
     Property(String),
     Item(usize),
 }
 type DefaultPath = Vec<DefaultPathStep>;
 
+// Formula atoms name original schema operations, not JSON-equivalent bodies.
+// Only generated Boolean combinations distribute; source union choices keep
+// their original registry identity and are selected by the existing resolver.
 type DefaultMonomial = Vec<usize>;
 type DefaultMemoState = Vec<DefaultMonomial>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DefaultVisit {
+    Local,
+    Structural,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct DefaultScope {
+    constraints: Rc<DefaultMemoState>,
+    sources: Rc<DefaultMemoState>,
+    fixed: Rc<Vec<(usize, usize)>>,
+}
+
 #[derive(Default)]
 struct DefaultMemo {
-    atoms: Vec<Json>,
-    states: HashSet<DefaultMemoState>,
+    states: HashMap<DefaultScope, DefaultVisit>,
+}
+
+struct DefaultPosition {
+    root: usize,
+    pointer: String,
+    reference: String,
+    children: Vec<DefaultChild>,
+    referenced: Option<usize>,
+    own: bool,
+    same_instance_default: bool,
+}
+
+struct DefaultChild {
+    position: SchemaPosition,
+    target: usize,
+    applies: bool,
+    unsupported_defaults: bool,
 }
 
 // These annotations exist only while lowering complete schema assertions. They
@@ -88,9 +123,9 @@ enum NormalizationBase {
     },
 }
 
-struct PendingProjection {
+struct DefaultProjection {
     reference: String,
-    path: DefaultPath,
+    paths: Vec<DefaultPath>,
 }
 
 struct PendingValidation {
@@ -138,17 +173,6 @@ impl WalkBudget<'_> {
             Some(self.span),
         )
     }
-    fn charge_map_copy(&mut self, value: &Map<String, Json>) -> Result<(), NativeError> {
-        let (nodes, bytes) = json_map_cost(value);
-        admit_copy_cost(
-            &mut self.copied_nodes,
-            &mut self.copied_bytes,
-            nodes,
-            bytes,
-            self.file,
-            Some(self.span),
-        )
-    }
     fn charge_preset_copy(&mut self, preset: &PresetFragment) -> Result<(), NativeError> {
         self.charge_copy(&preset.value)?;
         for annotation in &preset.annotations {
@@ -157,6 +181,7 @@ impl WalkBudget<'_> {
         Ok(())
     }
 }
+
 struct Compiler<'a> {
     bundle: &'a Bundle,
     contexts: HashMap<PathBuf, HashMap<String, PathBuf>>,
@@ -168,11 +193,16 @@ struct Compiler<'a> {
     registrations: HashMap<String, String>,
     builtin_tags: HashSet<String>,
     checks: Vec<DefaultCheck>,
-    regex_origins: HashMap<String, RegexOrigin>,
+    check_types: Map<String, Json>,
+    validation_resources: Vec<Json>,
+    default_roots: Vec<SchemaSource>,
+    default_positions: Vec<DefaultPosition>,
+    schema_origins: HashMap<String, SchemaOrigin>,
     next_regex_origin: u64,
-    default_projections: HashMap<(String, DefaultPath), String>,
+    default_projections: HashMap<(String, Vec<DefaultPath>), String>,
     next_default_projection: usize,
-    pending_projections: HashMap<String, PendingProjection>,
+    default_projection_sources: HashMap<String, Rc<DefaultProjection>>,
+    pending_projections: Vec<String>,
     active_projections: HashSet<String>,
     pending_normalizations: Vec<Option<PendingNormalization>>,
     normalized_defaults: Vec<Option<Json>>,
@@ -183,6 +213,98 @@ struct Compiler<'a> {
     materialized_bytes: usize,
     lowering_depth: usize,
     default_validation_steps: usize,
+}
+
+fn index_default_position(
+    schema: &Json,
+    root: (usize, &str),
+    pointer: String,
+    positions: &mut Vec<DefaultPosition>,
+    sources: &mut HashMap<String, SchemaSource>,
+    budget: &mut WalkBudget<'_>,
+    depth: usize,
+) -> Result<usize, NativeError> {
+    budget.charge(depth)?;
+    if positions.len() >= crate::schema::profile::MAX_SCHEMA_NODES {
+        return Err(NativeError::new(
+            NativeErrorKind::LimitExceeded,
+            "native default source positions exceed schema-node bound",
+        )
+        .at_path(budget.file)
+        .at_span(budget.span));
+    }
+    let reference_bytes = root.1.len().saturating_add(3 * pointer.len() + 1);
+    admit_copy_cost(
+        &mut budget.copied_nodes,
+        &mut budget.copied_bytes,
+        3,
+        2 * reference_bytes + std::mem::size_of::<bool>(),
+        budget.file,
+        Some(budget.span),
+    )?;
+    let reference = if pointer.is_empty() {
+        root.1.to_owned()
+    } else {
+        crate::schema::canonical_reference(root.1, &pointer)
+    };
+    let own = schema.as_object().is_none_or(|object| {
+        object
+            .keys()
+            .any(|key| !matches!(key.as_str(), "$id" | "$ref" | "allOf"))
+            || (object.get("$ref").is_none()
+                && object
+                    .get("allOf")
+                    .and_then(Json::as_array)
+                    .is_none_or(Vec::is_empty))
+    });
+    let id = positions.len();
+    sources.insert(reference.clone(), SchemaSource::Position(id));
+    positions.push(DefaultPosition {
+        root: root.0,
+        pointer,
+        reference,
+        children: Vec::new(),
+        referenced: None,
+        own,
+        same_instance_default: schema.get("default").is_some(),
+    });
+    for child in crate::schema::profile::children(schema) {
+        let key_bytes = child.map_key().map_or(0, str::len);
+        let pointer_bytes = positions[id]
+            .pointer
+            .len()
+            .saturating_add(2 * (child.keyword().len() + key_bytes) + 32);
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            3,
+            pointer_bytes + child.keyword().len() + key_bytes,
+            budget.file,
+            Some(budget.span),
+        )?;
+        let child_pointer = child.pointer(&positions[id].pointer);
+        let position = SchemaPosition {
+            keyword: child.keyword().to_owned(),
+            key: child.map_key().map(str::to_owned),
+            index: child.array_index(),
+        };
+        let target = index_default_position(
+            child.value,
+            root,
+            child_pointer,
+            positions,
+            sources,
+            budget,
+            depth + 1,
+        )?;
+        positions[id].children.push(DefaultChild {
+            position,
+            target,
+            applies: child.applies,
+            unsupported_defaults: child.unsupported_defaults,
+        });
+    }
+    Ok(id)
 }
 
 pub(super) fn compile<'names>(
@@ -202,11 +324,16 @@ pub(super) fn compile<'names>(
         registrations: HashMap::new(),
         builtin_tags: HashSet::new(),
         checks: Vec::new(),
-        regex_origins: HashMap::new(),
+        check_types: Map::new(),
+        validation_resources: Vec::new(),
+        default_roots: Vec::new(),
+        default_positions: Vec::new(),
+        schema_origins: HashMap::new(),
         next_regex_origin: 0,
         default_projections: HashMap::new(),
         next_default_projection: 0,
-        pending_projections: HashMap::new(),
+        default_projection_sources: HashMap::new(),
+        pending_projections: Vec::new(),
         active_projections: HashSet::new(),
         pending_normalizations: Vec::new(),
         normalized_defaults: Vec::new(),
@@ -314,17 +441,29 @@ pub(super) fn compile<'names>(
                 None,
             )?;
         }
-        let (validation_types, validation_resources) =
+        let (mut validation_types, mut validation_resources) =
             relaxed_projection(&compiler.types, &compiler.resources);
+        for (name, mut binding) in std::mem::take(&mut compiler.check_types) {
+            relax_schema(binding.get_mut("schema").expect("default check binding"));
+            validation_types.insert(name, binding);
+        }
+        for mut resource in std::mem::take(&mut compiler.validation_resources) {
+            relax_schema(
+                resource
+                    .get_mut("schema")
+                    .expect("default validation resource"),
+            );
+            validation_resources.push(resource);
+        }
         let validation_value = Json::Object(Map::from_iter([
             ("types".into(), Json::Object(validation_types)),
             ("resources".into(), Json::Array(validation_resources)),
         ]));
         let validation_module = SchemaModule::from_value(validation_value)
-            .map_err(|error| native_schema_error(error, &bundle.root, &compiler.regex_origins))?;
+            .map_err(|error| native_schema_error(error, &bundle.root, &compiler.schema_origins))?;
         Some(
             Schemas::compose([validation_module]).map_err(|error| {
-                native_schema_error(error, &bundle.root, &compiler.regex_origins)
+                native_schema_error(error, &bundle.root, &compiler.schema_origins)
             })?,
         )
     };
@@ -333,20 +472,47 @@ pub(super) fn compile<'names>(
         ("resources".into(), Json::Array(compiler.resources)),
     ]));
     let module = SchemaModule::from_value(module_value)
-        .map_err(|error| native_schema_error(error, &bundle.root, &compiler.regex_origins))?;
+        .map_err(|error| native_schema_error(error, &bundle.root, &compiler.schema_origins))?;
     let mut schemas = Schemas::compose([module])
-        .map_err(|error| native_schema_error(error, &bundle.root, &compiler.regex_origins))?;
+        .map_err(|error| native_schema_error(error, &bundle.root, &compiler.schema_origins))?;
     schemas.restrict_source_tags(source_tags);
     let mut default_limits = crate::ResolutionLimits::default();
     for check in compiler.checks {
+        let validation = validation_schemas
+            .as_ref()
+            .expect("default checks have a validation projection");
+        let origin = validation
+            .binding_schema(&check.candidate_origin)
+            .ok_or_else(|| {
+                NativeError::new(
+                    NativeErrorKind::Schema,
+                    "native default descriptor has no admitted source position",
+                )
+                .at_path(&check.path)
+                .at_span(check.span)
+            })?;
+        let value = origin.value().get("default").ok_or_else(|| {
+            NativeError::new(
+                NativeErrorKind::Schema,
+                "native default descriptor source has no own literal default",
+            )
+            .at_path(&check.path)
+            .at_span(check.span)
+        })?;
+        let annotations = origin
+            .value()
+            .get("x-daml-default-tags")
+            .and_then(Json::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         admit_copy(
             &mut compiler.materialized_nodes,
             &mut compiler.materialized_bytes,
-            &check.value,
+            value,
             &check.path,
             Some(check.span),
         )?;
-        for annotation in &check.annotations {
+        for annotation in annotations {
             admit_copy(
                 &mut compiler.materialized_nodes,
                 &mut compiler.materialized_bytes,
@@ -359,13 +525,22 @@ pub(super) fn compile<'names>(
             resource: format!("file://{}", check.path.display()),
             pointer: "/default".into(),
         };
-        let node = resolved_node(&check.value, &check.annotations, &location, "", check.span)?;
-        let validation = validation_schemas
-            .as_ref()
-            .expect("default checks have a validation projection");
+        let node = resolved_node(value, annotations, &location, "", check.span)?;
         validation
-            .complete_partial_default(&check.schema_type, node, &mut default_limits)
-            .map_err(|error| {
+            .complete_partial_default(
+                &check.schema_type,
+                node,
+                &mut default_limits,
+                &check.fixed_choices,
+                &check.candidate_origin,
+            )
+            .map_err(|mut error| {
+                if let Some(location) = error.schema.as_deref_mut() {
+                    translate_validation_location(location, &compiler.schema_origins);
+                }
+                if let crate::resolved::ErrorOrigin::Default(location) = &mut error.origin {
+                    translate_validation_location(location, &compiler.schema_origins);
+                }
                 let kind = if matches!(
                     error.kind,
                     crate::ResolveErrorKind::LimitExceeded | crate::ResolveErrorKind::NumericLimit
@@ -385,17 +560,34 @@ pub(super) fn compile<'names>(
     }
     Ok(schemas)
 }
+fn translate_validation_location(
+    location: &mut crate::SchemaLocation,
+    origins: &HashMap<String, SchemaOrigin>,
+) {
+    if location
+        .resource
+        .starts_with("urn:daml:native:default-validation:")
+        && let Some(origin) = origins.get(&location.resource)
+    {
+        location.resource = format!("file://{}", origin.path.display());
+    }
+}
+
 fn native_schema_error(
-    error: SchemaError,
+    mut error: SchemaError,
     fallback: &Path,
-    origins: &HashMap<String, RegexOrigin>,
+    origins: &HashMap<String, SchemaOrigin>,
 ) -> NativeError {
     let origin = error
         .location
         .as_ref()
         .and_then(|location| origins.get(&location.resource));
+    if let Some(location) = &mut error.location {
+        translate_validation_location(location, origins);
+    }
     let kind = match error.kind {
         crate::SchemaErrorKind::ReferenceCycle => NativeErrorKind::ReferenceCycle,
+        crate::SchemaErrorKind::LimitExceeded => NativeErrorKind::LimitExceeded,
         _ => NativeErrorKind::Schema,
     };
     let mut native = NativeError::new(kind, error.to_string()).caused_by(error);
@@ -473,7 +665,7 @@ impl Compiler<'_> {
             if ordinal < self.pending_normalizations.len() {
                 self.resolve_normalization(ordinal, &mut budget, 0)?;
                 ordinal += 1;
-            } else if let Some(reference) = self.pending_projections.keys().next().cloned() {
+            } else if let Some(reference) = self.pending_projections.pop() {
                 self.resolve_projection(&reference, &mut budget, 0)?;
             }
         }
@@ -505,10 +697,37 @@ impl Compiler<'_> {
                 0,
             )?;
         }
-        let validations = std::mem::take(&mut self.pending_validations);
+        let mut validations = std::mem::take(&mut self.pending_validations);
+        for validation in &mut validations {
+            let mut local_budget = WalkBudget {
+                work: budget.work,
+                copied_nodes: budget.copied_nodes,
+                copied_bytes: budget.copied_bytes,
+                file: &validation.file,
+                span: validation.span,
+            };
+            materialize_normalizations(&mut validation.schema, &mut local_budget, 0)?;
+            budget.work = local_budget.work;
+            budget.copied_nodes = local_budget.copied_nodes;
+            budget.copied_bytes = local_budget.copied_bytes;
+        }
+        let mut has_defaults = false;
+        for schema in self
+            .types
+            .values()
+            .chain(self.resources.iter())
+            .map(|binding| binding.get("schema").expect("native schema binding"))
+            .chain(validations.iter().map(|validation| &validation.schema))
+        {
+            if schema_has_default(schema, &mut budget, 0)? {
+                has_defaults = true;
+                break;
+            }
+        }
         self.default_validation_steps = budget.work;
         self.materialized_nodes = budget.copied_nodes;
         self.materialized_bytes = budget.copied_bytes;
+        let mut validation_roots = Vec::new();
         for mut validation in validations {
             let mut budget = WalkBudget {
                 work: self.default_validation_steps,
@@ -517,10 +736,6 @@ impl Compiler<'_> {
                 file: &validation.file,
                 span: validation.span,
             };
-            materialize_normalizations(&mut validation.schema, &mut budget, 0)?;
-            self.default_validation_steps = budget.work;
-            self.materialized_nodes = budget.copied_nodes;
-            self.materialized_bytes = budget.copied_bytes;
             if validation.container {
                 if !self.schema_proves_container(
                     validation
@@ -537,15 +752,285 @@ impl Compiler<'_> {
                     .at_path(&validation.file)
                     .at_span(validation.span));
                 }
-            } else {
-                self.validate_effective_defaults(
-                    &mut validation.schema,
+            } else if has_defaults {
+                let index = self.validation_resources.len();
+                let reference = format!("urn:daml:native:default-validation:{index}");
+                admit_copy_cost(
+                    &mut budget.copied_nodes,
+                    &mut budget.copied_bytes,
+                    7,
+                    4 * reference.len() + validation.file.as_os_str().len(),
                     &validation.file,
-                    validation.span,
+                    Some(validation.span),
                 )?;
+                validation
+                    .schema
+                    .as_object_mut()
+                    .expect("native validation root is an object")
+                    .insert("$id".into(), Json::String(reference.clone()));
+                self.validation_resources.push(Json::Object(Map::from_iter([
+                    ("uri".into(), Json::String(reference.clone())),
+                    ("schema".into(), validation.schema),
+                ])));
+                self.schema_sources
+                    .insert(reference.clone(), SchemaSource::Validation(index));
+                self.schema_origins.insert(
+                    reference.clone(),
+                    SchemaOrigin {
+                        path: validation.file.clone(),
+                        span: validation.span,
+                    },
+                );
+                self.default_validation_steps = budget.work;
+                self.materialized_nodes = budget.copied_nodes;
+                self.materialized_bytes = budget.copied_bytes;
+                validation_roots.push((reference, validation.file, validation.span));
+            }
+        }
+        if !has_defaults {
+            return Ok(());
+        }
+        let mut budget = WalkBudget {
+            work: self.default_validation_steps,
+            copied_nodes: self.materialized_nodes,
+            copied_bytes: self.materialized_bytes,
+            file: &file,
+            span: Span { start: 0, end: 0 },
+        };
+        self.prepare_default_positions(&mut budget)?;
+        self.default_validation_steps = budget.work;
+        self.materialized_nodes = budget.copied_nodes;
+        self.materialized_bytes = budget.copied_bytes;
+        for (reference, file, span) in validation_roots {
+            let mut budget = WalkBudget {
+                work: self.default_validation_steps,
+                copied_nodes: self.materialized_nodes,
+                copied_bytes: self.materialized_bytes,
+                file: &file,
+                span,
+            };
+            let position = self.default_position_id(&reference, &mut budget)?;
+            let root = self.close_default_monomial(&[position], None, &mut budget, 0)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                3,
+                0,
+                &file,
+                Some(span),
+            )?;
+            let state = Rc::new(vec![root]);
+            let scope = DefaultScope {
+                constraints: Rc::clone(&state),
+                sources: state,
+                fixed: Rc::new(Vec::new()),
+            };
+            self.visit_default_scope(
+                scope,
+                &mut budget,
+                0,
+                &mut DefaultMemo::default(),
+                DefaultVisit::Structural,
+            )?;
+            self.default_validation_steps = budget.work;
+            self.materialized_nodes = budget.copied_nodes;
+            self.materialized_bytes = budget.copied_bytes;
+        }
+        Ok(())
+    }
+
+    fn prepare_default_positions(
+        &mut self,
+        budget: &mut WalkBudget<'_>,
+    ) -> Result<(), NativeError> {
+        let mut roots = Vec::new();
+        for (reference, source) in &self.schema_sources {
+            budget.charge(0)?;
+            let source_bytes = match source {
+                SchemaSource::Type(key) => key.len(),
+                SchemaSource::Resource(_) | SchemaSource::Validation(_) => 0,
+                SchemaSource::Normalization(_) | SchemaSource::Position(_) => {
+                    unreachable!("default positions are prepared once after normalization")
+                }
+            };
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                2,
+                reference.len() + source_bytes,
+                budget.file,
+                Some(budget.span),
+            )?;
+            roots.push((reference.clone(), source.clone()));
+        }
+        budget.work = budget.work.saturating_add(
+            roots
+                .len()
+                .saturating_mul(roots.len().max(1).ilog2() as usize + 1),
+        );
+        budget.charge(0)?;
+        roots.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+        for (reference, source) in roots {
+            let root = self.default_roots.len();
+            let schema = match &source {
+                SchemaSource::Type(key) => self.types[key].get("schema"),
+                SchemaSource::Resource(index) => self.resources[*index].get("schema"),
+                SchemaSource::Validation(index) => self.validation_resources[*index].get("schema"),
+                SchemaSource::Normalization(_) | SchemaSource::Position(_) => unreachable!(),
+            }
+            .expect("admitted native root has a schema");
+            index_default_position(
+                schema,
+                (root, &reference),
+                String::new(),
+                &mut self.default_positions,
+                &mut self.schema_sources,
+                budget,
+                0,
+            )?;
+            self.default_roots.push(source);
+        }
+        for id in 0..self.default_positions.len() {
+            budget.charge(0)?;
+            let target = self.default_schema(id).get("$ref").and_then(Json::as_str);
+            let referenced = target
+                .map(|reference| self.default_position_id(reference, budget))
+                .transpose()?;
+            self.default_positions[id].referenced = referenced;
+        }
+        self.mark_same_instance_defaults(budget)?;
+        Ok(())
+    }
+
+    fn mark_same_instance_defaults(
+        &mut self,
+        budget: &mut WalkBudget<'_>,
+    ) -> Result<(), NativeError> {
+        let count = self.default_positions.len();
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            count,
+            count * std::mem::size_of::<Vec<usize>>(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        let mut reverse = vec![Vec::new(); count];
+        let mut pending = Vec::new();
+        for (parent, position) in self.default_positions.iter().enumerate() {
+            budget.charge(0)?;
+            if position.same_instance_default {
+                charge_default_monomial(1, budget, 0)?;
+                pending.push(parent);
+            }
+            for target in position.referenced.into_iter().chain(
+                position
+                    .children
+                    .iter()
+                    .filter(|child| matches!(child.position.keyword.as_str(), "allOf" | "anyOf"))
+                    .map(|child| child.target),
+            ) {
+                budget.charge(0)?;
+                admit_copy_cost(
+                    &mut budget.copied_nodes,
+                    &mut budget.copied_bytes,
+                    1,
+                    std::mem::size_of::<usize>(),
+                    budget.file,
+                    Some(budget.span),
+                )?;
+                reverse[target].push(parent);
+            }
+        }
+        // Positive reachability is definitive even inside cycles. Structural
+        // children are deliberately absent: their presets belong to another
+        // instance, owned by the structural walk rather than this local phase.
+        while let Some(target) = pending.pop() {
+            budget.charge(0)?;
+            for parent in &reverse[target] {
+                budget.charge(0)?;
+                if !self.default_positions[*parent].same_instance_default {
+                    charge_default_monomial(1, budget, 0)?;
+                    self.default_positions[*parent].same_instance_default = true;
+                    pending.push(*parent);
+                }
             }
         }
         Ok(())
+    }
+
+    fn default_position_id(
+        &self,
+        reference: &str,
+        budget: &mut WalkBudget<'_>,
+    ) -> Result<usize, NativeError> {
+        budget.charge(0)?;
+        if let Some(SchemaSource::Position(id)) = self.schema_sources.get(reference) {
+            Ok(*id)
+        } else {
+            Err(NativeError::new(
+                NativeErrorKind::UnknownReference,
+                "native default analysis cannot locate its source schema position",
+            )
+            .at_path(budget.file)
+            .at_span(budget.span)
+            .for_reference(reference))
+        }
+    }
+
+    fn default_schema(&self, id: usize) -> &Json {
+        let position = &self.default_positions[id];
+        let schema = match &self.default_roots[position.root] {
+            SchemaSource::Type(key) => self.types[key].get("schema"),
+            SchemaSource::Resource(index) => self.resources[*index].get("schema"),
+            SchemaSource::Validation(index) => self.validation_resources[*index].get("schema"),
+            SchemaSource::Normalization(_) | SchemaSource::Position(_) => unreachable!(),
+        }
+        .expect("prepared native root retains its schema");
+        schema
+            .pointer(&position.pointer)
+            .expect("prepared native schema position exists")
+    }
+
+    fn close_default_monomial(
+        &self,
+        monomial: &[usize],
+        arm: Option<usize>,
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<DefaultMonomial, NativeError> {
+        let length = monomial.len() + usize::from(arm.is_some());
+        charge_default_monomial(length, budget, depth)?;
+        let mut pending = Vec::with_capacity(length);
+        pending.extend_from_slice(monomial);
+        pending.extend(arm);
+        let mut visited = HashSet::new();
+        let mut closed = Vec::new();
+        while let Some(id) = pending.pop() {
+            budget.charge(depth)?;
+            if visited.contains(&id) {
+                continue;
+            }
+            charge_default_monomial(1, budget, depth)?;
+            visited.insert(id);
+            let position = &self.default_positions[id];
+            if position.own {
+                closed.push(id);
+            }
+            if let Some(target) = position.referenced {
+                charge_default_monomial(1, budget, depth)?;
+                pending.push(target);
+            }
+            for child in &position.children {
+                if child.position.keyword == "allOf" {
+                    charge_default_monomial(1, budget, depth)?;
+                    pending.push(child.target);
+                }
+            }
+        }
+        charge_default_monomial(closed.len(), budget, depth)?;
+        closed.sort_unstable();
+        Ok(closed)
     }
 
     fn load_tag(
@@ -679,13 +1164,13 @@ impl Compiler<'_> {
         self.definition_stack.pop();
         let contract_id = format!("{id}:contract");
         contract.insert("$id".into(), Json::String(contract_id.clone()));
-        let origin = RegexOrigin {
+        let origin = SchemaOrigin {
             path: canonical_file.clone(),
             span: definition.root.span,
         };
-        self.regex_origins
+        self.schema_origins
             .insert(contract_id.clone(), origin.clone());
-        self.regex_origins.insert(id.clone(), origin);
+        self.schema_origins.insert(id.clone(), origin);
         let contract_index = self.resources.len();
         self.resources.push(Json::Object(Map::from_iter([
             ("uri".into(), Json::String(contract_id.clone())),
@@ -782,7 +1267,46 @@ impl Compiler<'_> {
         file: &Path,
         budget: Option<&mut WalkBudget<'_>>,
     ) -> Result<String, NativeError> {
-        let key = (reference.to_owned(), path.to_vec());
+        // Removing defaults commutes and is idempotent, but ancestor paths do
+        // not subsume descendants: child-schema defaults still need projecting.
+        let prior = self.default_projection_sources.get(reference);
+        let insertion = match prior.map(|projection| {
+            projection
+                .paths
+                .binary_search_by(|candidate| candidate.as_slice().cmp(path))
+        }) {
+            Some(Ok(_)) => return Ok(reference.to_owned()),
+            Some(Err(index)) => index,
+            None => 0,
+        };
+        let source = prior.map_or(reference, |projection| projection.reference.as_str());
+        let paths = prior.map_or(&[][..], |projection| projection.paths.as_slice());
+        let path_nodes = paths.iter().map(Vec::len).sum::<usize>() + path.len();
+        let path_bytes = paths
+            .iter()
+            .flatten()
+            .chain(path)
+            .fold(0usize, |bytes, step| {
+                bytes.saturating_add(match step {
+                    DefaultPathStep::Property(key) => key.len(),
+                    DefaultPathStep::Item(_) => std::mem::size_of::<usize>(),
+                })
+            });
+        let nodes = 2 + paths.len() + path_nodes;
+        let bytes = source.len() + path_bytes;
+        let origin_span = budget.as_ref().map(|budget| budget.span).or_else(|| {
+            self.definition_stack
+                .last()
+                .map(|definition| definition.root.span)
+        });
+        let (copied_nodes, copied_bytes) = match budget {
+            Some(budget) => (&mut budget.copied_nodes, &mut budget.copied_bytes),
+            None => (&mut self.materialized_nodes, &mut self.materialized_bytes),
+        };
+        admit_copy_cost(copied_nodes, copied_bytes, nodes, bytes, file, None)?;
+        let mut paths = paths.to_vec();
+        paths.insert(insertion, path.to_vec());
+        let key = (source.to_owned(), paths);
         if let Some(projected) = self.default_projections.get(&key) {
             return Ok(projected.clone());
         }
@@ -796,50 +1320,28 @@ impl Compiler<'_> {
         let variant = self.next_default_projection;
         self.next_default_projection += 1;
         let id = format!("urn:daml:native:default-projection:{variant}");
-        let path_bytes = path.iter().fold(0usize, |bytes, step| {
-            bytes.saturating_add(match step {
-                DefaultPathStep::Property(key) => key.len(),
-                DefaultPathStep::Item(_) => std::mem::size_of::<usize>(),
-            })
+        // Retain the recipe for canonical composition after resolution. The
+        // queue owns only an ID; schema_sources remains the completion owner.
+        admit_copy_cost(
+            copied_nodes,
+            copied_bytes,
+            nodes + 5,
+            bytes + 4 * id.len(),
+            file,
+            None,
+        )?;
+        let projection = Rc::new(DefaultProjection {
+            reference: key.0.clone(),
+            paths: key.1.clone(),
         });
-        let nodes = 4 + 2 * path.len();
-        let bytes = 2 * (reference.len() + path_bytes + id.len());
-        let origin_span = budget.as_ref().map(|budget| budget.span).or_else(|| {
-            self.definition_stack
-                .last()
-                .map(|definition| definition.root.span)
-        });
-        if let Some(budget) = budget {
-            admit_copy_cost(
-                &mut budget.copied_nodes,
-                &mut budget.copied_bytes,
-                nodes,
-                bytes,
-                file,
-                None,
-            )?;
-        } else {
-            admit_copy_cost(
-                &mut self.materialized_nodes,
-                &mut self.materialized_bytes,
-                nodes,
-                bytes,
-                file,
-                None,
-            )?;
-        }
         self.default_projections.insert(key, id.clone());
-        self.pending_projections.insert(
-            id.clone(),
-            PendingProjection {
-                reference: reference.to_owned(),
-                path: path.to_vec(),
-            },
-        );
+        self.default_projection_sources
+            .insert(id.clone(), projection);
+        self.pending_projections.push(id.clone());
         if let Some(span) = origin_span {
-            self.regex_origins.insert(
+            self.schema_origins.insert(
                 id.clone(),
-                RegexOrigin {
+                SchemaOrigin {
                     path: file.to_owned(),
                     span,
                 },
@@ -855,6 +1357,9 @@ impl Compiler<'_> {
         depth: usize,
     ) -> Result<(), NativeError> {
         budget.charge(depth)?;
+        if self.schema_sources.contains_key(reference) {
+            return Ok(());
+        }
         if self.active_projections.contains(reference) {
             return Err(NativeError::new(
                 NativeErrorKind::ReferenceCycle,
@@ -863,13 +1368,19 @@ impl Compiler<'_> {
             .at_path(budget.file)
             .at_span(budget.span));
         }
-        let Some(pending) = self.pending_projections.remove(reference) else {
+        let Some(pending) = self
+            .default_projection_sources
+            .get(reference)
+            .map(Rc::clone)
+        else {
             return Ok(());
         };
         self.active_projections.insert(reference.to_owned());
         let mut schema = self.schema_for_reference(&pending.reference, budget, depth + 1)?;
         let file = budget.file;
-        self.project_schema_defaults(&mut schema, &pending.path, file, budget, depth + 1)?;
+        for path in &pending.paths {
+            self.project_schema_defaults(&mut schema, path, file, budget, depth + 1)?;
+        }
         schema
             .as_object_mut()
             .expect("native schemas are objects")
@@ -894,8 +1405,10 @@ impl Compiler<'_> {
         depth: usize,
     ) -> Result<bool, NativeError> {
         budget.charge(depth)?;
-        if let Some(normalized) = self.normalized_schema(schema, budget, depth)? {
-            *schema = normalized;
+        if schema.get(PENDING_DEFAULTS).is_some() {
+            // Projection consumes an instance path, not a normalization
+            // dependency. Keep that dependency symbolic until its owner runs.
+            materialize_normalizations(schema, budget, depth)?;
         }
         if !schema.is_object() {
             return Ok(false);
@@ -1163,9 +1676,9 @@ impl Compiler<'_> {
                         .next_regex_origin
                         .checked_add(1)
                         .expect("Regex origins are bounded by schema nodes");
-                    self.regex_origins.insert(
+                    self.schema_origins.insert(
                         crate::schema::native_regex_origin(origin),
-                        RegexOrigin {
+                        SchemaOrigin {
                             path: file.to_path_buf(),
                             span: *pattern,
                         },
@@ -1713,41 +2226,22 @@ impl Compiler<'_> {
         file: &Path,
         span: Span,
     ) -> Result<(), NativeError> {
-        if self.loading {
-            admit_copy(
-                &mut self.materialized_nodes,
-                &mut self.materialized_bytes,
-                schema,
-                file,
-                Some(span),
-            )?;
-            self.pending_validations.push(PendingValidation {
-                schema: schema.clone(),
-                file: file.to_owned(),
-                span,
-                container: false,
-            });
-            return Ok(());
-        }
-        let mut budget = WalkBudget {
-            work: self.default_validation_steps,
-            copied_nodes: self.materialized_nodes,
-            copied_bytes: self.materialized_bytes,
-            file,
-            span,
-        };
-        let result = self.validate_effective_default_node(
+        // Lowering snapshots are admitted only after every symbolic operation
+        // has finished and their original schema positions can be referenced.
+        admit_copy(
+            &mut self.materialized_nodes,
+            &mut self.materialized_bytes,
             schema,
             file,
+            Some(span),
+        )?;
+        self.pending_validations.push(PendingValidation {
+            schema: schema.clone(),
+            file: file.to_owned(),
             span,
-            &mut budget,
-            0,
-            &mut DefaultMemo::default(),
-        );
-        self.default_validation_steps = budget.work;
-        self.materialized_nodes = budget.copied_nodes;
-        self.materialized_bytes = budget.copied_bytes;
-        result
+            container: false,
+        });
+        Ok(())
     }
     fn schema_proves_container(
         &mut self,
@@ -1795,6 +2289,9 @@ impl Compiler<'_> {
         depth: usize,
     ) -> Result<Json, NativeError> {
         self.resolve_projection(reference, budget, depth)?;
+        if let Some(SchemaSource::Normalization(ordinal)) = self.schema_sources.get(reference) {
+            self.resolve_normalization(*ordinal, budget, depth)?;
+        }
         let schema = match self.schema_sources.get(reference) {
             Some(SchemaSource::Type(key)) => {
                 self.types.get(key).and_then(|entry| entry.get("schema"))
@@ -1803,6 +2300,14 @@ impl Compiler<'_> {
                 .resources
                 .get(*index)
                 .and_then(|entry| entry.get("schema")),
+            Some(SchemaSource::Normalization(ordinal)) => {
+                self.normalized_defaults[*ordinal].as_ref()
+            }
+            Some(SchemaSource::Validation(index)) => self
+                .validation_resources
+                .get(*index)
+                .and_then(|entry| entry.get("schema")),
+            Some(SchemaSource::Position(id)) => Some(self.default_schema(*id)),
             None => None,
         }
         .ok_or_else(|| {
@@ -1893,247 +2398,394 @@ impl Compiler<'_> {
         Ok(has_alternatives)
     }
 
-    fn validate_effective_default_node(
+    fn visit_default_scope(
         &mut self,
-        schema: &Json,
-        file: &Path,
-        span: Span,
+        scope: DefaultScope,
         budget: &mut WalkBudget<'_>,
         depth: usize,
         seen: &mut DefaultMemo,
+        visit: DefaultVisit,
     ) -> Result<(), NativeError> {
+        budget.work = budget.work.saturating_add(
+            scope
+                .constraints
+                .iter()
+                .chain(scope.sources.iter())
+                .map(|term| term.len().saturating_add(1))
+                .sum::<usize>()
+                .saturating_add(2 * scope.fixed.len()),
+        );
         budget.charge(depth)?;
-        let normalized = self.normalized_schema(schema, budget, depth)?;
-        let schema = normalized.as_ref().unwrap_or(schema);
-        let mut state = Vec::new();
-        self.collect_conjunctive_parts(schema, &mut HashSet::new(), &mut state, budget, depth)?;
-        // Only the memo identity distributes unannotated boolean wrappers.
-        // Actual defaults and branch contracts below use the untouched schema.
-        let state = default_memo_conjunction(state, seen, budget, depth)?;
-        if !seen.states.insert(state) {
-            return Ok(());
-        }
-        let mut defaults = Vec::new();
-        self.collect_default_candidates(schema, &mut HashSet::new(), &mut defaults, budget, depth)?;
-        if let Some(schema) = schema.as_object() {
-            for (value, annotations) in defaults {
-                self.record_default_check(schema, value, annotations, file, span, budget)?;
+        let check_local = match seen.states.entry(scope.clone()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                admit_copy_cost(
+                    &mut budget.copied_nodes,
+                    &mut budget.copied_bytes,
+                    1,
+                    std::mem::size_of::<DefaultScope>() + std::mem::size_of::<DefaultVisit>(),
+                    budget.file,
+                    Some(budget.span),
+                )?;
+                entry.insert(visit);
+                true
             }
-        }
-        self.validate_union_branch_defaults(schema, file, span, budget, depth, seen)?;
-        let mut positions = HashSet::new();
-        self.collect_schema_positions(schema, &mut HashSet::new(), &mut positions, budget, depth)?;
-        for position in positions {
-            if let Some(child) =
-                self.effective_schema_child(schema, &position, &mut HashSet::new(), budget, depth)?
-            {
-                self.validate_effective_default_node(&child, file, span, budget, depth + 1, seen)?;
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                if visit == DefaultVisit::Local || *entry.get() == DefaultVisit::Structural {
+                    return Ok(());
+                }
+                entry.insert(DefaultVisit::Structural);
+                false
             }
-        }
-        Ok(())
-    }
-    fn validate_union_branch_defaults(
-        &mut self,
-        schema: &Json,
-        file: &Path,
-        span: Span,
-        budget: &mut WalkBudget<'_>,
-        depth: usize,
-        seen: &mut DefaultMemo,
-    ) -> Result<(), NativeError> {
-        let mut parts = Vec::new();
-        self.collect_conjunctive_parts(schema, &mut HashSet::new(), &mut parts, budget, depth)?;
-        for (index, part) in parts.iter().enumerate() {
-            for branch in crate::schema::profile::children(part) {
-                budget.charge(depth + 1)?;
-                if branch.keyword() != "anyOf" {
+        };
+        if check_local {
+            for source in scope.sources.iter() {
+                budget.work = budget.work.saturating_add(source.len());
+                budget.charge(depth)?;
+                let has_work = source.iter().any(|id| {
+                    let position = &self.default_positions[*id];
+                    position.same_instance_default
+                        && (self.default_schema(*id).get("default").is_some()
+                            || (scope
+                                .fixed
+                                .binary_search_by_key(id, |choice| choice.0)
+                                .is_err()
+                                && position.children.iter().any(|child| {
+                                    child.position.keyword == "anyOf"
+                                        && self.default_positions[child.target]
+                                            .same_instance_default
+                                })))
+                });
+                if !has_work {
                     continue;
                 }
-                let mut branch_parts = Vec::new();
-                for (other_index, other) in parts.iter().enumerate() {
-                    let Some(source_object) = other.as_object() else {
-                        if other_index != index {
-                            budget.charge_copy(other)?;
-                            branch_parts.push(other.clone());
-                        }
-                        continue;
-                    };
-                    budget.charge_map_copy(source_object)?;
-                    let mut object = source_object.clone();
-                    object.remove("anyOf");
-                    if !object.is_empty() {
-                        branch_parts.push(Json::Object(object));
+                let supported =
+                    supporting_default_constraints(&scope.constraints, source, budget, depth)?;
+                if supported.is_empty() {
+                    return Err(default_invariant(
+                        budget,
+                        "a candidate source has no supporting constraint term",
+                    ));
+                }
+                for id in source {
+                    budget.charge(depth)?;
+                    if self.default_schema(*id).get("default").is_some() {
+                        self.record_default_check(&supported, *id, &scope.fixed, budget, depth)?;
                     }
                 }
-                budget.charge_copy(branch.value)?;
-                branch_parts.push(branch.value.clone());
-                let branch_schema = Json::Object(Map::from_iter([(
-                    "allOf".into(),
-                    Json::Array(branch_parts),
-                )]));
-                self.validate_effective_default_node(
-                    &branch_schema,
-                    file,
-                    span,
-                    budget,
-                    depth + 1,
-                    seen,
-                )?;
+                for id in source {
+                    if !self.default_positions[*id].same_instance_default
+                        || self.default_schema(*id).get("anyOf").is_none()
+                    {
+                        continue;
+                    }
+                    let insertion = match scope.fixed.binary_search_by_key(id, |choice| choice.0) {
+                        Ok(_) => continue,
+                        Err(insertion) => insertion,
+                    };
+                    for child_index in 0..self.default_positions[*id].children.len() {
+                        budget.charge(depth)?;
+                        let child = &self.default_positions[*id].children[child_index];
+                        if child.position.keyword != "anyOf"
+                            || !self.default_positions[child.target].same_instance_default
+                        {
+                            continue;
+                        }
+                        let target = child.target;
+                        let arm = child.position.index.expect("anyOf children have indices");
+                        let branch = self.close_default_monomial(&[target], None, budget, depth)?;
+                        admit_copy_cost(
+                            &mut budget.copied_nodes,
+                            &mut budget.copied_bytes,
+                            3 + scope.fixed.len(),
+                            (scope.fixed.len() + 1) * 2 * std::mem::size_of::<usize>(),
+                            budget.file,
+                            Some(budget.span),
+                        )?;
+                        let sources = Rc::new(vec![branch]);
+                        let constraints =
+                            Rc::new(default_memo_product(&supported, &sources, budget, depth)?);
+                        let mut fixed = scope.fixed.as_ref().clone();
+                        fixed.insert(insertion, (*id, arm));
+                        self.visit_default_scope(
+                            DefaultScope {
+                                constraints,
+                                sources,
+                                fixed: Rc::new(fixed),
+                            },
+                            budget,
+                            depth + 1,
+                            seen,
+                            DefaultVisit::Local,
+                        )?;
+                    }
+                }
             }
         }
-        Ok(())
-    }
-
-    fn collect_conjunctive_parts(
-        &mut self,
-        schema: &Json,
-        visited: &mut HashSet<String>,
-        parts: &mut Vec<Json>,
-        budget: &mut WalkBudget<'_>,
-        depth: usize,
-    ) -> Result<(), NativeError> {
-        budget.charge(depth)?;
-        let normalized = self.normalized_schema(schema, budget, depth)?;
-        let schema = normalized.as_ref().unwrap_or(schema);
-        let Some(object) = schema.as_object() else {
+        if visit == DefaultVisit::Local {
             return Ok(());
-        };
-        if let Some(reference) = object.get("$ref").and_then(Json::as_str)
-            && visited.insert(reference.to_owned())
-        {
-            let target = self.schema_for_reference(reference, budget, depth + 1)?;
-            self.collect_conjunctive_parts(&target, visited, parts, budget, depth + 1)?;
         }
-        for child in crate::schema::profile::children(schema) {
-            if child.keyword() == "allOf" {
-                self.collect_conjunctive_parts(child.value, visited, parts, budget, depth + 1)?;
-            }
+        if !scope.fixed.is_empty() {
+            return Err(default_invariant(
+                budget,
+                "parent branch assignments reached a child walk",
+            ));
         }
-        budget.charge_map_copy(object)?;
-        let mut local = object.clone();
-        local.remove("$id");
-        local.remove("$ref");
-        local.remove("allOf");
-        if !local.is_empty() {
-            parts.push(Json::Object(local));
-        }
-        Ok(())
-    }
-
-    fn collect_default_candidates(
-        &mut self,
-        schema: &Json,
-        visited: &mut HashSet<String>,
-        found: &mut Vec<(Json, Vec<Json>)>,
-        budget: &mut WalkBudget<'_>,
-        depth: usize,
-    ) -> Result<(), NativeError> {
-        budget.charge(depth)?;
-        let normalized = self.normalized_schema(schema, budget, depth)?;
-        let schema = normalized.as_ref().unwrap_or(schema);
-        if let Some(object) = schema.as_object() {
-            if let Some(value) = object.get("default") {
-                let tags = object.get("x-daml-default-tags");
-                budget.charge_copy(value)?;
-                if let Some(tags) = tags {
-                    budget.charge_copy(tags)?;
-                }
-                found.push((
-                    value.clone(),
-                    tags.and_then(Json::as_array).cloned().unwrap_or_default(),
-                ));
-            }
-            if let Some(reference) = object.get("$ref").and_then(Json::as_str)
-                && visited.insert(reference.to_owned())
-            {
-                let target = self.schema_for_reference(reference, budget, depth + 1)?;
-                self.collect_default_candidates(&target, visited, found, budget, depth + 1)?;
-            }
-            for child in crate::schema::profile::children(schema) {
-                if matches!(child.keyword(), "allOf" | "anyOf" | "oneOf") {
-                    self.collect_default_candidates(
-                        child.value,
-                        visited,
-                        found,
+        let shared = scope.constraints == scope.sources;
+        for position in self.default_child_queries(&scope.sources, budget, depth)? {
+            let constraints =
+                self.derive_default_state(&scope.constraints, &position, budget, depth)?;
+            let sources = if shared {
+                None
+            } else {
+                self.derive_default_state(&scope.sources, &position, budget, depth)?
+            };
+            let Some(constraints) = constraints else {
+                if sources.is_some() {
+                    return Err(default_invariant(
                         budget,
-                        depth + 1,
-                    )?;
+                        "a source child has no effective constraint child",
+                    ));
                 }
-            }
-        }
-        Ok(())
-    }
-    fn collect_schema_positions(
-        &mut self,
-        schema: &Json,
-        visited: &mut HashSet<String>,
-        positions: &mut HashSet<SchemaPosition>,
-        budget: &mut WalkBudget<'_>,
-        depth: usize,
-    ) -> Result<(), NativeError> {
-        budget.charge(depth)?;
-        let normalized = self.normalized_schema(schema, budget, depth)?;
-        let schema = normalized.as_ref().unwrap_or(schema);
-        for child in crate::schema::profile::children(schema) {
-            if !child.applies || child.unsupported_defaults {
+                continue;
+            };
+            if !shared && sources.is_none() {
                 continue;
             }
-            let keyword = child.keyword();
-            match keyword {
-                "allOf" | "anyOf" | "oneOf" => {
-                    self.collect_schema_positions(
-                        child.value,
-                        visited,
-                        positions,
-                        budget,
-                        depth + 1,
-                    )?;
-                }
-                "properties" => {
-                    positions.insert(SchemaPosition {
-                        keyword: "property".to_owned(),
-                        key: child.map_key().map(str::to_owned),
-                        index: None,
-                    });
-                }
-                "additionalProperties" => {
-                    positions.insert(SchemaPosition {
-                        keyword: "property".to_owned(),
-                        key: None,
-                        index: None,
-                    });
-                }
-                "prefixItems" => {
-                    positions.insert(SchemaPosition {
-                        keyword: "item".to_owned(),
-                        key: None,
-                        index: child.array_index(),
-                    });
-                }
-                "items" => {
-                    positions.insert(SchemaPosition {
-                        keyword: "item".to_owned(),
-                        key: None,
-                        index: None,
-                    });
-                }
-                _ if child.map_key().is_some() || child.array_index().is_some() => {
-                    positions.insert(SchemaPosition {
-                        keyword: keyword.to_owned(),
-                        key: child.map_key().map(str::to_owned),
-                        index: child.array_index(),
-                    });
-                }
-                _ => {}
-            }
-        }
-        if let Some(reference) = schema.get("$ref").and_then(Json::as_str)
-            && visited.insert(reference.to_owned())
-        {
-            let target = self.schema_for_reference(reference, budget, depth + 1)?;
-            self.collect_schema_positions(&target, visited, positions, budget, depth + 1)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                if shared { 1 } else { 2 },
+                0,
+                budget.file,
+                Some(budget.span),
+            )?;
+            let constraints = Rc::new(constraints);
+            let sources = sources.map_or_else(|| Rc::clone(&constraints), Rc::new);
+            self.visit_default_scope(
+                DefaultScope {
+                    constraints,
+                    sources,
+                    fixed: Rc::clone(&scope.fixed),
+                },
+                budget,
+                depth + 1,
+                seen,
+                DefaultVisit::Structural,
+            )?;
         }
         Ok(())
+    }
+
+    fn default_child_queries(
+        &self,
+        state: &DefaultMemoState,
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<Vec<SchemaPosition>, NativeError> {
+        let count = state.iter().map(Vec::len).sum();
+        charge_default_monomial(count, budget, depth)?;
+        let mut pending = state.iter().flatten().copied().collect::<Vec<_>>();
+        let mut visited = HashSet::new();
+        let mut queries = HashSet::new();
+        while let Some(id) = pending.pop() {
+            budget.charge(depth)?;
+            if visited.contains(&id) {
+                continue;
+            }
+            charge_default_monomial(1, budget, depth)?;
+            visited.insert(id);
+            let position = &self.default_positions[id];
+            if let Some(target) = position.referenced {
+                charge_default_monomial(1, budget, depth)?;
+                pending.push(target);
+            }
+            for child in &position.children {
+                budget.charge(depth)?;
+                if !child.applies || child.unsupported_defaults {
+                    continue;
+                }
+                let query = match child.position.keyword.as_str() {
+                    "allOf" | "anyOf" | "oneOf" => {
+                        charge_default_monomial(1, budget, depth)?;
+                        pending.push(child.target);
+                        continue;
+                    }
+                    "properties" => ("property", child.position.key.as_deref(), None),
+                    "additionalProperties" => ("property", None, None),
+                    "prefixItems" => ("item", None, child.position.index),
+                    "items" => ("item", None, None),
+                    keyword if child.position.key.is_some() || child.position.index.is_some() => {
+                        (keyword, child.position.key.as_deref(), child.position.index)
+                    }
+                    _ => continue,
+                };
+                if !queries.contains(&query) {
+                    admit_copy_cost(
+                        &mut budget.copied_nodes,
+                        &mut budget.copied_bytes,
+                        1,
+                        std::mem::size_of::<SchemaPosition>(),
+                        budget.file,
+                        Some(budget.span),
+                    )?;
+                    queries.insert(query);
+                }
+            }
+        }
+        let mut result = Vec::with_capacity(queries.len());
+        for (keyword, key, index) in queries {
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                1,
+                keyword.len() + key.map_or(0, str::len),
+                budget.file,
+                Some(budget.span),
+            )?;
+            result.push(SchemaPosition {
+                keyword: keyword.to_owned(),
+                key: key.map(str::to_owned),
+                index,
+            });
+        }
+        budget.work = budget.work.saturating_add(
+            result
+                .len()
+                .saturating_mul(result.len().max(1).ilog2() as usize + 1),
+        );
+        budget.charge(depth)?;
+        result.sort_unstable_by(|left, right| {
+            (&left.keyword, &left.key, left.index).cmp(&(&right.keyword, &right.key, right.index))
+        });
+        Ok(result)
+    }
+
+    fn selected_default_child(&self, id: usize, query: &SchemaPosition) -> Option<usize> {
+        let children = &self.default_positions[id].children;
+        let find = |keyword: &str, key: Option<&str>, index: Option<usize>| {
+            children
+                .iter()
+                .find(|child| {
+                    child.position.keyword == keyword
+                        && child.position.key.as_deref() == key
+                        && child.position.index == index
+                })
+                .map(|child| child.target)
+        };
+        match query.keyword.as_str() {
+            "property" => query
+                .key
+                .as_deref()
+                .and_then(|key| find("properties", Some(key), None))
+                .or_else(|| {
+                    self.default_schema(id)
+                        .get("patternProperties")
+                        .is_none()
+                        .then(|| find("additionalProperties", None, None))
+                        .flatten()
+                }),
+            "item" => query
+                .index
+                .and_then(|index| find("prefixItems", None, Some(index)))
+                .or_else(|| {
+                    let prefix = self
+                        .default_schema(id)
+                        .get("prefixItems")
+                        .and_then(Json::as_array)
+                        .map_or(0, Vec::len);
+                    query
+                        .index
+                        .is_none_or(|index| index >= prefix)
+                        .then(|| find("items", None, None))
+                        .flatten()
+                }),
+            keyword => find(keyword, query.key.as_deref(), query.index),
+        }
+    }
+
+    fn derive_default_state(
+        &self,
+        state: &DefaultMemoState,
+        query: &SchemaPosition,
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<Option<DefaultMemoState>, NativeError> {
+        let mut result = Vec::new();
+        let mut any_child = false;
+        for monomial in state {
+            let closed = self.close_default_monomial(monomial, None, budget, depth)?;
+            charge_default_monomial(1, budget, depth)?;
+            let mut pending = vec![(closed, Vec::<(usize, usize)>::new())];
+            while let Some((current, fixed)) = pending.pop() {
+                budget.charge(depth)?;
+                let union = current
+                    .iter()
+                    .find(|id| {
+                        fixed.binary_search_by_key(*id, |choice| choice.0).is_err()
+                            && self.default_positions[**id]
+                                .children
+                                .iter()
+                                .any(|child| child.position.keyword == "anyOf")
+                    })
+                    .copied();
+                if let Some(union) = union {
+                    let insertion = fixed
+                        .binary_search_by_key(&union, |choice| choice.0)
+                        .expect_err("an unselected union has no parent assignment");
+                    for child in &self.default_positions[union].children {
+                        budget.charge(depth)?;
+                        if child.position.keyword != "anyOf" {
+                            continue;
+                        }
+                        let branch = self.close_default_monomial(
+                            &current,
+                            Some(child.target),
+                            budget,
+                            depth,
+                        )?;
+                        admit_copy_cost(
+                            &mut budget.copied_nodes,
+                            &mut budget.copied_bytes,
+                            1 + fixed.len(),
+                            2 * (fixed.len() + 1) * std::mem::size_of::<usize>(),
+                            budget.file,
+                            Some(budget.span),
+                        )?;
+                        let mut choices = fixed.clone();
+                        choices.insert(
+                            insertion,
+                            (union, child.position.index.expect("anyOf arm index")),
+                        );
+                        pending.push((branch, choices));
+                    }
+                    continue;
+                }
+                let mut children = Vec::new();
+                for id in current {
+                    budget.charge(depth)?;
+                    if let Some(child) = self.selected_default_child(id, query) {
+                        charge_default_monomial(1, budget, depth)?;
+                        children.push(child);
+                    }
+                }
+                if children.is_empty() {
+                    // Keep mixed absent alternatives, but never manufacture a
+                    // child when every reachable parent assignment lacks one.
+                    charge_default_monomial(0, budget, depth)?;
+                    result.push(Vec::new());
+                } else {
+                    any_child = true;
+                    // Parent choices stop here. The same original operation
+                    // below a data edge has independent choices at that child.
+                    result.push(self.close_default_monomial(&children, None, budget, depth + 1)?);
+                }
+            }
+        }
+        if !any_child {
+            return Ok(None);
+        }
+        canonical_default_monomials(&mut result, budget, depth)?;
+        Ok(Some(result))
     }
 
     fn effective_schema_child(
@@ -2202,21 +2854,24 @@ impl Compiler<'_> {
             }
         }
         let mut union = Vec::new();
+        let mut any_union_child = false;
         if let Some(branches) = schema.get("anyOf").and_then(Json::as_array) {
             for branch in branches {
-                union.push(
-                    self.effective_schema_child(
-                        branch,
-                        position,
-                        &mut visited.clone(),
-                        budget,
-                        depth + 1,
-                    )?
-                    .unwrap_or(Json::Bool(true)),
-                );
+                let child = self.effective_schema_child(
+                    branch,
+                    position,
+                    &mut visited.clone(),
+                    budget,
+                    depth + 1,
+                )?;
+                any_union_child |= child.is_some();
+                union.push(child.unwrap_or(Json::Bool(true)));
             }
         }
-        if !union.is_empty() {
+        // Preserve absence when no arm declares a child at this position.
+        // Mixed arms still need their true placeholders, and an explicitly
+        // declared true/false child remains a real projection.
+        if any_union_child {
             conjuncts.push(Json::Object(Map::from_iter([(
                 "anyOf".into(),
                 Json::Array(union),
@@ -2295,11 +2950,12 @@ impl Compiler<'_> {
             .at_path(file)
             .at_span(expression.span));
         }
+        let id = normalization_id(ordinal);
         admit_copy_cost(
             &mut self.materialized_nodes,
             &mut self.materialized_bytes,
-            bases.len() + 2,
-            bases.iter().map(String::len).sum::<usize>() + PENDING_DEFAULTS.len(),
+            bases.len() + 3,
+            bases.iter().map(String::len).sum::<usize>() + PENDING_DEFAULTS.len() + id.len(),
             file,
             Some(expression.span),
         )?;
@@ -2315,6 +2971,8 @@ impl Compiler<'_> {
             file: file.to_owned(),
         }));
         self.normalized_defaults.push(None);
+        self.schema_sources
+            .insert(id, SchemaSource::Normalization(ordinal));
         narrowed
             .as_object_mut()
             .expect("native narrowing is an object schema")
@@ -2340,9 +2998,9 @@ impl Compiler<'_> {
             .at_path(budget.file)
             .at_span(budget.span)
         })?;
-        self.regex_origins.insert(
+        self.schema_origins.insert(
             normalization_id(ordinal),
-            RegexOrigin {
+            SchemaOrigin {
                 path: pending.file.clone(),
                 span: pending.span,
             },
@@ -2447,11 +3105,12 @@ impl Compiler<'_> {
         for preset in inherited.presets {
             budget.charge_preset_copy(preset)?;
         }
+        let id = normalization_id(ordinal);
         admit_copy_cost(
             &mut budget.copied_nodes,
             &mut budget.copied_bytes,
-            2,
-            PENDING_DEFAULTS.len(),
+            3,
+            PENDING_DEFAULTS.len() + id.len(),
             budget.file,
             Some(expression.span),
         )?;
@@ -2471,6 +3130,8 @@ impl Compiler<'_> {
             file: budget.file.to_owned(),
         }));
         self.normalized_defaults.push(None);
+        self.schema_sources
+            .insert(id, SchemaSource::Normalization(ordinal));
         schema
             .as_object_mut()
             .expect("native schema is an object")
@@ -2909,132 +3570,272 @@ impl Compiler<'_> {
         )?;
         Ok(annotations)
     }
+    fn default_reference(
+        &self,
+        id: usize,
+        budget: &mut WalkBudget<'_>,
+    ) -> Result<Json, NativeError> {
+        let reference = &self.default_positions[id].reference;
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            2,
+            "$ref".len() + reference.len(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        Ok(Json::Object(Map::from_iter([(
+            "$ref".into(),
+            Json::String(reference.clone()),
+        )])))
+    }
+
+    fn materialize_default_constraints(
+        &self,
+        state: &DefaultMemoState,
+        fixed: &[(usize, usize)],
+        origin: usize,
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<Json, NativeError> {
+        if state.is_empty() {
+            return Err(default_invariant(
+                budget,
+                "a default check has no constraint alternatives",
+            ));
+        }
+        let origin_is_fixed = fixed
+            .binary_search_by_key(&origin, |choice| choice.0)
+            .is_ok();
+        let common_count = fixed.len() + usize::from(!origin_is_fixed);
+        for term in state {
+            for id in fixed
+                .iter()
+                .map(|choice| choice.0)
+                .chain((!origin_is_fixed).then_some(origin))
+            {
+                budget.work = budget
+                    .work
+                    .saturating_add(term.len().max(1).ilog2() as usize + 1);
+                budget.charge(depth)?;
+                if term.binary_search(&id).is_err() {
+                    return Err(default_invariant(
+                        budget,
+                        "a required source is not common to every supporting term",
+                    ));
+                }
+            }
+        }
+        let mut alternatives = Vec::new();
+        for term in state {
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                2,
+                term.len() * std::mem::size_of::<Json>() + "allOf".len(),
+                budget.file,
+                Some(budget.span),
+            )?;
+            let mut conjuncts = Vec::with_capacity(term.len());
+            for id in term {
+                budget.charge(depth)?;
+                conjuncts.push(self.default_reference(*id, budget)?);
+            }
+            alternatives.push(match conjuncts.len() {
+                0 => Json::Object(Map::new()),
+                1 => conjuncts.pop().expect("one default constraint"),
+                _ => Json::Object(Map::from_iter([("allOf".into(), Json::Array(conjuncts))])),
+            });
+        }
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            2,
+            "anyOf".len(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        let multiple = alternatives.len() > 1;
+        let schema = if multiple {
+            Json::Object(Map::from_iter([(
+                "anyOf".into(),
+                Json::Array(alternatives),
+            )]))
+        } else {
+            alternatives
+                .pop()
+                .expect("a supported default has a constraint term")
+        };
+        if !multiple {
+            return Ok(schema);
+        }
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            2,
+            (common_count + 1) * std::mem::size_of::<Json>() + "allOf".len(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        let mut conjuncts = Vec::with_capacity(common_count + 1);
+        conjuncts.push(schema);
+        // Every term already contains these exact original operations. Making
+        // them directly reachable exposes no-work pins and the suppressed
+        // candidate origin; Core deduplicates the repeated target SchemaIds.
+        for id in fixed
+            .iter()
+            .map(|choice| choice.0)
+            .chain((!origin_is_fixed).then_some(origin))
+        {
+            conjuncts.push(self.default_reference(id, budget)?);
+        }
+        Ok(Json::Object(Map::from_iter([(
+            "allOf".into(),
+            Json::Array(conjuncts),
+        )])))
+    }
+
     fn record_default_check(
         &mut self,
-        schema: &Map<String, Json>,
-        value: Json,
-        annotations: Vec<Json>,
-        file: &Path,
-        span: Span,
+        constraints: &DefaultMemoState,
+        origin: usize,
+        fixed: &[(usize, usize)],
         budget: &mut WalkBudget<'_>,
+        depth: usize,
     ) -> Result<(), NativeError> {
-        budget.charge_map_copy(schema)?;
-        let mut value_schema = Json::Object(schema.clone());
-        let object = value_schema.as_object_mut().expect("constructed object");
-        object.remove("default");
-        object.remove("x-daml-default-tags");
+        if self.default_schema(origin).get("default").is_none() {
+            return Err(default_invariant(
+                budget,
+                "a descriptor does not own a literal default",
+            ));
+        }
+        let mut schema =
+            self.materialize_default_constraints(constraints, fixed, origin, budget, depth)?;
         let ordinal = self.checks.len();
         let name = format!("native_default_check_{ordinal}");
         let id = format!("urn:daml:native:default-check:{ordinal}");
-        value_schema
+        let reference = &self.default_positions[origin].reference;
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            5,
+            name.len() + id.len() + reference.len() + budget.file.as_os_str().len(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        let candidate_origin = reference.clone();
+        let mut fixed_choices = Vec::new();
+        for (position, branch) in fixed {
+            let reference = &self.default_positions[*position].reference;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                1,
+                reference.len() + std::mem::size_of::<usize>(),
+                budget.file,
+                Some(budget.span),
+            )?;
+            fixed_choices.push((reference.clone(), *branch));
+        }
+        schema
             .as_object_mut()
-            .expect("constructed schema")
+            .expect("generated default check is an object")
             .insert("$id".into(), Json::String(id));
-        self.types.insert(
+        self.check_types.insert(
             name.clone(),
-            Json::Object(Map::from_iter([("schema".into(), value_schema)])),
+            Json::Object(Map::from_iter([("schema".into(), schema)])),
         );
         self.checks.push(DefaultCheck {
             schema_type: name,
-            value,
-            annotations,
-            path: file.to_path_buf(),
-            span,
+            path: budget.file.to_owned(),
+            span: budget.span,
+            candidate_origin,
+            fixed_choices,
         });
         Ok(())
     }
 }
 
-// The finite opaque atoms are complete source schemas (including all tags,
-// literals and annotations). Only sole-key generated allOf/anyOf wrappers are
-// interpreted here. DNF identifies mixed recursive derivatives without
-// rewriting a real schema, absorbing true, or discarding a default candidate.
-fn default_memo_alternatives(
-    mut schema: Json,
-    memo: &mut DefaultMemo,
+fn schema_has_default(
+    schema: &Json,
     budget: &mut WalkBudget<'_>,
     depth: usize,
-) -> Result<DefaultMemoState, NativeError> {
+) -> Result<bool, NativeError> {
     budget.charge(depth)?;
-    let operator = schema
-        .as_object()
-        .filter(|object| object.len() == 1)
-        .and_then(|object| {
-            ["allOf", "anyOf"].into_iter().find(|keyword| {
-                object
-                    .get(*keyword)
-                    .and_then(Json::as_array)
-                    .is_some_and(|branches| !branches.is_empty())
-            })
-        });
-    if let Some(operator) = operator {
-        let Json::Array(branches) = schema
-            .as_object_mut()
-            .expect("memo operator is an object")
-            .remove(operator)
-            .expect("memo operator has branches")
-        else {
-            unreachable!("memo operator branches are an array");
-        };
-        if operator == "allOf" {
-            return default_memo_conjunction(branches, memo, budget, depth + 1);
-        }
-        let mut alternatives = Vec::new();
-        for branch in branches {
-            let state = default_memo_alternatives(branch, memo, budget, depth + 1)?;
-            for monomial in state {
-                budget.charge(depth)?;
-                alternatives.push(monomial);
-            }
-        }
-        canonical_default_monomials(&mut alternatives, budget, depth)?;
-        return Ok(alternatives);
+    if schema.get("default").is_some() {
+        return Ok(true);
     }
-    for (index, atom) in memo.atoms.iter().enumerate() {
-        budget.charge(depth)?;
-        if atom == &schema {
-            charge_default_monomial(1, budget, depth)?;
-            return Ok(vec![vec![index]]);
+    for child in crate::schema::profile::children(schema) {
+        if schema_has_default(child.value, budget, depth + 1)? {
+            return Ok(true);
         }
     }
-    let index = memo.atoms.len();
-    memo.atoms.push(schema);
-    charge_default_monomial(1, budget, depth)?;
-    Ok(vec![vec![index]])
+    Ok(false)
 }
 
-fn default_memo_conjunction(
-    parts: Vec<Json>,
-    memo: &mut DefaultMemo,
+fn default_invariant(budget: &WalkBudget<'_>, message: &str) -> NativeError {
+    NativeError::new(
+        NativeErrorKind::Schema,
+        format!("native default analysis invariant failed: {message}"),
+    )
+    .at_path(budget.file)
+    .at_span(budget.span)
+}
+
+fn supporting_default_constraints(
+    constraints: &DefaultMemoState,
+    source: &[usize],
     budget: &mut WalkBudget<'_>,
     depth: usize,
 ) -> Result<DefaultMemoState, NativeError> {
-    budget.charge(depth)?;
-    let mut parts = parts.into_iter();
-    let Some(first) = parts.next() else {
-        // Keep a concrete atom for the empty conjunction rather than applying
-        // true absorption or pruning alternatives around it.
-        return default_memo_alternatives(Json::Object(Map::new()), memo, budget, depth + 1);
-    };
-    let mut state = default_memo_alternatives(first, memo, budget, depth + 1)?;
-    for part in parts {
-        let factor = default_memo_alternatives(part, memo, budget, depth + 1)?;
-        let mut product = Vec::new();
-        for left in &state {
-            for right in &factor {
-                charge_default_monomial(left.len() + right.len(), budget, depth)?;
-                let mut monomial = Vec::with_capacity(left.len() + right.len());
-                monomial.extend_from_slice(left);
-                monomial.extend_from_slice(right);
-                monomial.sort_unstable();
-                monomial.dedup();
-                product.push(monomial);
+    let mut supported = Vec::new();
+    for term in constraints {
+        budget.charge(depth)?;
+        let contains = match term.len().cmp(&source.len()) {
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => {
+                // Equal-width sorted unique sets can support only themselves.
+                budget.work = budget.work.saturating_add(source.len());
+                budget.charge(depth)?;
+                term.as_slice() == source
             }
+            std::cmp::Ordering::Greater => {
+                let width = term.len().max(1).ilog2() as usize + 1;
+                budget.work = budget
+                    .work
+                    .saturating_add(source.len().saturating_mul(width));
+                budget.charge(depth)?;
+                source.iter().all(|id| term.binary_search(id).is_ok())
+            }
+        };
+        if contains {
+            charge_default_monomial(term.len(), budget, depth)?;
+            supported.push(term.clone());
         }
-        canonical_default_monomials(&mut product, budget, depth)?;
-        state = product;
     }
-    Ok(state)
+    Ok(supported)
+}
+
+fn default_memo_product(
+    state: &DefaultMemoState,
+    factor: &DefaultMemoState,
+    budget: &mut WalkBudget<'_>,
+    depth: usize,
+) -> Result<DefaultMemoState, NativeError> {
+    let mut product = Vec::new();
+    for left in state {
+        for right in factor {
+            charge_default_monomial(left.len() + right.len(), budget, depth)?;
+            let mut monomial = Vec::with_capacity(left.len() + right.len());
+            monomial.extend_from_slice(left);
+            monomial.extend_from_slice(right);
+            monomial.sort_unstable();
+            monomial.dedup();
+            product.push(monomial);
+        }
+    }
+    canonical_default_monomials(&mut product, budget, depth)?;
+    Ok(product)
 }
 
 fn canonical_default_monomials(

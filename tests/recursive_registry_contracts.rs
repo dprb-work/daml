@@ -369,3 +369,67 @@ fn negation_diagnostics_do_not_expose_private_compiled_schema_references() {
         assert!(!error.message.contains("#/$defs/"), "{}", error.message);
     }
 }
+
+#[test]
+fn recursive_authored_error_rendering_shares_the_candidate_work_budget() {
+    let module = SchemaModule::from_value(json!({"types": {
+        "app.Bad": {"schema": {
+            "type": "object",
+            "properties": {"next": {"$ref": "#"}},
+            "not": {"type": "object", "description": "x".repeat(1024 * 1024)}
+        }},
+        "app.Choices": {"schema": {
+            "anyOf": vec![json!({"default": {}}); 64]
+        }}
+    }}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let supplied = parse("!app.Bad {}").unwrap();
+    let error = schemas.resolve_as(&supplied, "app.Choices").unwrap_err();
+    assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
+}
+
+#[test]
+fn validity_only_negation_probes_do_not_reserve_authored_error_messages() {
+    let module = SchemaModule::from_value(json!({"types": {"app.Node": {"schema": {
+        "type": "object",
+        "$defs": {"probe": {
+            "not": {"type": "array", "description": "x".repeat(1024 * 1024)}
+        }},
+        "properties": {"next": {"$ref": "#"}},
+        "if": {"allOf": vec![json!({"$ref": "#/$defs/probe"}); 16]},
+        "then": {}
+    }}}}))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let mut source = "{}".to_owned();
+    for _ in 0..8 {
+        source = format!("{{next: {source}}}");
+    }
+    let supplied = parse(&source).unwrap();
+    schemas
+        .validate_semantic(&SemanticNode::from_document(&supplied), Some("app.Node"))
+        .unwrap();
+}
+
+#[test]
+fn malformed_negation_children_return_structured_schema_errors() {
+    for child in [json!(null), json!("invalid"), json!(3), json!([])] {
+        let error = SchemaModule::from_value(json!({
+            "types": {"app.Value": {"schema": {"not": child}}}
+        }))
+        .and_then(|module| Schemas::compose([module]))
+        .err()
+        .expect("not must contain an object or boolean schema");
+        assert_eq!(error.kind, SchemaErrorKind::InvalidSchema);
+    }
+    let module = SchemaModule::from_value(json!({
+        "types": {"app.Value": {"schema": {"not": false}}}
+    }))
+    .unwrap();
+    let schemas = Schemas::compose([module]).unwrap();
+    let supplied = parse("1").unwrap();
+    schemas
+        .validate_semantic(&SemanticNode::from_document(&supplied), Some("app.Value"))
+        .unwrap();
+}

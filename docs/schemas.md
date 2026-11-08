@@ -385,10 +385,12 @@ Default resolution limits are 100,000 cumulatively materialized nodes, 8 MiB of
 value/key/tag bytes, and 1,000,000 conservative work units. Alternative candidates
 share those budgets. Validation reserves work before entering the engine,
 distinguishing validity probes, error collection and annotation walks. Recursive
-validation charges operative local constraints rather than repeatedly charging
-inert descriptions or child-schema payloads. Reservations include exact
-`uniqueItems` comparisons and containing-object copies for each collected
-property-name error; excessive work returns `LimitExceeded`.
+validation excludes inert descriptions and child-schema payloads from routine
+local work. Error-collection passes also reserve the full authored `not` child
+serialized in a negation diagnostic, including annotations. Validity-only probes
+do not reserve that rendering work. Reservations include exact `uniqueItems`
+comparisons and containing-object copies for each collected property-name error;
+excessive work returns `LimitExceeded`.
 
 Composition bounds the selected schemas to 10,000 JSON nodes and 8 MiB, compiled
 schema-view copies to 8 MiB, and aggregate expanded compilation work to 100,000.

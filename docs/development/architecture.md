@@ -6,11 +6,11 @@ DAML's implementation is organized around explicit owners. Extend the existing o
 
 - `src/schema/profile.rs` owns child-schema classification, traversal roles, and schema-admission limits. Add schema positions there, not in another walker.
 - `src/schema.rs` admits local schema shape and declarations in `SchemaModule`. Private admitted values cannot be mutated by callers. Composition owns aggregate budgets, cross-module collisions and references, and one compiled validator. Its private normalized resource resolves static references before compilation; original resources still own bindings, defaults and public locations. Registry-bound `SchemaView` values resolve children in their own registry; the resolver cannot construct IDs or pair raw children with another registry.
-- `src/resolve.rs` owns one search and cumulative budget per resolution. It aggregates schema views in completion order; alternative completions reuse that budget.
+- `src/resolve.rs` owns one search and cumulative budget per resolution. It aggregates schema views in completion order; alternative completions reuse that budget. Native partial-default checks use this search for root-only `anyOf` selections and exact-origin preset masking. Ordinary resolution and descendant instances do not inherit those controls.
 - `src/pointer.rs` owns RFC 6901 path construction and segment decoding. URI-fragment percent encoding remains part of schema-reference resolution.
 - `src/source.rs` owns LF/CRLF/CR boundary mechanics shared by parsing and formatting. `src/parser.rs` owns checked input admission, syntax, and whitespace/comment scanning. Borrowed source becomes owned only after parsing.
 - `src/names.rs` owns the shared Unicode key/tag classifier.
-- `src/native` owns definition syntax, filesystem/supplied-resource bundle admission, and lowering to the existing in-memory schema engine. It adds no second validator or application-construction path. Reachable declarations load before graph-dependent default projection and validation. Effective-default memo identities use bounded combinations of complete opaque source atoms; they do not rewrite actual schemas, prune default-bearing branches or traverse literal data as schemas.
+- `src/native` owns definition syntax, filesystem/supplied-resource bundle admission, and lowering to the existing in-memory schema engine. It adds no second validator or application-construction path. Reachable declarations load before graph-dependent default projection and validation. Default contexts use original resource-and-pointer identities, not JSON-body equality. Shared references retain one operation identity; distinct operations remain independent. Private check types and snapshots live only in the partial-default validation projection.
 - `src/format.rs` owns shared source-preserving layout and trivia mechanics. `src/native/format.rs` renders definition expressions through that printer. The `daml-fmt` binary handles arguments and bounded input/output.
 - `src/semantic.rs` owns editable semantic snapshots and bounded canonical data writing. `Schemas` selects source-visible names that retain bound identity; the writer checks the selected output grammar. Names remain borrowed from their input or registry owner.
 - `bindings/browser/src` owns JavaScript shape/UTF-16 admission, lossless transport, JavaScript errors, and owned snapshot lifecycle, not language semantics. Input and resolved traversals remain distinct to avoid an intermediate Rust tree and preserve their different provenance requirements.
@@ -23,6 +23,10 @@ and annotation traversals before calling the pinned engine. Default completion
 uses the same cumulative limits and fails rather than synthesizing forever.
 Schema-position classification remains in `profile.rs` for normalization,
 reference admission, completion and default checks.
+
+Native default checks separate same-instance admission from structural child
+traversal. A local phase with no reachable same-instance preset is omitted;
+descendant presets and every structural branch remain in the walk.
 
 ## Implementation defaults
 
