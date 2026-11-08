@@ -73,3 +73,6 @@ and the separately versioned native/browser archives can expose different APIs.
 [Contributing](../CONTRIBUTING.md) leads to the [development guides](development/README.md)
 for builds, architecture, packaging, CI, and technical research. The project is
 [MIT licensed](../LICENSE); [SOURCES.md](../SOURCES.md) retains the required notices.
+
+[Backlog](backlog.md) tracks deferred work, including leaner builds and smaller
+worktrees as language bindings grow.
