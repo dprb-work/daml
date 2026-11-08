@@ -33,7 +33,7 @@ pub enum ResolvedValue<'a> {
     Number(Cow<'a, Number>),
     /// Text borrowed from supplied input or schema defaults when possible.
     String(Cow<'a, str>),
-    /// An admitted temporal scalar, retaining exact canonical precision and offset presence.
+    /// An admitted temporal scalar, retaining ISO precision/offsets or a Spring cron expression.
     Temporal(crate::TemporalValue<'a>),
     /// Ordered array entries.
     Sequence(Vec<ResolvedNode<'a>>),
@@ -112,7 +112,7 @@ impl<'a> ResolvedNode<'a> {
     ///
     /// This allocates an owned output; inspect borrowed values through the other
     /// accessors when serialization is not needed.
-    /// Temporal values project to canonical ISO strings, losing intrinsic kind.
+    /// Temporal values project to ISO or cron expression strings, losing intrinsic kind.
     pub fn to_json(&self) -> serde_json::Value {
         match &self.value {
             ResolvedValue::Null => serde_json::Value::Null,

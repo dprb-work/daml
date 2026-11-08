@@ -1,0 +1,4 @@
+!fuzz.Config {
+  choice: "selected"
+  when: !Cron "0 17 9 ? * FRI#3"
+}

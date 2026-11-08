@@ -54,6 +54,10 @@ These pages are references, not lessons to finish before writing a file:
 | [Python API](python.md) | Installation, operations, value representation, and errors |
 | [Browser SDK](../bindings/browser/README.md) | Setup, explicit resources, generated types, and handle lifecycle |
 
+The [cron syntax reference](syntax.md#cron-literals) specifies the selected
+Spring dialect. [Cron examples](../examples/README.md#cron-patterns) show native
+constraints, concrete patterns, default completion and Python editing.
+
 For Rust API documentation, run `cargo doc --all-features --no-deps --locked`
 from a source checkout. [Development setup](development/building.md) covers the
 toolchain. Use docs for the revision or release you've selected: source on `main`

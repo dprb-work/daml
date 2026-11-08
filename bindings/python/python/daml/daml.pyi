@@ -38,6 +38,16 @@ class DateTime:
         """Convert exactly, raising ValueError for unrepresentable values."""
         ...
 
+class Cron:
+    """Immutable Spring cron value; equality compares retained expression text."""
+
+    def __init__(self, expression: str) -> None: ...
+    @property
+    def expression(self) -> str: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+    def __eq__(self, other: object) -> bool: ...
+
 _Value = (
     None
     | bool
@@ -47,6 +57,7 @@ _Value = (
     | Date
     | Time
     | DateTime
+    | Cron
     | list["_Value"]
     | dict[str, "_Value"]
 )
@@ -75,7 +86,7 @@ class _SemanticString(TypedDict):
     tag: NotRequired[_SemanticTag]
 
 class _SemanticTemporal(TypedDict):
-    kind: Literal["date", "time", "datetime"]
+    kind: Literal["date", "time", "datetime", "cron"]
     value: str
     tag: NotRequired[_SemanticTag]
 

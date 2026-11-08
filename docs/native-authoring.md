@@ -232,7 +232,29 @@ Native defaults retain temporal kinds through completion and semantic transport.
 Plain JSON output contains canonical ISO strings and cannot retain those kinds.
 Low-level schema adapters that need temporal defaults use
 `x-daml-default-temporals`, described in [default annotations](schemas.md#annotate-temporal-defaults).
-[bounded interchange profile](schemas.md); native syntax exposes a smaller set.
+
+### Cron patterns
+
+`!Cron` constrains a Spring cron pattern rather than an ordinary string.
+Quoted text constructs a value or typed constant; the bare constructor is a
+kind constraint:
+
+```daml
+closed !Object {
+  month_end: !Cron
+  third_friday: !Cron
+} = {
+  month_end: !Cron "0 0 9 L * *"
+  third_friday: !Cron "0 0 9 * * FRI#3"
+}
+```
+
+Cron reuses temporal default annotations with `kind: "cron"` and preserves its
+kind through defaults, semantic edits and staged summaries. It does not support
+an offset facet or add scheduling metadata to the constructor. The
+[cron syntax contract](syntax.md#cron-literals) names the reference version,
+calendar rules, macros and execution boundary.
+
 
 Unqualified names are native built-ins. Loaded definitions use a bundle prefix.
 Low-level explicitly composed interchange bindings remain a separate API.

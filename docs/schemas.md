@@ -229,7 +229,7 @@ tag must satisfy the current [tag grammar](syntax.md#structure-and-names).
 JSON has no temporal primitive. A schema adapter that projects a native
 temporal default must preserve its kind with `x-daml-default-temporals`.
 Each record names a default-relative RFC 6901 `path` and a `kind` of `date`,
-`time`, or `datetime`. Use the empty path for the default root.
+`time`, `datetime`, or `cron`. Use the empty path for the default root.
 
 ```json
 {
@@ -255,15 +255,31 @@ The shared `x-daml-scalar` keyword carries intrinsic scalar constraints:
 }
 ```
 
-`kind` is `string`, `date`, `time`, or `datetime`. `offset` is `optional`,
+`kind` is `string`, `date`, `time`, `datetime`, or `cron`. `offset` is `optional`,
 `required`, or `forbidden`; it applies only to time/datetime and defaults to
-optional. An optional typed `const` uses an ISO temporal value of the declared
-kind. String Schema constraints inspect canonical ISO text but do not create a
-temporal value. Native `String` remains an ordinary string constraint.
+optional. An optional typed `const` uses admitted text of the declared temporal
+kind: ISO text for a date/clock, or a Spring expression for cron. String Schema
+constraints inspect that text but do not create an intrinsic value. Native
+`String` remains an ordinary string constraint.
 
 These keywords preserve intrinsic values in DAML's semantic boundary; plain
 `to_json` remains a lossy canonical-string projection.
-tag must satisfy the current [tag grammar](syntax.md#structure-and-names).
+
+For example, a cron field with a typed month-end default can use:
+
+```json
+{
+  "type": "string",
+  "x-daml-scalar": {"kind": "cron"},
+  "default": "0 0 9 L * *",
+  "x-daml-default-temporals": [{"path": "", "kind": "cron"}]
+}
+```
+
+This accepts an intrinsic `!Cron` value, not an ordinary expression-looking
+string. Offset metadata is invalid for Cron. The same annotation/default
+admission rules apply; no separate cron registry or callback is needed.
+
 
 `examples/schema_adapter.rs` contains a complete consumer-side conversion from a
 made-up vendor format. It maps that format's record marker and default-tag

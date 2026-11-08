@@ -1363,7 +1363,15 @@ impl Compiler<'_> {
         } else if let Some(body) = body {
             if matches!(
                 tag,
-                "String" | "Int" | "Number" | "List" | "Map" | "Date" | "Time" | "DateTime"
+                "String"
+                    | "Int"
+                    | "Number"
+                    | "List"
+                    | "Map"
+                    | "Date"
+                    | "Time"
+                    | "DateTime"
+                    | "Cron"
             ) {
                 schema.extend(self.lower_metadata(
                     tag,
@@ -3113,7 +3121,7 @@ fn builtin(name: &str) -> Option<Map<String, Json>> {
             schema.insert("type".into(), Json::String("string".into()));
             schema.insert("x-daml-scalar".into(), serde_json::json!({"kind":"string"}));
         }
-        "Date" | "Time" | "DateTime" => {
+        "Date" | "Time" | "DateTime" | "Cron" => {
             let kind = crate::TemporalKind::from_constructor(name).expect("matched intrinsic");
             schema.insert("type".into(), Json::String("string".into()));
             schema.insert(

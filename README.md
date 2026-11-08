@@ -117,6 +117,12 @@ schema constraints can require or forbid offsets. See the
 [Python temporal example](examples/python_temporal.py). This feature is
 documented on the source branch and does not imply release publication.
 
+Recurring calendar patterns use `!Cron "0 0 9 LW * *"`: 09:00 on the last
+weekday of each month. The [Spring cron dialect](docs/syntax.md#cron-literals)
+supports seconds and calendar rules without inventing another notation. See the
+[native cron bundle](examples/cron/) and [Python consumer](examples/python_cron.py).
+DAML validates the pattern; the consuming application owns scheduling.
+
 ## What can I use today?
 
 | Component | Availability |

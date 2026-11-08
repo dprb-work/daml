@@ -1,0 +1,11 @@
+[
+  !Cron " @midnight "
+  !Cron "0 17 9 L-2 * *"
+  !Cron "0 17 9 LW * *"
+  !Cron "0 17 9 14W * *"
+  !Cron "0 17 9 ? * 7L"
+  !Cron "0 17 9 ? * FRI#3"
+  !Cron "0 \t17 9 * * MON-FRI"
+  !Cron "٠ ٠ ٠ * * *"
+  "0 17 9 * * *"
+]

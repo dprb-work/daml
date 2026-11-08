@@ -35,6 +35,24 @@ for type-derived schemas, dedicated Python values, and explicit conversion
 limits. Neither example implies that temporal features have been published in a
 release.
 
+## Cron patterns
+
+The [cron bundle](cron/) separates a native `!Cron` schema from concrete
+Spring expressions. Its preset supplies weekday mornings, month-end, the last
+weekday and the third Friday; the data overrides only month-end to 17:00.
+
+```sh
+cargo run --locked --example native -- examples/cron examples/cron/data.daml
+uv run --project bindings/python --locked --python 3.12 python examples/python_cron.py
+```
+
+The native command prints expression strings as plain JSON. The Python consumer
+shows dedicated Cron values, default completion and contextual semantic editing.
+`cron/invalid.daml` deliberately uses a five-field pattern and fails source
+admission: Spring requires six fields, including seconds. Neither example
+calculates occurrences or executes jobs.
+
+
 Follow the [tutorial](../docs/tutorial.md) for definitions, commands, and expected
 results. [The example bundle](tutorial/README.md) is the canonical source of those
 files. Files under `tutorial/invalid/` are deliberately invalid against the
@@ -83,6 +101,7 @@ These examples show how a program consumes DAML, rather than only its syntax:
 | Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
 | Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
 | Python temporal values and type-derived schemas | [Runnable example](python_temporal.py) |
+| Python cron values, native defaults and semantic editing | [Runnable example](python_cron.py) |
 | Native raw Regex, verbose flags and literal/folded layout | [Runnable Regex bundle](regex/) and [syntax contract](../docs/syntax.md#native-regex-literals) |
 
 Start with [values versus requirements](../docs/data-and-schema.md) if the

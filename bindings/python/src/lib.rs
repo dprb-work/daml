@@ -608,6 +608,7 @@ fn daml(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<temporal::PyDate>()?;
     module.add_class::<temporal::PyTime>()?;
     module.add_class::<temporal::PyDateTime>()?;
+    module.add_class::<temporal::PyCron>()?;
     module.add("ParseError", module.py().get_type::<ParseError>())?;
     module.add("NativeError", module.py().get_type::<NativeError>())?;
     module.add("SchemaError", module.py().get_type::<SchemaError>())?;

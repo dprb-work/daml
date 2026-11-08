@@ -112,7 +112,7 @@ type SemanticNode =
   | { kind: 'bool'; value: boolean; tag?: Tag }
   | { kind: 'number'; value: string; tag?: Tag }
   | { kind: 'string'; value: string; tag?: Tag }
-  | { kind: 'date' | 'time' | 'datetime'; value: string; tag?: Tag }
+  | { kind: 'date' | 'time' | 'datetime' | 'cron'; value: string; tag?: Tag }
   | { kind: 'list'; items: SemanticNode[]; tag?: Tag }
   | { kind: 'map'; entries: { key: string; value: SemanticNode }[]; tag?: Tag };
 type Tag = { name: string; binding?: string };
@@ -120,12 +120,18 @@ type Tag = { name: string; binding?: string };
 
 A number's string is a typed numeric lexeme, not string data. Do not convert it to JavaScript `Number` if exact integers or decimals matter. Map entries avoid JavaScript object-key coercion; duplicate keys are rejected on admission. Unknown fields, invalid shapes, invalid numbers, cycles, and unpaired UTF-16 surrogates are rejected rather than silently coerced.
 
-Temporal semantic values carry canonical ISO text, not a JavaScript `Date`.
-Admission validates the kind and text through the same Rust temporal profile.
-Snapshots and stage summaries retain the temporal kind; plain JSON projection
-does not. The SDK does not coerce these values through JavaScript `Date`, infer
-a machine timezone, or treat date-looking strings as temporal values.
-See the [temporal syntax profile](../../docs/syntax.md#temporal-literals).
+Temporal semantic values carry ISO or resolved cron expression text, not a
+JavaScript `Date`. Admission validates the kind and text through the shared
+Rust owner. Snapshots and stage summaries retain the intrinsic kind; plain JSON
+projection does not. The SDK does not infer temporal kinds from ordinary strings
+or use a machine timezone. See the [ISO profile](../../docs/syntax.md#temporal-literals)
+and [Spring cron contract](../../docs/syntax.md#cron-literals).
+
+For example, `{ kind: 'cron', value: '0 0 9 LW * *' }` is an intrinsic
+last-weekday pattern. It can pass through parsed values, typed defaults,
+resolution snapshots, staged callbacks and write/reparse without becoming
+kind `string`. The SDK validates/transports the pattern; it does not calculate
+occurrences or execute jobs.
 
 Parsed assertions have a literal name. Completed default assertions may also carry an opaque binding ID. Keep the binding when editing: removing it discards the assertion's retained identity. The plain writer rejects bound assertions. The contextual writer retains the literal name when it means the same schema, otherwise uses a deterministic root-visible equivalent name. Private bindings without such a name fail with `UnrepresentableTag`; same-shaped or constrained schemas are not interchangeable. Writing a tag never grants access to resources.
 

@@ -344,12 +344,13 @@ pub(crate) fn decode_with_budget(
                     let text = budget.text(&fields.get("value", path)?, path)?;
                     SemanticValue::String(text)
                 }
-                "date" | "time" | "datetime" => {
+                "date" | "time" | "datetime" | "cron" => {
                     fields.allow(&["kind", "value", "tag"], path)?;
                     let temporal_kind = match kind.as_str() {
                         "date" => TemporalKind::Date,
                         "time" => TemporalKind::Time,
-                        _ => TemporalKind::DateTime,
+                        "datetime" => TemporalKind::DateTime,
+                        _ => TemporalKind::Cron,
                     };
                     let text = budget.text(&fields.get("value", path)?, path)?;
                     SemanticValue::Temporal(
