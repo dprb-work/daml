@@ -87,7 +87,10 @@ text: "ordinary"
   const staged = schemas.resolveStaged(input, stage);
   if (!sawSummary) throw new Error('cron shallow summary not exposed');
   same(field(staged.value(), 'copied'), expected, 'stage copy');
-  const semantic = schemas.resolveSemantic(result.value());
+  const semantic = schemas.resolveSemanticStaged(result.value(), {
+    defer() { return false; },
+    materialize() { return null; },
+  });
   same(field(semantic.value(), 'when'), expected, 'semantic re-admission');
   const snapshot = result.value();
   input.free();

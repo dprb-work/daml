@@ -13,7 +13,7 @@
 
 ## 3. Verification and handoff
 
-- [ ] Exercise actual native/Python/browser cron defaults, calendar patterns, invalid diagnostics and semantic/staged round trips.
-- [ ] Run frozen checks, reference compatibility proof, repository aggregate/binding/editor verification and strict OpenSpec validation.
-- [ ] Examine consolidation/simplification, reconcile documentation and complete independent review; repair retained findings and re-review.
-- [ ] Publish the verified change with exact evidence and separate human acceptance/CI/merge/release boundaries.
+- [x] Exercise actual native/Python/browser cron defaults, calendar patterns, invalid diagnostics and semantic/staged round trips.
+- [x] Run frozen checks, reference compatibility proof, repository aggregate/binding/editor verification and strict OpenSpec validation.
+- [x] Examine consolidation/simplification, reconcile documentation and complete independent review; repair retained findings and re-review.
+- [x] Publish the verified change with exact evidence and separate human acceptance/CI/merge/release boundaries.
