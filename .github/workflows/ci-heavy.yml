@@ -108,7 +108,9 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
       - name: Require the runner's existing Docker daemon for isolated release scans
-        run: docker info --format '{{.ServerVersion}}'
+        run: |
+          docker info --format 'ServerVersion={{.ServerVersion}} SecurityOptions={{json .SecurityOptions}}'
+          printf 'CallerUID=%s CallerGID=%s\n' "$(id -u)" "$(id -g)"
       - name: Download only this run's producer artifacts into separate directories
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

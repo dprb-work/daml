@@ -43,16 +43,16 @@ authorized an exact parent-scoped override from `@vscode/vsce@4.0.0` to minimatc
 11.0.1. It does not override the language client's minimatch 5 dependency.
 The inspected VSCE usage calls retained named APIs through CommonJS; removed
 APIs are unused. The build's Node 24.19.0 satisfies minimatch 11's Node 22 minimum.
-These are compatibility reasons for the bounded override, not upstream support
-or executed compatibility proof. No advisory suppression or risk acceptance
-replaces remediation.
+This static inspection alone does not establish upstream support or runtime
+compatibility. No advisory suppression or risk acceptance replaces remediation.
 
-The blocker remains open until the regenerated dependency graph, real VSIX
-packaging, installed Electron-host behavior and fresh complete Trivy results
-demonstrate remediation and compatibility on the integrated source. Neither the
-old pilot receipt nor the override by itself establishes a clean release.
+On integrated source `9433a4ebb87ddc3b85ce9befbe26eccb176f1c64`, real VSIX
+packaging, installed Electron-host behavior and the fresh complete dependency
+scan passed. All nine lock inventories were complete and dependency findings
+were zero. This resolves the reported build-tool advisory without changing the
+language client's minimatch 5 graph.
 
-## Release-side integration and remaining qualification
+## Release-side integration and hosted qualification
 
 The release owner accepted reconciliation in the shared sync document.
 PR #36 has merged. Integration is in
@@ -78,20 +78,30 @@ second publisher or scanner policy in workflow YAML. The strict inventory
 parsers and per-check failure handling defend actual supported lock/report
 contracts; no integration-specific compatibility layer or refactor was needed.
 
-Imported frozen inputs require independent ownership amendment before Main's
-assembled verification: `tests/release_candidate_check.py`,
-`tests/test_release_delivery.py`, new `tests/test_release_security.py` and the
-added security-test invocation in `.github/workflows/ci-heavy.yml`. The pilot
-reseals security asset records along with outer hashes so inner payload probes
-remain discriminating; schema 3 replaces schema 2 as an invalid-schema probe.
-No tests, builds, linters, formatters or scanners ran during this integration.
+The independent verification owner admitted the imported checks as
+`delivery-2026-11-08-r8`, preserving the existing payload probes and adding
+security-proof rejection cases. The probe reseals security asset records with
+outer hashes so inner payload validation remains discriminating; schema 3 is
+an invalid-schema probe. Main ran 18 delivery and 19 security policy cases,
+production Ruff/format, strict OpenSpec validation and the full repository gate
+including 151 Python cases successfully.
 
-The pilot's independent re-review covered rootful/rootless UID selection and
-scoped sibling imports. Its real engines used the existing rootless daemon,
-not a hosted rootful runner. Actual rootful image/UID compatibility, FreshClam
-database ownership and cleanup, resource/deadline fit and all eight real
-payloads still need hosted qualification. The diagnostic ZIP is not shipping
-qualification. Main owns that verification, independent review and acceptance.
+The pilot's real engines used rootless Docker with a diagnostic ZIP, which was
+not shipping qualification. Integrated hosted run
+[42530364686](https://github.com/dprb-work/daml/actions/runs/42530364686)
+subsequently passed all eight real shipping payloads and the complete configured
+suite. Dependencies, secrets, SAST and malware each passed with zero findings;
+the collector completed in 1m42s within its 30-minute budget. Native/wheel
+consumers on all supported platforms, CPython 3.12/3.13, installed Electron and
+packed SDK type/native-parity/Chromium checks passed.
+
+The downloaded schema-2 candidate also passed the independently owned corruption
+and staging-boundary probe with source `9433a4e`, run `42530364686` and manifest
+SHA-256 `732974da595c81eab7ec7ec840eecbd296cf1a8d2b6c8a6b6cbed4f7e7ecb39c`.
+Publication effects were not invoked. Fresh independent reviews found no
+actionable source defects. Final-head evidence, including explicit daemon
+security options and caller IDs rather than a rootful-mode inference, belongs
+in [PR #39](https://github.com/dprb-work/daml/pull/39).
 
 A fresh schema-2 candidate and manifest digest are required; the old schema-1
 preparation cannot be reused. GitHub's human environment gate and external PyPI

@@ -8,5 +8,5 @@
 - [x] Prove real scanner success/findings/errors and exact content/freshness rejection.
 - [x] Run focused release/admission checks and obtain independent final review; actual hosted full-payload qualification remains the delivery owner's gate.
 - [x] Coordinate adoption with the live release owner; import the pilot into the release integration branch without publication.
-- [ ] Independently amend ownership of imported frozen checks and runner inputs, then qualify the assembled schema-2 eight-payload candidate on the hosted runner.
-- [ ] Disposition the reported minimatch advisory with dependency compatibility and current scanner evidence; no advisory suppression or risk acceptance is implied.
+- [x] Independently amend ownership of imported frozen checks and runner inputs, then qualify the assembled schema-2 eight-payload candidate on the hosted runner.
+- [x] Disposition the reported minimatch advisory with dependency compatibility and current scanner evidence; no advisory suppression or risk acceptance is implied.
