@@ -395,6 +395,10 @@ This does not require a general satisfiability solver. Conflicting valid default
 fail only when missing configuration data needs competing fallbacks; explicit
 data or an explicit replacement default can resolve that conflict.
 
+Map-value and list-item presets also satisfy named-field and tuple-position
+constraints at each use. A supplied override does not excuse an invalid preset.
+A valid supporting union alternative remains sufficient.
+
 Union completion never chooses by alternative order. No valid completion is an
 error; one semantic result is accepted; different valid completed results are
 ambiguous. An ambiguous omitted union does not itself invalidate its definition.

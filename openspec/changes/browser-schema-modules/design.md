@@ -64,6 +64,14 @@ constraints. A selected source arm owns its structural child walk; outside
 defaults may use any supporting constraint alternative. Parent branch choices
 constrain derivation at that instance, then stop before entering a child.
 
+Explicit source queries are always retained. Constraint-only names and indices
+also matter when source `additionalProperties` or `items` can supply defaults at
+those positions. Only these homogeneous sources require same-instance query
+enrichment through the full constraints and current branch assignments.
+Use their frozen targets' transitive default reachability, not an own-default
+test. All retained queries still derive their complete constraints; this guard
+omits work that source-child reachability would already discard.
+
 Ref/`allOf` closure uses one frozen-graph memo keyed by exact original-position
 seeds. Linear set merges reuse closures without equating schema bodies or
 removing alternatives. Conservative default reachability skips source subtrees

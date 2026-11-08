@@ -2694,10 +2694,15 @@ impl Compiler<'_> {
                 }
             }
         }
-        // Branch recursion owns the structural walk of its selected source
-        // arm. Outside/common sources derive only their own direct children;
-        // unrelated union alternatives remain existential constraints.
-        for position in self.default_child_queries(&scope.sources, budget, depth)? {
+        // Preserve every direct source query. Homogeneous source defaults also
+        // need concrete names/indices introduced by the full constraint graph.
+        for position in self.default_child_queries(
+            &scope.sources,
+            &scope.constraints,
+            &scope.fixed,
+            budget,
+            depth,
+        )? {
             let Some(sources) =
                 self.derive_own_default_state(&scope.sources, &position, budget, depth)?
             else {
@@ -2737,26 +2742,39 @@ impl Compiler<'_> {
 
     fn default_child_queries(
         &self,
+        sources: &DefaultMemoState,
         state: &DefaultMemoState,
+        root_fixed: &[(usize, usize)],
         budget: &mut WalkBudget<'_>,
         depth: usize,
     ) -> Result<Vec<SchemaPosition>, NativeError> {
-        // Inputs are already globally ref/allOf-closed. AnyOf source arms are
-        // visited separately with their own root assignments.
         let mut visited = HashSet::new();
         let mut queries = HashSet::new();
-        for id in state.iter().flatten().copied() {
+        let mut enrich_properties = false;
+        let mut enrich_items = false;
+        // Sources are already ref/allOf-closed; selected source arms own their
+        // own visits. A C-only query can select an S child only via a supported
+        // homogeneous child, whose frozen reachability covers nested presets.
+        for id in sources.iter().flatten().copied() {
             budget.charge(depth)?;
             if visited.contains(&id) {
                 continue;
             }
             charge_default_monomial(1, budget, depth)?;
             visited.insert(id);
-            let position = &self.default_positions[id];
-            for child in &position.children {
+            for child in &self.default_positions[id].children {
                 budget.charge(depth)?;
                 if !child.applies || child.unsupported_defaults {
                     continue;
+                }
+                match child.position.keyword.as_str() {
+                    "additionalProperties" => {
+                        enrich_properties |= self.default_positions[child.target].reaches_default;
+                    }
+                    "items" => {
+                        enrich_items |= self.default_positions[child.target].reaches_default;
+                    }
+                    _ => {}
                 }
                 let query = match child.position.keyword.as_str() {
                     "allOf" | "anyOf" | "oneOf" => continue,
@@ -2779,6 +2797,85 @@ impl Compiler<'_> {
                         Some(budget.span),
                     )?;
                     queries.insert(query);
+                }
+            }
+        }
+        if enrich_properties || enrich_items {
+            // Enrich names only, never presets or parent branch assignments.
+            let count = state.iter().map(Vec::len).sum::<usize>();
+            budget.work = budget.work.saturating_add(count);
+            budget.charge(depth)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                count + 1,
+                count * std::mem::size_of::<usize>(),
+                budget.file,
+                Some(budget.span),
+            )?;
+            let mut pending = Vec::with_capacity(count);
+            pending.extend(state.iter().flatten().copied());
+            budget.work = budget.work.saturating_add(visited.capacity());
+            budget.charge(depth)?;
+            visited.clear();
+            while let Some(id) = pending.pop() {
+                budget.charge(depth)?;
+                if visited.contains(&id) {
+                    continue;
+                }
+                charge_default_monomial(1, budget, depth)?;
+                visited.insert(id);
+                let position = &self.default_positions[id];
+                if let Some(target) = position.referenced {
+                    charge_default_monomial(1, budget, depth)?;
+                    pending.push(target);
+                }
+                let fixed_arm =
+                    if !root_fixed.is_empty() && self.default_schema(id).get("anyOf").is_some() {
+                        budget.work = budget
+                            .work
+                            .saturating_add(root_fixed.len().ilog2() as usize + 1);
+                        budget.charge(depth)?;
+                        root_fixed
+                            .binary_search_by_key(&id, |choice| choice.0)
+                            .ok()
+                            .map(|index| root_fixed[index].1)
+                    } else {
+                        None
+                    };
+                for child in &position.children {
+                    budget.charge(depth)?;
+                    if !child.applies || child.unsupported_defaults {
+                        continue;
+                    }
+                    let query = match child.position.keyword.as_str() {
+                        "allOf" | "anyOf" => {
+                            if child.position.keyword == "anyOf"
+                                && fixed_arm.is_some_and(|arm| child.position.index != Some(arm))
+                            {
+                                continue;
+                            }
+                            charge_default_monomial(1, budget, depth)?;
+                            pending.push(child.target);
+                            continue;
+                        }
+                        "properties" if enrich_properties => {
+                            ("property", child.position.key.as_deref(), None)
+                        }
+                        "prefixItems" if enrich_items => ("item", None, child.position.index),
+                        _ => continue,
+                    };
+                    if !queries.contains(&query) {
+                        admit_copy_cost(
+                            &mut budget.copied_nodes,
+                            &mut budget.copied_bytes,
+                            1,
+                            std::mem::size_of::<SchemaPosition>(),
+                            budget.file,
+                            Some(budget.span),
+                        )?;
+                        queries.insert(query);
+                    }
                 }
             }
         }

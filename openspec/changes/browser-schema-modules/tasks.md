@@ -31,7 +31,8 @@ acceptance and SDK publication remain separate gates; no release is implied.
 - [x] Freeze checks distinguishing source-arm ownership from independent supporting parent alternatives; qualify both failures on merged source `2f5ecbb7047d1b16daa8eb328aacea233f1b3e41`.
 - [x] Preserve existential fallback choices for outside defaults without borrowing an unselected source arm's defaults.
 - [x] Keep recursive presets within existing budgets through exact frozen closure reuse and linear set merges.
-- [x] Complete final aggregate and rebuilt binding/consumer verification.
+- [x] Retain constraint-owned named/indexed queries for homogeneous defaults without importing presets from unselected source arms.
+- [x] Complete final aggregate and rebuilt binding/consumer verification on the repaired review head.
 
 The follow-up pull request owns its review and source-publication state.
 Source acceptance and SDK publication remain separate gates.

@@ -31,6 +31,9 @@ Selected source arms own their child walk; unrelated constraint alternatives
 remain available to partial-default completion. Parent branch assignments stop
 at child edges. Frozen ref/`allOf` closures and linear set merges preserve
 original operation identities under the existing work and storage budgets.
+Explicit source children always contribute queries. Homogeneous sources also use
+constraint-owned names or indices where their child schemas can reach defaults;
+constraints supply positions, not new candidate origins.
 The native-only `x-daml-native-literal` marker keeps composite value-literal
 presence constraints intact in the partial-default projection. Typed descendant
 schemas retain temporal equality without substituting JSON-string equality.

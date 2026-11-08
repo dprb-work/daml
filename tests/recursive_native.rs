@@ -507,3 +507,57 @@ fn child_derivation_cannot_borrow_an_unselected_parent_arms_defaults() {
         NativeErrorKind::InvalidDefault
     );
 }
+
+#[test]
+fn homogeneous_defaults_keep_constraint_owned_queries_through_unions() {
+    for (base, bounds, source, expected) in [
+        (
+            "!Map { values: !Int = 30 }",
+            [
+                "!Object { timeout: !Int { max: 10 } }",
+                "!Object { timeout: !Int { max: 20 } }",
+                "!Object { timeout: !Int { max: 40 } }",
+            ],
+            "!self.Root {timeout: 5}",
+            json!({"timeout": 5}),
+        ),
+        (
+            "!List { items: !Object { timeout: !Int } = { timeout: 30 } }",
+            [
+                "!Tuple [!Object { timeout: !Int { max: 10 } }]",
+                "!Tuple [!Object { timeout: !Int { max: 20 } }]",
+                "!Tuple [!Object { timeout: !Int { max: 40 } }]",
+            ],
+            "!self.Root [{timeout: 5}]",
+            json!([{"timeout": 5}]),
+        ),
+    ] {
+        let [strict, other_strict, permitted] = bounds;
+        for (definition, valid) in [
+            (format!("(!self.Base | !self.Base) & {strict}"), false),
+            (format!("!self.Base & ({strict} | {other_strict})"), false),
+            (format!("!self.Base & ({strict} | {permitted})"), true),
+        ] {
+            let bundle = bundle(&[
+                ("daml.bundle", "{}"),
+                ("Base.daml", base),
+                ("Root.daml", &definition),
+            ]);
+            let supplied = parse(source).unwrap();
+            if valid {
+                let schemas = bundle.compile(&supplied, None).unwrap();
+                assert_eq!(
+                    schemas.resolve(&supplied).unwrap().to_json(),
+                    expected,
+                    "{definition}"
+                );
+            } else {
+                let error = bundle
+                    .compile(&supplied, None)
+                    .err()
+                    .expect("a supplied override cannot excuse an invalid inherited preset");
+                assert_eq!(error.kind, NativeErrorKind::InvalidDefault, "{definition}");
+            }
+        }
+    }
+}
