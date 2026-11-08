@@ -1,13 +1,38 @@
 use crate::source::{line_end, newline_start};
 use crate::{ErrorKind, ParseError, Span, StringValue};
 
+// Quoted boundaries and multiline layout are shared; only text interpretation
+// differs. Regex backslashes are always literal, including before a newline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuotedText {
+    Decoded,
+    RawRegex,
+}
+
 /// Scans one supported quoted string beginning at `start`.
 pub(crate) fn scan(
     source: &str,
     start: usize,
     max_bytes: usize,
 ) -> Result<(StringValue, usize), ParseError> {
-    scan_inner(source, start, max_bytes).map_err(|mut error| {
+    scan_with_text(source, start, max_bytes, QuotedText::Decoded)
+}
+
+pub(crate) fn scan_regex(
+    source: &str,
+    start: usize,
+    max_bytes: usize,
+) -> Result<(StringValue, usize), ParseError> {
+    scan_with_text(source, start, max_bytes, QuotedText::RawRegex)
+}
+
+fn scan_with_text(
+    source: &str,
+    start: usize,
+    max_bytes: usize,
+    text: QuotedText,
+) -> Result<(StringValue, usize), ParseError> {
+    scan_inner(source, start, max_bytes, text).map_err(|mut error| {
         let mut start = error.span.start.min(source.len());
         while !source.is_char_boundary(start) {
             start -= 1;
@@ -25,17 +50,18 @@ fn scan_inner(
     source: &str,
     start: usize,
     max_bytes: usize,
+    text: QuotedText,
 ) -> Result<(StringValue, usize), ParseError> {
     let bytes = source.as_bytes();
     if bytes.get(start) != Some(&b'"') && bytes.get(start) != Some(&b'\'') {
         return Err(ParseError::new(ErrorKind::InvalidString, start, start));
     }
     if bytes.get(start..start.saturating_add(3)) == Some(b"\"\"\"") {
-        scan_triple(source, start, max_bytes, b'"')
+        scan_triple(source, start, max_bytes, b'"', text)
     } else if bytes.get(start..start.saturating_add(3)) == Some(b"'''") {
-        scan_triple(source, start, max_bytes, b'\'')
+        scan_triple(source, start, max_bytes, b'\'', text)
     } else if bytes[start] == b'"' {
-        scan_ordinary(source, start, max_bytes)
+        scan_ordinary(source, start, max_bytes, text)
     } else {
         Err(ParseError::new(ErrorKind::InvalidString, start, start + 1))
     }
@@ -49,17 +75,32 @@ fn scan_ordinary(
     source: &str,
     start: usize,
     max_bytes: usize,
+    text: QuotedText,
 ) -> Result<(StringValue, usize), ParseError> {
     let bytes = source.as_bytes();
     let mut i = start + 1;
     let mut decoded: Option<String> = None;
     while i < bytes.len() {
-        if over_limit(start, i + 1, max_bytes) {
+        if text == QuotedText::Decoded && over_limit(start, i + 1, max_bytes) {
             return Err(ParseError::new(ErrorKind::LimitExceeded, start, i + 1));
         }
         match bytes[i] {
             b'"' => {
                 let end = i + 1;
+                // Legacy single-line Regex limits count the payload, not quotes,
+                // and are checked at the closing quote after lexical errors.
+                if text == QuotedText::RawRegex {
+                    if over_limit(start + 1, i, max_bytes) {
+                        return Err(ParseError::new(ErrorKind::LimitExceeded, start + 1, i));
+                    }
+                    return Ok((
+                        StringValue::Source(Span {
+                            start: start + 1,
+                            end: i,
+                        }),
+                        end,
+                    ));
+                }
                 if over_limit(start, end, max_bytes) {
                     return Err(ParseError::new(ErrorKind::LimitExceeded, start, end));
                 }
@@ -75,6 +116,20 @@ fn scan_ordinary(
                     ),
                     end,
                 ));
+            }
+            b'\r' | b'\n' if text == QuotedText::RawRegex => {
+                return Err(ParseError::new(ErrorKind::InvalidString, i, i + 1));
+            }
+            _ if text == QuotedText::RawRegex => {
+                let ch = source[i..].chars().next().unwrap();
+                if ch == '\u{feff}' || ch.is_ascii_control() {
+                    return Err(ParseError::new(
+                        ErrorKind::InvalidCharacter,
+                        i,
+                        i + ch.len_utf8(),
+                    ));
+                }
+                i += ch.len_utf8();
             }
             0..=0x1f => return Err(ParseError::new(ErrorKind::InvalidString, i, i + 1)),
             b'\\' => {
@@ -210,6 +265,7 @@ fn scan_triple(
     start: usize,
     max_bytes: usize,
     quote: u8,
+    text: QuotedText,
 ) -> Result<(StringValue, usize), ParseError> {
     let bytes = source.as_bytes();
     let mut opener_end = start + 3;
@@ -240,9 +296,21 @@ fn scan_triple(
             p += 1;
         }
         let mut q = line_start;
-        while q + 2 < bytes.len() && !matches!(bytes[q], b'\r' | b'\n') {
+        // Preserve the decoded scanner's unterminated-tail error precedence.
+        // Raw Regex also validates the final bytes of an unterminated token.
+        while q < bytes.len()
+            && (text == QuotedText::RawRegex || q + 2 < bytes.len())
+            && !matches!(bytes[q], b'\r' | b'\n')
+        {
             if over_limit(start, q + 1, max_bytes) {
                 return Err(ParseError::new(ErrorKind::LimitExceeded, start, q + 1));
+            }
+            if text == QuotedText::RawRegex
+                && (bytes.get(q..q + 3) == Some(b"\xef\xbb\xbf")
+                    || (bytes[q].is_ascii_control() && bytes[q] != b'\t'))
+            {
+                let end = q + if bytes[q] == 0xef { 3 } else { 1 };
+                return Err(ParseError::new(ErrorKind::InvalidCharacter, q, end));
             }
             if bytes[q] < 0x20 && bytes[q] != b'\t' {
                 return Err(ParseError::new(ErrorKind::InvalidString, q, q + 1));
@@ -277,11 +345,7 @@ fn scan_triple(
         if close.is_some() || line_start == bytes.len() {
             break;
         }
-        let mut eol = line_start;
-        while eol < bytes.len() && !matches!(bytes[eol], b'\r' | b'\n') {
-            eol += 1;
-        }
-        let Some(next) = line_end(bytes, eol) else {
+        let Some(next) = line_end(bytes, q) else {
             break;
         };
         line_start = next;
@@ -303,9 +367,9 @@ fn scan_triple(
     };
     let raw = &source[content_start..content_end];
     let value = if quote == b'\'' {
-        wrap_lines(raw, content_start, quote)
+        wrap_lines(raw, content_start, quote, text)
     } else {
-        dedent_and_join(raw, content_start, quote)?
+        dedent_and_join(raw, content_start, quote, text)?
     };
     Ok((value, end))
 }
@@ -320,7 +384,11 @@ fn next_line(raw: &str, at: usize) -> (usize, usize) {
     (end, next)
 }
 
-fn append_triple_text(output: &mut String, text: &str, quote: u8) {
+fn append_triple_text(output: &mut String, text: &str, quote: u8, policy: QuotedText) {
+    if policy == QuotedText::RawRegex {
+        output.push_str(text);
+        return;
+    }
     let bytes = text.as_bytes();
     let delimiter = [quote; 3];
     let mut at = 0;
@@ -344,7 +412,10 @@ fn append_triple_text(output: &mut String, text: &str, quote: u8) {
     }
 }
 
-fn triple_needs_decoding(text: &str, quote: u8) -> bool {
+fn triple_needs_decoding(text: &str, quote: u8, policy: QuotedText) -> bool {
+    if policy == QuotedText::RawRegex {
+        return false;
+    }
     let bytes = text.as_bytes();
     let delimiter = [quote; 3];
     bytes.iter().enumerate().any(|(at, byte)| {
@@ -354,7 +425,7 @@ fn triple_needs_decoding(text: &str, quote: u8) -> bool {
     })
 }
 
-fn wrap_lines(raw: &str, source_at: usize, quote: u8) -> StringValue {
+fn wrap_lines(raw: &str, source_at: usize, quote: u8, text: QuotedText) -> StringValue {
     let mut first = None;
     let mut output = None;
     let mut at = 0;
@@ -372,11 +443,11 @@ fn wrap_lines(raw: &str, source_at: usize, quote: u8) -> StringValue {
             if let Some((first_begin, first_end)) = first {
                 let value = output.get_or_insert_with(|| {
                     let mut value = String::with_capacity(raw.len());
-                    append_triple_text(&mut value, &raw[first_begin..first_end], quote);
+                    append_triple_text(&mut value, &raw[first_begin..first_end], quote, text);
                     value
                 });
                 value.push(' ');
-                append_triple_text(value, &raw[begin..finish], quote);
+                append_triple_text(value, &raw[begin..finish], quote, text);
             } else {
                 first = Some((begin, finish));
             }
@@ -387,10 +458,10 @@ fn wrap_lines(raw: &str, source_at: usize, quote: u8) -> StringValue {
         return StringValue::Decoded(output);
     }
     let (begin, end) = first.unwrap_or((0, 0));
-    let text = &raw[begin..end];
-    if triple_needs_decoding(text, quote) {
-        let mut output = String::with_capacity(text.len());
-        append_triple_text(&mut output, text, quote);
+    let slice = &raw[begin..end];
+    if triple_needs_decoding(slice, quote, text) {
+        let mut output = String::with_capacity(slice.len());
+        append_triple_text(&mut output, slice, quote, text);
         StringValue::Decoded(output)
     } else {
         StringValue::Source(Span {
@@ -400,7 +471,12 @@ fn wrap_lines(raw: &str, source_at: usize, quote: u8) -> StringValue {
     }
 }
 
-fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<StringValue, ParseError> {
+fn dedent_and_join(
+    raw: &str,
+    source_at: usize,
+    quote: u8,
+    text: QuotedText,
+) -> Result<StringValue, ParseError> {
     let bytes = raw.as_bytes();
     let mut margin = usize::MAX;
     let mut at = 0;
@@ -439,8 +515,9 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<StringValue
 
     let unchanged = margin == 0
         && !raw.contains('\r')
-        && (!raw.contains('\\')
-            || (!triple_needs_decoding(raw, quote)
+        && (text == QuotedText::RawRegex
+            || !raw.contains('\\')
+            || (!triple_needs_decoding(raw, quote, text)
                 && !raw
                     .split('\n')
                     .any(|line| line.trim_end_matches([' ', '\t']).ends_with('\\'))));
@@ -469,39 +546,41 @@ fn dedent_and_join(raw: &str, source_at: usize, quote: u8) -> Result<StringValue
         }
         joined = false;
         let mut finish = end;
-        let mut slash_start = finish;
-        while slash_start > begin && bytes[slash_start - 1] == b'\\' {
-            slash_start -= 1;
+        if text == QuotedText::Decoded {
+            let mut slash_start = finish;
+            while slash_start > begin && bytes[slash_start - 1] == b'\\' {
+                slash_start -= 1;
+            }
+            let slash_count = finish - slash_start;
+            if next > end && slash_count % 2 == 1 {
+                finish -= 1;
+                joined = true;
+            } else {
+                let mut htail = end;
+                while htail > begin && matches!(bytes[htail - 1], b' ' | b'\t') {
+                    htail -= 1;
+                }
+                let mut before_tail = htail;
+                while before_tail > begin && bytes[before_tail - 1] == b'\\' {
+                    before_tail -= 1;
+                }
+                if htail != end && (htail - before_tail) % 2 == 1 {
+                    return Err(ParseError::new(
+                        ErrorKind::InvalidEscape,
+                        source_at + before_tail,
+                        source_at + next,
+                    ));
+                }
+                if next == end && slash_count % 2 == 1 {
+                    return Err(ParseError::new(
+                        ErrorKind::InvalidEscape,
+                        source_at + end - 1,
+                        source_at + end,
+                    ));
+                }
+            }
         }
-        let slash_count = finish - slash_start;
-        if next > end && slash_count % 2 == 1 {
-            finish -= 1;
-            joined = true;
-        } else {
-            let mut htail = end;
-            while htail > begin && matches!(bytes[htail - 1], b' ' | b'\t') {
-                htail -= 1;
-            }
-            let mut before_tail = htail;
-            while before_tail > begin && bytes[before_tail - 1] == b'\\' {
-                before_tail -= 1;
-            }
-            if htail != end && (htail - before_tail) % 2 == 1 {
-                return Err(ParseError::new(
-                    ErrorKind::InvalidEscape,
-                    source_at + before_tail,
-                    source_at + next,
-                ));
-            }
-            if next == end && slash_count % 2 == 1 {
-                return Err(ParseError::new(
-                    ErrorKind::InvalidEscape,
-                    source_at + end - 1,
-                    source_at + end,
-                ));
-            }
-        }
-        append_triple_text(&mut output, &raw[begin..finish], quote);
+        append_triple_text(&mut output, &raw[begin..finish], quote, text);
         if next > end && !joined {
             output.push('\n');
         }

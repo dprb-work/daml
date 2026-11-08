@@ -128,6 +128,36 @@ pub fn exercise_format(data: &[u8]) {
             formatted.source(),
             "native formatting is idempotent"
         );
+        // Native ASTs are intentionally private: exercise semantic preservation
+        // through real bundle compilation and full-string matching instead.
+        if source.len() <= SCHEMA_INPUT_LIMIT && formatted.source().len() <= SCHEMA_INPUT_LIMIT {
+            let bundle = |text: &str| {
+                daml::Bundle::from_sources(
+                    ".",
+                    [
+                        ("daml.bundle".to_owned(), "{}".to_owned()),
+                        ("Pattern.daml".to_owned(), text.to_owned()),
+                    ],
+                )
+                .unwrap()
+            };
+            let input = parse_with_limits("\"\"", PARSE_LIMITS).unwrap();
+            if let Ok(original) = bundle(source).compile(&input, Some("self.Pattern")) {
+                let rewritten = bundle(formatted.source())
+                    .compile(&input, Some("self.Pattern"))
+                    .expect("native formatting preserves compilable definitions");
+                for value in ["", "a", "abc", "ab", "12\\x", "a\nb"] {
+                    let input =
+                        parse_with_limits(serde_json::to_string(value).unwrap(), PARSE_LIMITS)
+                            .unwrap();
+                    assert_eq!(
+                        original.resolve_as(&input, "self.Pattern").is_ok(),
+                        rewritten.resolve_as(&input, "self.Pattern").is_ok(),
+                        "native formatting preserves validation"
+                    );
+                }
+            }
+        }
         if let Ok(original) = &document {
             let formatted_data = parse_with_limits(formatted.source(), limits)
                 .expect("native formatting preserves data syntax");

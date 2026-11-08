@@ -1,0 +1,7 @@
+# Folding inserts one significant space because verbose mode is not enabled.
+!String {
+  pattern: !Regex '''
+    [A-Z]{2}
+    \d{4}
+  '''
+}

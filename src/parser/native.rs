@@ -379,63 +379,31 @@ impl Parser<'_> {
     }
 
     fn regex(&mut self, start: usize) -> Result<Expression, ParseError> {
-        if self.peek() != Some('"') {
+        let payload_start = self.pos;
+        if self.peek() != Some('"') && !self.source[self.pos..].starts_with("'''") {
             return Err(self.error(ErrorKind::ExpectedValue, self.pos, self.char_end(self.pos)));
         }
-        self.pos += 1;
-        let pattern_start = self.pos;
-        loop {
-            let Some(ch) = self.peek() else {
-                return Err(self.error(ErrorKind::UnterminatedString, start, self.pos));
-            };
-            match ch {
-                '"' => {
-                    let pattern = Span {
-                        start: pattern_start,
-                        end: self.pos,
-                    };
-                    if pattern.end - pattern.start > self.limits.max_scalar_bytes {
-                        return Err(self.error(
-                            ErrorKind::LimitExceeded,
-                            pattern.start,
-                            pattern.end,
-                        ));
+        let (pattern, end) =
+            crate::strings::scan_regex(self.source, self.pos, self.limits.max_scalar_bytes)
+                .map_err(|mut error| {
+                    if error.kind == ErrorKind::UnterminatedString {
+                        error.span.start = start;
                     }
-                    self.pos += 1;
-                    return Ok(Expression {
-                        span: Span {
-                            start,
-                            end: self.pos,
-                        },
-                        kind: ExpressionKind::Regex(pattern),
-                        default: DefaultValue::Inherited,
-                        assignment: None,
-                    });
-                }
-                '\r' | '\n' => {
-                    return Err(self.error(
-                        ErrorKind::InvalidString,
-                        self.pos,
-                        self.char_end(self.pos),
-                    ));
-                }
-                '\u{feff}' if self.pos != 0 => {
-                    return Err(self.error(
-                        ErrorKind::InvalidCharacter,
-                        self.pos,
-                        self.char_end(self.pos),
-                    ));
-                }
-                _ if ch.is_ascii_control() => {
-                    return Err(self.error(
-                        ErrorKind::InvalidCharacter,
-                        self.pos,
-                        self.char_end(self.pos),
-                    ));
-                }
-                _ => self.pos += ch.len_utf8(),
-            }
-        }
+                    error
+                })?;
+        self.pos = end;
+        Ok(Expression {
+            span: Span { start, end },
+            kind: ExpressionKind::Regex {
+                pattern,
+                payload: Span {
+                    start: payload_start,
+                    end,
+                },
+            },
+            default: DefaultValue::Inherited,
+            assignment: None,
+        })
     }
 
     fn record(&mut self, depth: usize, metadata: bool) -> Result<Expression, ParseError> {
@@ -589,7 +557,7 @@ fn first_scalar_default_assignment(expression: &Expression) -> Option<Span> {
             items.iter().find_map(first_scalar_default_assignment)
         }
         ExpressionKind::Literal(_)
-        | ExpressionKind::Regex(_)
+        | ExpressionKind::Regex { .. }
         | ExpressionKind::Tagged { .. }
         | ExpressionKind::Record(_)
         | ExpressionKind::Tuple(_) => None,

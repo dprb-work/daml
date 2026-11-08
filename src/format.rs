@@ -144,13 +144,21 @@ impl<'a> Printer<'a> {
                 items.iter().map(|item| (item.span, self.node(item))),
                 self.arena.line_(),
             ),
-            Value::String(_) => {
-                let raw = &self.source[start..node.span.end];
-                if raw.starts_with("\"\"\"") || raw.starts_with("'''") {
-                    self.block_string(raw)
-                } else {
-                    self.arena.text(raw)
-                }
+            Value::String(_) => self.quoted(Span {
+                start,
+                end: node.span.end,
+            }),
+            Value::Temporal(_) => {
+                let quote = start
+                    + self.source[start..node.span.end]
+                        .find(['"', '\''])
+                        .expect("an admitted temporal literal has a quoted payload");
+                self.arena
+                    .text(&self.source[start..quote])
+                    .append(self.quoted(Span {
+                        start: quote,
+                        end: node.span.end,
+                    }))
             }
             _ => self.arena.text(&self.source[start..node.span.end]),
         };
@@ -254,6 +262,15 @@ impl<'a> Printer<'a> {
         .expect("a parsed document contains valid trivia");
         assert_eq!(scanned, end, "formatting gaps contain only parsed trivia");
         (printed, has_comments)
+    }
+
+    pub(crate) fn quoted(&self, span: Span) -> Printed<'a> {
+        let raw = &self.source[span.start..span.end];
+        if raw.starts_with("\"\"\"") || raw.starts_with("'''") {
+            self.block_string(raw)
+        } else {
+            self.arena.text(raw)
+        }
     }
 
     fn block_string(&self, raw: &'a str) -> Printed<'a> {
