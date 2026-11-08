@@ -197,6 +197,7 @@ jobs:
     with:
       checks: ${{ needs.plan.outputs.checks }}
       ref: ${{ needs.plan.outputs.checkout_sha }}
+      prepare_release: ${{ github.event_name == 'workflow_dispatch' }}
 
   required:
     name: ${{ needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required' }}

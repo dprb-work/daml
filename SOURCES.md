@@ -146,6 +146,9 @@ The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
 dependencies, not a copied or modified protocol implementation. Packaging
 generates `THIRD-PARTY-NOTICES.txt` from license/notice files belonging to packages
 identified by the esbuild bundle metadata and stages the canonical DAML license.
+The version-derived VSIX producer also carries this inventory and `BUILD.json`
+source provenance. Its checksum accompanies the original VSIX; release collection
+does not unpack and rebuild it.
 The build also copies that exact language-client package's
 `lib/node/terminateProcess.sh` beside the bundle with executable permission,
 retaining its Microsoft copyright/MIT notice and the standard client's Unix
@@ -182,6 +185,27 @@ SDK tarballs carry the canonical MIT license and this inventory.
 the build source/output provenance. The [SDK guide](bindings/browser/README.md)
 owns exact values, resource admission, lifecycle, build, and package contracts.
 Registry publication and promotion to a versioned release are separate actions.
+
+## Delivery tooling
+
+Release preparation reuses the qualified native, wheel, browser and editor
+producers. Its stdlib-only collector admits the original payloads, their legal
+files and source provenance, then records hashes in `RELEASE.json`. See the
+[release operator guide](docs/development/releases.md) for approval and publication.
+
+The browser qualification workflow uses the official `wasm-bindgen` 0.2.129
+Linux CLI archive, pinned by SHA-256
+`82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e`.
+This is build tooling, not an additional SDK runtime dependency.
+
+The separately approved Python upload uses
+[`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish)
+v1.14.3, pinned to commit
+`7245906fb61fa33a13554f9d5fb856fe61758086`
+([BSD-3-Clause](https://github.com/pypa/gh-action-pypi-publish/blob/v1.14.3/LICENSE.md)).
+It runs only in GitHub Actions with PyPI Trusted Publishing; it is neither
+vendored DAML code nor part of any distributed runtime. Configuring this workflow
+does not activate a PyPI publisher or authorize an upload.
 
 ## Spring cron reference
 

@@ -11,13 +11,56 @@ on:
         description: Admitted immutable checkout SHA
         required: true
         type: string
+      prepare_release:
+        description: Collect a complete read-only release candidate after qualification
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
+  versions:
+    name: Shipping version policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Require immutable source and full preparation selection
+        env:
+          SOURCE_SHA: ${{ inputs.ref }}
+          EVENT_SHA: ${{ github.sha }}
+          PREPARE_RELEASE: ${{ inputs.prepare_release }}
+          CHECKS: ${{ inputs.checks }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          source = os.environ["SOURCE_SHA"]
+          if not re.fullmatch(r"[0-9a-f]{40}", source):
+              raise SystemExit("qualification requires an immutable full source SHA")
+          if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != source:
+              raise SystemExit("qualification checkout does not match admitted source")
+          if os.environ["PREPARE_RELEASE"] == "true":
+              checks = json.loads(os.environ["CHECKS"])
+              required = {"core", "dependencies", "fuzz", "binaries", "editors"}
+              if (not isinstance(checks, list) or not all(isinstance(item, str) for item in checks)
+                  or len(checks) != len(set(checks)) or not required <= set(checks)
+                  or set(checks) - (required | {"docs"})):
+                  raise SystemExit("release preparation requires all five qualification identities")
+              if source != os.environ["EVENT_SHA"]:
+                  raise SystemExit("release preparation must qualify this run's source SHA")
+          PY
+      - name: Check all five shipping versions before heavy work
+        run: python3 scripts/release_common.py check-version
+      - name: Exercise frozen release admission regressions
+        run: python3 -B -m unittest discover -s tests -p test_release_delivery.py
+
   core:
     name: Check
+    needs: versions
     if: >-
       contains(fromJSON(inputs.checks), 'core') ||
       contains(fromJSON(inputs.checks), 'dependencies') ||
@@ -29,6 +72,7 @@ jobs:
 
   editors:
     name: Editor integrations
+    needs: versions
     if: contains(fromJSON(inputs.checks), 'editors')
     uses: ./.github/workflows/editors-heavy.yml
     with:
@@ -36,7 +80,59 @@ jobs:
 
   binaries:
     name: Binaries
+    needs: versions
     if: contains(fromJSON(inputs.checks), 'binaries')
     uses: ./.github/workflows/binaries-heavy.yml
     with:
       ref: ${{ inputs.ref }}
+
+  browser:
+    name: Browser SDK qualification
+    needs: versions
+    if: inputs.prepare_release
+    uses: ./.github/workflows/browser-heavy.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  collect:
+    name: Collect qualified release candidate
+    needs: [versions, core, editors, binaries, browser]
+    if: inputs.prepare_release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Download only this run's producer artifacts into separate directories
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: ${{ runner.temp }}/daml-producer-artifacts
+      - name: Admit unchanged payloads and write the approval packet
+        id: candidate
+        env:
+          SOURCE_SHA: ${{ inputs.ref }}
+          PREPARE_RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          ARTIFACTS: ${{ runner.temp }}/daml-producer-artifacts
+        run: |
+          python3 scripts/release_prepare.py --artifacts "$ARTIFACTS" --out dist/release \
+            --source-sha "$SOURCE_SHA" --prepare-run-id "$PREPARE_RUN_ID" --run-attempt "$RUN_ATTEMPT"
+      - name: Exercise frozen corruption probes against the real eight-asset candidate
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+          SOURCE_SHA: ${{ inputs.ref }}
+          PREPARE_RUN_ID: ${{ github.run_id }}
+          MANIFEST_SHA256: ${{ steps.candidate.outputs.manifest_sha256 }}
+        run: |
+          python3 -B tests/release_candidate_check.py dist/release --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --prepare-run-id "$PREPARE_RUN_ID" --manifest-sha256 "$MANIFEST_SHA256"
+      - name: Retain immutable candidate for explicit later approval
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: daml-release-candidate
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
