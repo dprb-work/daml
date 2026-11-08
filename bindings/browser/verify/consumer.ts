@@ -1,5 +1,6 @@
 import init, {
   Bundle,
+  Schemas,
   formatDefinition,
   parse,
   write,
@@ -62,4 +63,16 @@ export async function consumePublicSdkTypes(
   document.free();
   return [originalSource, resolvedSource, formattedDocument, formattedDefinition,
     canonical, plainParsed, plainInteger].join('\n');
+}
+
+export function consumeGeneratedSchemaTypes(
+  moduleSources: readonly string[],
+  value: SemanticNode,
+): void {
+  const schemas = Schemas.fromJsonModules(moduleSources);
+  try {
+    schemas.validateSemantic(value, 'app.GeneratedJob');
+  } finally {
+    schemas.free();
+  }
 }

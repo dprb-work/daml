@@ -1,4 +1,6 @@
-use daml::{ErrorOrigin, NativeError, Origin, ParseError, ResolveError, SemanticError, Span};
+use daml::{
+    ErrorOrigin, NativeError, Origin, ParseError, ResolveError, SchemaError, SemanticError, Span,
+};
 use js_sys::{Object, Reflect};
 use wasm_bindgen::prelude::*;
 
@@ -109,6 +111,22 @@ pub(crate) fn native(value: NativeError) -> JsValue {
         }
         if let Some(value) = value.span {
             attach_span(&out, value, None)?;
+        }
+        Ok::<_, JsValue>(())
+    })();
+    attached.err().unwrap_or(out)
+}
+
+pub(crate) fn schema(value: SchemaError) -> JsValue {
+    let out = error(
+        "schema",
+        &format!("{:?}", value.kind),
+        &value.to_string(),
+        None,
+    );
+    let attached = (|| {
+        if let Some(location) = &value.location {
+            set(&out, "schema", &origin(Origin::Default(location))?)?;
         }
         Ok::<_, JsValue>(())
     })();

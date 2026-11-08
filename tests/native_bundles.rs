@@ -590,7 +590,7 @@ fn explicit_numeric_constraints_and_optional_containers_stay_stable() {
 }
 
 #[test]
-fn bundle_import_cycles_are_allowed_but_definition_cycles_are_not() {
+fn bundle_import_cycles_and_recursive_definitions_preserve_scope_and_bounds() {
     let tree = Tree::new();
     tree.put("daml.bundle", "{ left: \"./a\"\nagain: \"./a\" }");
     tree.put("a/daml.bundle", "{ dep: \"../b\" }");
@@ -605,8 +605,9 @@ fn bundle_import_cycles_are_allowed_but_definition_cycles_are_not() {
         json!({"first": {"value": 9}, "second": {"value": 9}})
     );
     tree.put("b/Item.daml", "!dep.Root");
-    let error = bundle.compile(&input, None).err().unwrap();
-    assert_eq!(error.kind, daml::NativeErrorKind::ReferenceCycle);
+    let schemas = bundle.compile(&input, None).unwrap();
+    let error = schemas.resolve(&input).unwrap_err();
+    assert_eq!(error.kind, daml::ResolveErrorKind::LimitExceeded);
 }
 
 #[test]

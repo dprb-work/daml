@@ -507,3 +507,53 @@ fn temporal_copy_and_exact_stage_replacement_preserve_representation() {
     };
     assert_eq!(exact_time.as_str(), "09:30:00.500");
 }
+
+#[test]
+fn compound_literal_constraints_preserve_temporal_equality_and_atomic_defaults() {
+    let bundle = daml::Bundle::from_sources(
+        ".",
+        [
+            ("daml.bundle", "{}"),
+            ("Clock.daml", "[!Time \"09:30:00.1\"]"),
+        ]
+        .into_iter()
+        .map(|(path, source)| (path.into(), source.into())),
+    )
+    .unwrap();
+    let supplied = parse("!self.Clock [!Time \"09:30:00.10\"]").unwrap();
+    let schemas = bundle.compile(&supplied, None).unwrap();
+    let resolved = schemas.resolve(&supplied).unwrap();
+    let daml::ResolvedValue::Sequence(items) = resolved.root().value() else {
+        panic!("compound literal lost its sequence");
+    };
+    let daml::ResolvedValue::Temporal(value) = items[0].value() else {
+        panic!("compound literal lost its temporal kind");
+    };
+    assert_eq!(value.as_str(), "09:30:00.10");
+    assert_eq!(
+        schemas
+            .resolve(&parse("!self.Clock [\"09:30:00.1\"]").unwrap())
+            .unwrap_err()
+            .kind,
+        daml::ResolveErrorKind::SchemaViolation
+    );
+
+    let bundle = daml::Bundle::from_sources(
+        ".",
+        [
+            ("daml.bundle", "{}"),
+            (
+                "Clock.daml",
+                "[{moment: !Time \"09:30:00.1\"\ncount: 1}] = [{moment: !Time \"09:30:00.10\"}]",
+            ),
+        ]
+        .into_iter()
+        .map(|(path, source)| (path.into(), source.into())),
+    )
+    .unwrap();
+    let supplied = parse("!self.Clock []").unwrap();
+    assert_eq!(
+        bundle.compile(&supplied, None).err().unwrap().kind,
+        daml::NativeErrorKind::InvalidDefault
+    );
+}
