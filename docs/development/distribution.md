@@ -135,6 +135,10 @@ from the shared license policy. Maturin owns wheel contents and `RECORD`; there
 is no manual wheel-repacking step. Staging is removed on success and failure;
 ordinary editable/source installs do not require it.
 
+Generated `__pycache__`, `.pyc` and `.pyo` files are excluded from wheel inputs.
+CI populates source bytecode caches before packaging, so the installed-artifact
+check covers a checkout that has already run Python tools.
+
 `BUILD.json` records the Python distribution/version, Git commit and dirty
 state, native target, compiler, backend, profile, compatibility audit and notice
 generator. Local dirty builds are qualification artifacts; release promotion

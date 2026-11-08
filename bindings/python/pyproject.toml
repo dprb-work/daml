@@ -52,6 +52,8 @@ locked = true
 # Explicit inclusion bypasses gitignore for the producer's temporary legal payload.
 # No matches is valid for ordinary source/editable installs.
 include = [{ path = "python/daml/_distribution/*", format = "wheel" }]
+# Source imports may warm these caches before a wheel build.
+exclude = ["**/__pycache__/**", "**/*.pyc", "**/*.pyo"]
 
 [tool.ruff]
 target-version = "py312"
