@@ -156,11 +156,14 @@ def digest_file(path: Path) -> str:
 
 
 def safe_member(member: zipfile.ZipInfo) -> str:
-    name = member.filename
+    # ZipInfo can truncate NULs or normalize separators in filename.
+    # Admit only original names that survive that transformation unchanged.
+    name = member.orig_filename
     path = PurePosixPath(name)
     canonical = str(path) + ("/" if member.is_dir() else "")
     require(
-        name == canonical
+        name == member.filename
+        and name == canonical
         and not path.is_absolute()
         and ".." not in path.parts
         and "\\" not in name

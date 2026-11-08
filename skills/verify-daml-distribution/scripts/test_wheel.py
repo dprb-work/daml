@@ -20,6 +20,7 @@ class WheelAdmissionTests(unittest.TestCase):
             "daml//file",
             "daml/./file",
             "daml\\file",
+            "daml/file\x00suffix",
             "C:/file",
         ):
             with self.subTest(name=name), self.assertRaises(ValueError):
