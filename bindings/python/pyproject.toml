@@ -3,11 +3,33 @@ requires = ["maturin==1.15.0"]
 build-backend = "maturin"
 
 [project]
-name = "daml"
+name = "daml-config"
 dynamic = ["version"]
-description = "Native Python bindings for DAML"
+description = "Typed configuration schemas, defaults, and validation for DAML"
 requires-python = ">=3.12"
 license = "MIT"
+readme = { text = """DAML (Definitively Asserted Markup Language) is an experimental configuration language.
+Derive schemas from standard dataclasses or Pydantic models, resolve DAML documents,
+and inspect validated dictionaries with completed defaults. Install the `types` extra
+for Pydantic support. The distribution is `daml-config`; the Python import is `daml`.
+
+See https://github.com/dprb-work/daml/blob/main/docs/python-quickstart.md for the
+quickstart and https://github.com/dprb-work/daml/blob/main/docs/python.md for API
+support and limitations. Resolved values are not constructed model instances.
+""", content-type = "text/markdown" }
+keywords = ["configuration", "validation", "dataclasses", "pydantic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Repository = "https://github.com/dprb-work/daml"
+Documentation = "https://github.com/dprb-work/daml/blob/main/docs/python.md"
+Issues = "https://github.com/dprb-work/daml/issues"
 
 [project.optional-dependencies]
 types = ["pydantic>=2.14.2,<3"]
@@ -27,6 +49,9 @@ python-source = "python"
 manifest-path = "Cargo.toml"
 editable-profile = "dev"
 locked = true
+# Explicit inclusion bypasses gitignore for the producer's temporary legal payload.
+# No matches is valid for ordinary source/editable installs.
+include = [{ path = "python/daml/_distribution/*", format = "wheel" }]
 
 [tool.ruff]
 target-version = "py312"

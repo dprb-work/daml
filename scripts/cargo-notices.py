@@ -40,6 +40,24 @@ def main() -> int:
             raise ValueError(
                 "deny.toml [licenses].allow must be a list of license identifiers"
             )
+        crate_config = []
+        for exception in policy["licenses"].get("exceptions", []):
+            if set(exception) != {"name", "allow"}:
+                raise ValueError(
+                    "notice generation supports only name/allow license exceptions"
+                )
+            name, accepted = exception["name"], exception["allow"]
+            if (
+                not isinstance(name, str)
+                or not isinstance(accepted, list)
+                or not all(isinstance(item, str) for item in accepted)
+            ):
+                raise ValueError(
+                    "license exceptions need a crate name and license list"
+                )
+            crate_config.extend(
+                ("", "[" + json.dumps(name) + "]", "accepted = " + json.dumps(accepted))
+            )
         with tempfile.TemporaryDirectory(prefix="daml-notices-") as temporary:
             config = Path(temporary) / "about.toml"
             config.write_text(
@@ -52,6 +70,8 @@ def main() -> int:
                         "ignore-transitive-dependencies = false",
                         "private = { ignore = true }",
                         "",
+                        # Crate tables must follow global cargo-about settings.
+                        *crate_config,
                     )
                 ),
                 encoding="utf-8",

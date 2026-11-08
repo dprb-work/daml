@@ -63,4 +63,9 @@ cargo build --locked --release --features lsp --bin daml-lsp --bin daml-fmt
 
 The executables are under `target/release/` (with `.exe` suffixes on Windows). This source-build route does not produce the versioned release archive. For archive packaging and verification procedures, see the [distribution development guide](development/distribution.md).
 
-The optional [Python API](python.md) is built separately from source; no Python wheel or PyPI release is provided. The [browser SDK](../bindings/browser/README.md) is distributed as a GitHub release asset, not through npm.
+The optional [Python API](python.md) is separate from these native archives.
+Install it from a [verified candidate wheel](python.md#install-a-candidate-wheel)
+or build it from source; `daml-config` is not published to PyPI and has no
+permanent wheel release assets yet. The
+[browser SDK](../bindings/browser/README.md) is distributed as a GitHub release
+asset, not through npm.

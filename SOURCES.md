@@ -109,15 +109,23 @@ the global license list.
 [maturin 1.15.0](https://www.maturin.rs/) (MIT OR Apache-2.0) owns wheel/source
 packaging and Rust path-dependency inclusion. It is pinned as the build backend
 and a development tool, not a runtime dependency. `bindings/python/uv.lock`
-owns the remaining Python tools, including Ruff and Pytest. Python project and
-Cargo metadata declare MIT. Cargo rejects a Python-workspace `license-file` path
-to the root license outside that workspace; Python wheel/sdist license-text and
-third-party-notice inclusion remain unverified and are not part of the release
-route. Do not add a duplicate project license.
+owns the remaining Python tools, including Ruff and Pytest. The Python
+distribution is `daml-config`; its import package remains `daml`. Python project
+and Cargo metadata declare MIT.
 
-These package manifests keep crates unpublished. Python wheel and sdist assets
-are not part of the current release route; if added later, they also need generated
-third-party notices in addition to the project license.
+`scripts/package-python.py` prepares candidate wheels and stages the canonical
+root `LICENSE`, this inventory, generated Cargo dependency notices and build
+provenance under `daml/_distribution/`. The generated staging is ignored and
+removed after packaging; it is not another maintained license copy.
+`scripts/cargo-notices.py` uses the Python manifest and actual target with the
+same `deny.toml` policy as other distributions. Maturin remains the wheel and
+`RECORD` owner. Ordinary source installations do not require generated staging.
+
+The distribution verifier checks those payloads and exercises an installed
+wheel outside the checkout. Wheels and checksums are retained as CI candidates;
+no Python wheel/sdist release asset or PyPI upload is implied. Cargo crates
+remain unpublished. See [wheel preparation](docs/development/distribution.md#python-wheel-candidates)
+and [candidate installation](docs/python.md#install-a-candidate-wheel).
 
 The optional Python `types` extra uses the public Pydantic API and its CoreSchema
 description to derive bounded validation contracts. The current Python lockfile

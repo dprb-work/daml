@@ -58,7 +58,7 @@ can share. The DAML document is **data**: one concrete set of values. Think
 [Data and schema](docs/data-and-schema.md) explains the distinction without
 assuming a programming-language background.
 
-[Follow the Python quickstart](docs/python-quickstart.md) to build the bindings,
+[Follow the Python quickstart](docs/python-quickstart.md) to install the bindings,
 read a configuration file, change a value, and see a validation error.
 Standard dataclasses work too. The result is a dictionary of resolved values,
 not a constructed model instance; schema derivation supports a
@@ -145,7 +145,7 @@ DAML validates the pattern; the consuming application owns scheduling.
 | Rust library | Source; parsing, definitions, completion, validation, formatting |
 | Formatter and language server | [Native releases](docs/distribution.md); syntax diagnostics and formatting |
 | VS Code extension | Build and install a VSIX; not published to a marketplace |
-| Python bindings | Build from source; not published to PyPI |
+| Python bindings | Source or [candidate wheel](docs/python.md#install-a-candidate-wheel); `daml-config` is not published to PyPI |
 | Browser/WASM SDK | Separate GitHub release archive; not published to npm |
 | YAML/JSON converters | Not implemented; see [interoperability limits](docs/conversion.md) |
 

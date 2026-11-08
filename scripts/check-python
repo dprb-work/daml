@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 project=bindings/python
 # uv's default editable cache does not track the Rust core's source files.
 # Re-enter maturin; Cargo owns incremental rebuild decisions for both crates.
-uv sync --project "$project" --locked --python 3.12 --group dev --reinstall-package daml
+uv sync --project "$project" --locked --python 3.12 --group dev --reinstall-package daml-config
 python="$(uv run --project "$project" --locked --python 3.12 python -c 'import sys; print(sys.executable)')"
 
 cargo fmt --manifest-path "$project/Cargo.toml" --check

@@ -4,34 +4,40 @@ Your configuration types describe what your program needs. A DAML file supplies
 one concrete set of values. In this tutorial, you derive a schema from a Python
 model, read a configuration file, and see both default completion and validation.
 
-This path uses the current source checkout, not the older `0.1.0` release
-archives. Python bindings are not published to PyPI and no release wheels are
-provided yet. You need Git, [Rust through rustup](https://rustup.rs/), and
-[uv](https://docs.astral.sh/uv/getting-started/installation/). uv provisions the
-Python 3.12 environment; the checkout pins the Rust toolchain.
+The Python distribution is named `daml-config`; your code imports `daml`.
+It is not published to PyPI yet. Use a verified candidate wheel if you have one,
+or build from the current source checkout. The native `0.1.0` archives do not
+contain these Python bindings.
 
-## 1. Build the Python bindings
+## 1. Install the Python bindings
 
-Clone DAML and enter the checkout. If you already have a current checkout, use
-its repository root instead:
+### Candidate wheel: no Rust build
+
+Follow [Install a candidate wheel](python.md#install-a-candidate-wheel) to obtain
+the wheel and its checksum, create an environment, and install the `types` extra.
+Keep that environment active and use a working directory of your choice for the
+files below. You don't need a source checkout.
+
+### Source build
+
+Install Git, [Rust through rustup](https://rustup.rs/), and
+[uv](https://docs.astral.sh/uv/getting-started/installation/). Clone DAML and enter
+the checkout, or use the root of an existing current checkout:
 
 ```sh
 git clone https://github.com/dprb-work/daml.git
 cd daml
+uv sync --project bindings/python --locked --python 3.12 --extra types --reinstall-package daml-config
 ```
 
-Install the bindings and their optional Python type support:
-
-```sh
-uv sync --project bindings/python --locked --python 3.12 --extra types --reinstall-package daml
-```
-
-This builds the Rust extension. It is not an installation of the unrelated
-Digital Asset Daml language.
+uv provisions the Python 3.12 environment; the checkout pins Rust. Activate the
+environment with `. bindings/python/.venv/bin/activate` on Linux/macOS, or
+`.\bindings\python\.venv\Scripts\Activate.ps1` in PowerShell.
+The remaining commands use the active environment's `python`.
 
 ## 2. Describe a worker in code
 
-Save this as `read_worker.py` in the repository root:
+Save this as `read_worker.py` in your working directory:
 
 ```python
 from pathlib import Path
@@ -76,10 +82,10 @@ Save this as `worker.daml` beside the script:
 The `!app.Worker` assertion selects the named contract. The file supplies a
 worker's name and leaves the retry count to its declared default.
 
-Run the consumer from the repository root:
+Run the consumer beside `worker.daml`:
 
 ```sh
-uv run --project bindings/python --locked --python 3.12 --extra types python read_worker.py
+python read_worker.py
 ```
 
 It prints:
@@ -161,10 +167,11 @@ describes the supported subset.
 
 ## Where to go next
 
-- Run the checked-in [Pydantic and dataclass example](../examples/python_types.py):
+- If you used a source checkout, run the checked-in
+  [Pydantic and dataclass example](../examples/python_types.py) from its root:
 
   ```sh
-  uv run --project bindings/python --locked --python 3.12 --extra types python examples/python_types.py
+  python examples/python_types.py
   ```
 
 - Follow the [native configuration tutorial](tutorial.md) to write schemas in

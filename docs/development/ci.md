@@ -69,7 +69,7 @@ archives package it; it selects binary build and installed archive proof.
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
 | `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Source changes and retained fixture/fuzz inputs select this boundary. |
 | `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron extension-host verification. Integration, protocol, shared parser, and native formatter inputs select this boundary. |
-| `binaries` | Native archive builds and installed archive contracts on Linux, macOS, and Windows. Native source, package metadata, toolchain, and archive inputs select this boundary. |
+| `binaries` | Native archive builds/installed contracts and stable-ABI Python wheel builds/isolated installs on Linux x64, macOS ARM64 and Windows x64. The same wheel is exercised on CPython 3.12 and 3.13. Native source, package metadata, toolchain, and distribution inputs select this boundary. |
 
 The planner selects `core`, `fuzz`, `binaries`, and `editors` for `src/**`.
 The LSP consumes shared parser and native formatter behavior, so source-level
@@ -81,11 +81,13 @@ lockfiles, the Rust toolchain, and dependency policy select the affected
 dependencies, fuzz, binary, and editor boundaries as well as `core`. Selection is
 based on the repository's input map, not file extensions.
 
-The binary and VSIX Actions artifacts retain their existing 14-day period. The
-binary workflow preserves the three supported native runners and archive
-verification. Editor verification runs in an Ubuntu Electron integration test.
-The Linux CI archive is built on Ubuntu 22.04. A Linux run does not prove macOS
-or Windows execution.
+Native archive, Python wheel and VSIX Actions artifacts retain the existing
+14-day period. The binary workflow preserves the three supported native
+runners and archive verification, then builds a separate `daml-config` wheel
+and exercises installed base and `types`-extra consumers. It publishes no
+registry package or release asset. Editor verification runs in an Ubuntu
+Electron integration test. Linux uses Ubuntu 22.04; a local Linux run does not
+prove macOS or Windows execution.
 
 The automatic aggregate is `Check / Required`. Keep any existing required checks
 in repository rulesets and require this aggregate there; workflow YAML cannot
