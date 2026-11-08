@@ -13,7 +13,7 @@
 
 ## 3. Verification and handoff
 
-- [ ] Exercise actual native/Python/browser/LSP/formatter/grammar behavior and the protected raw/decoded boundary scenarios.
-- [ ] Run focused/aggregate/resource/fuzz verification and strict OpenSpec validation; record exact candidate evidence.
-- [ ] Examine the surviving canonical owner for redundant work and complete independent review; repair retained findings and re-review.
-- [ ] Publish the verified separate change with explicit human acceptance and merge/release boundaries.
+- [x] Exercise actual native/Python/browser/LSP/formatter/grammar behavior and the protected raw/decoded boundary scenarios.
+- [x] Run focused/aggregate/resource/fuzz verification and strict OpenSpec validation; record exact candidate evidence.
+- [x] Examine the surviving canonical owner for redundant work and complete independent review; repair retained findings and re-review.
+- [x] Publish the verified separate change with explicit human acceptance and merge/release boundaries.
