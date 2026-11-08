@@ -440,3 +440,70 @@ fn partial_default_validation_checks_completed_container_upper_bounds() {
         NativeErrorKind::InvalidDefault
     );
 }
+
+#[test]
+fn child_defaults_keep_independent_parent_unions_existential() {
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        (
+            "U.daml",
+            "!Object { child: !Object { value: !Int } = { value: 1 } } | !Object { child: !Object { value: !String } }",
+        ),
+        (
+            "V.daml",
+            "!Object { child: !Object { value: !Int } } | !Object { child: !Object { value: !String } }",
+        ),
+        ("Root.daml", "!self.U & !self.V"),
+    ]);
+    let supplied = parse("!self.Root {}").unwrap();
+    let schemas = bundle.compile(&supplied, None).unwrap();
+    assert_eq!(
+        schemas.resolve(&supplied).unwrap().to_json(),
+        json!({"child": {"value": 1}})
+    );
+}
+
+#[test]
+fn inherited_child_defaults_may_use_a_supporting_parent_union_arm() {
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        (
+            "Base.daml",
+            "!Object { child: !Object { value: !Int } = { value: 1 } }",
+        ),
+        (
+            "Root.daml",
+            "!self.Base & (!Object { child: !Object { value: !Int { min: 5 } } } | !Object { child: !Object { value: !Int } })",
+        ),
+    ]);
+    let supplied = parse("!self.Root {}").unwrap();
+    let schemas = bundle.compile(&supplied, None).unwrap();
+    assert_eq!(
+        schemas.resolve(&supplied).unwrap().to_json(),
+        json!({"child": {"value": 1}})
+    );
+}
+
+#[test]
+fn child_derivation_cannot_borrow_an_unselected_parent_arms_defaults() {
+    let choice = "(!Object {} = { x: 1 }) | (!Object {} = { y: 2 })";
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        ("Choice.daml", choice),
+        ("Other.daml", choice),
+        ("Item.daml", "!Tuple [!self.Choice] = [{}]"),
+        (
+            "Parent.daml",
+            "!Object { field: !self.Item } | !Object { field: !Tuple [!self.Other] }",
+        ),
+        (
+            "Root.daml",
+            "!self.Parent & !Object { field: [{ x: 1\ny: 2 }] }",
+        ),
+    ]);
+    let supplied = parse("!self.Root {field:[{x:1\ny:2}]}").unwrap();
+    assert_eq!(
+        bundle.compile(&supplied, None).err().unwrap().kind,
+        NativeErrorKind::InvalidDefault
+    );
+}

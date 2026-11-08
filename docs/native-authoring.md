@@ -66,6 +66,12 @@ Defaults and inherited overrides keep their existing rules at each recursive
 member. Missing required containers that would need unending construction fail
 with `LimitExceeded`; resolution does not manufacture a terminating value.
 
+Conditional defaults in recursive narrowing remain local to their child values.
+An optional recursive member can remain absent. When its constraints allow an
+empty object, supplying one does not require unending schema expansion either.
+Default admission still checks completed partial presets against their effective
+constraints, including upper bounds and the selected source alternative.
+
 Tooling discovers the nearest ancestor manifest starting at a document's
 directory, unless a caller explicitly selects a context. Cwd, Git roots, and
 editor workspace roots are not discovery rules. Untitled/stdin documents need

@@ -57,6 +57,19 @@ normalized payload and actual compilation work before the engine call. Dispatch
 must not copy the instance or allocate its key per validation, and internal
 dispatch/schema identifiers must not replace public instance or schema locations.
 
+## Native default sources and constraints
+
+Default discovery tracks original source operations separately from effective
+constraints. A selected source arm owns its structural child walk; outside
+defaults may use any supporting constraint alternative. Parent branch choices
+constrain derivation at that instance, then stop before entering a child.
+
+Ref/`allOf` closure uses one frozen-graph memo keyed by exact original-position
+seeds. Linear set merges reuse closures without equating schema bodies or
+removing alternatives. Conservative default reachability skips source subtrees
+that contain no default-admission work. Traversal, retained storage and copies
+remain under the existing compiler budgets.
+
 ## Application ownership
 
 Consumers choose named roots and the complete reachable resource graph. They retain constructor identity, aliases, callable signatures, runtime references, overlays and application-specific numeric distinctions. The library neither imports application symbols nor interprets their discriminator fields.

@@ -20,8 +20,18 @@
 - [x] Repair F1: preserve authored resource and keyword pointers for malformed-schema admission errors, including escaped names and nested resource IDs.
 - [x] Publish the verified, independently reviewed repairs to PR #26 before source acceptance or SDK publication.
 
-The repaired production source is `8074e67701da7eaab608911e7c4cfbe605e9bec4`.
+The original PR #26 repair was verified at `8074e67701da7eaab608911e7c4cfbe605e9bec4`.
 Its local aggregate, rebuilt Python/WASM consumers, real Chromium parity and
 extracted SDK qualification pass; independent implementation review approves.
 The closeout commit changes this checklist only. Applicable remote CI, source
 acceptance and SDK publication remain separate gates; no release is implied.
+
+## Residual native source-scope repairs
+
+- [x] Freeze checks distinguishing source-arm ownership from independent supporting parent alternatives; qualify both failures on merged source `2f5ecbb7047d1b16daa8eb328aacea233f1b3e41`.
+- [x] Preserve existential fallback choices for outside defaults without borrowing an unselected source arm's defaults.
+- [x] Keep recursive presets within existing budgets through exact frozen closure reuse and linear set merges.
+- [x] Complete final aggregate and rebuilt binding/consumer verification.
+
+The follow-up pull request owns its review and source-publication state.
+Source acceptance and SDK publication remain separate gates.
