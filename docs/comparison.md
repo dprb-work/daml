@@ -2,7 +2,11 @@
 
 DAML, YAML, JSON, and JSON plus JSON Schema solve overlapping but different problems. DAML pairs a constrained configuration syntax with native structural definitions and completion. YAML prioritizes a compact human-authored representation and broad ecosystem support. JSON prioritizes a small, widely implemented interchange format. JSON Schema adds a separate validation language to JSON; it does not change JSON syntax.
 
-Start with the [tutorial](tutorial.md), then use the [syntax contract](syntax.md), [native authoring contract](native-authoring.md), and [schema reference](schemas.md) for exact rules.
+Start with the [Python quickstart](python-quickstart.md) for schemas derived from
+code, or the [native tutorial](tutorial.md) for handwritten definitions and
+structural composition. Use the [syntax contract](syntax.md),
+[native authoring contract](native-authoring.md), and [schema reference](schemas.md)
+for exact rules.
 
 | Concern | DAML | YAML | JSON | JSON + JSON Schema |
 |---|---|---|---|---|
@@ -15,7 +19,7 @@ Start with the [tutorial](tutorial.md), then use the [syntax contract](syntax.md
 ## YAML depends on version and parser
 
 “YAML” is not one uniform scalar interpretation across all deployed tooling. YAML 1.1 and 1.2 differ in areas such as implicit scalar resolution, and parsers may select different schemas or compatibility modes. Features such as aliases and custom tags also depend on the parser and application. A YAML document therefore needs an explicit version and parser context when exact cross-tool behavior matters.
-| Representability | JSON-compatible data shapes with DAML's explicit tags and syntax rules; not every YAML feature. | Supports richer syntax and graph features, including aliases and tagged nodes, subject to version and parser. | Objects, arrays, strings, numbers, booleans, and null. Object member names are arbitrary strings. | The schema can constrain JSON values, but JSON Schema does not turn arbitrary values into nominal types or define DAML's tag/completion semantics. |
+
 DAML intentionally defines a narrower syntax: it does not use indentation to build collections, infer dates, or accept anchors and aliases. That makes the grammar more limited than YAML, but removes those sources of parser configuration variation. See [DAML scalar rules](syntax.md#scalars-and-input).
 
 ## JSON keys are not DAML keys
