@@ -345,6 +345,11 @@ fn scan_triple(
         if close.is_some() || line_start == bytes.len() {
             break;
         }
+        // Decoded scanning can leave at most two EOF bytes unchecked. Advance
+        // through that tail without changing its legacy validation precedence.
+        while q < bytes.len() && !matches!(bytes[q], b'\r' | b'\n') {
+            q += 1;
+        }
         let Some(next) = line_end(bytes, q) else {
             break;
         };
