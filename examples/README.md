@@ -1,13 +1,16 @@
 # DAML examples
 
-Run source-checkout commands below from the repository root with the pinned Rust
-toolchain installed. For native binaries without a checkout, start with
-[the getting-started guide](../docs/getting-started.md).
+Start with the [Python quickstart](../docs/python-quickstart.md) to derive schemas
+from your program's types and author their values in DAML. The native examples
+below use handwritten definitions and the pinned Rust toolchain. Run commands
+from the repository root. For editing without a source build, use
+[the formatter and editor guide](../docs/getting-started.md).
 
 ## Learn in order
 
 | Example | What to observe |
 |---|---|
+| [Python types](python_types.py) | Pydantic and dataclass schemas, a completed default, an override, and an invalid value |
 | [Plain configuration](tutorial/data/plain.daml) | Explicit object structure and quoted string values |
 | [Worker definition](tutorial/app/Worker.daml) | Schema layer: field constraints and an explicit preset |
 | [Worker data](tutorial/data/worker.daml) | Data layer: particular values and a root assertion; resolution supplies retries |
@@ -99,7 +102,7 @@ These examples show how a program consumes DAML, rather than only its syntax:
 | Language or operation | Code and reading path |
 |---|---|
 | Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
-| Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
+| Python type-derived schemas and resolution | [Python quickstart](../docs/python-quickstart.md), [runnable Pydantic/dataclass example](python_types.py), and [API guide](../docs/python.md#derive-schemas-from-python-types) |
 | Python temporal values and type-derived schemas | [Runnable example](python_temporal.py) |
 | Python cron values, native defaults and semantic editing | [Runnable example](python_cron.py) |
 | Native raw Regex, verbose flags and literal/folded layout | [Runnable Regex bundle](regex/) and [syntax contract](../docs/syntax.md#native-regex-literals) |

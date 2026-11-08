@@ -8,6 +8,20 @@ These choices have costs. DAML asks you to learn a new format and use its tools;
 it isn't a universal replacement for YAML or JSON. The [tutorial](tutorial.md)
 shows the choices at work. This page explains why they are there.
 
+## Reuse the requirements your program already owns
+
+When a Python program defines its configuration with Pydantic models or
+dataclasses, repeating those fields in a separate schema creates another place
+to keep in sync. DAML can derive the schema from those types, leaving the
+configuration file to describe concrete values. The
+[Python quickstart](python-quickstart.md) shows the workflow.
+
+This is a projection of declarative requirements, not a way to run arbitrary
+Python validation in DAML. Unsupported behavior is rejected; the
+[Python reference](python.md#derive-schemas-from-python-types) defines the subset.
+Native DAML definitions remain useful when the contract should live outside
+Python or use native composition features.
+
 ## Let indentation help the reader, not decide ownership
 
 When you move a field in an editor, changing its indentation shouldn't silently

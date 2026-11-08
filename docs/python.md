@@ -6,6 +6,10 @@ no PyPI package or release wheel is provided. It is separate from the native
 `daml-fmt` and `daml-lsp` archives. Neither the Rust library nor those executables
 requires Python at runtime.
 
+Start with [Configure a Python program with DAML](python-quickstart.md) for a
+complete type-derived schema, a configuration file, and visible results.
+This page is the API reference.
+
 ## Install from source
 
 Install [Rust through rustup](https://rustup.rs/) and
