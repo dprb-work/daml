@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, fmt::Write as _};
 
-use daml_core::{Document, Node, SemanticNode, SemanticTag, SemanticValue, Value};
+use daml_core::{
+    Document, Node, SemanticNode, SemanticTag, SemanticValue, TemporalKind, TemporalValue, Value,
+};
 use pyo3::{
     prelude::*,
     types::{PyBool, PyDict, PyList, PyString},
@@ -221,7 +223,9 @@ pub(crate) fn decode_with_budget(
             let kind = text(&kind, 16, pointer)?;
             let allowed: &[&str] = match kind {
                 "null" => &["kind", "tag"],
-                "bool" | "number" | "string" => &["kind", "value", "tag"],
+                "bool" | "number" | "string" | "date" | "time" | "datetime" => {
+                    &["kind", "value", "tag"]
+                }
                 "list" => &["kind", "items", "tag"],
                 "map" => &["kind", "entries", "tag"],
                 _ => {
@@ -280,6 +284,17 @@ pub(crate) fn decode_with_budget(
                 "string" => SemanticValue::String(
                     budget.string(&required(record, "value", pointer)?, pointer)?,
                 ),
+                "date" | "time" | "datetime" => {
+                    let temporal_kind = match kind {
+                        "date" => TemporalKind::Date,
+                        "time" => TemporalKind::Time,
+                        _ => TemporalKind::DateTime,
+                    };
+                    let text = budget.string(&required(record, "value", pointer)?, pointer)?;
+                    SemanticValue::Temporal(TemporalValue::parse(temporal_kind, text).map_err(
+                        |error| invalid(py, "InvalidInput", &error.to_string(), pointer),
+                    )?)
+                }
                 "list" => {
                     let items = required(record, "items", pointer)?;
                     let items = budget.array(&items, pointer)?;
@@ -358,6 +373,13 @@ pub(crate) fn document<'py>(
             )?;
             "string"
         }
+        Value::Temporal(_) => {
+            let value = document
+                .temporal(node)
+                .expect("parsed temporal has valid data");
+            out.set_item("value", value.as_str())?;
+            value.kind().as_str()
+        }
         Value::Sequence(items) => {
             let out_items = PyList::empty(py);
             for item in items {
@@ -408,6 +430,10 @@ pub(crate) fn encode<'py>(py: Python<'py>, node: &SemanticNode) -> PyResult<Boun
             out.set_item("value", value)?;
             "string"
         }
+        SemanticValue::Temporal(value) => {
+            out.set_item("value", value.as_str())?;
+            value.kind().as_str()
+        }
         SemanticValue::Sequence(items) => {
             let out_items = PyList::empty(py);
             for item in items {
@@ -450,6 +476,9 @@ pub(crate) fn to_python<'py>(
         SemanticValue::Bool(value) => Ok(PyBool::new(py, *value).to_owned().into_any()),
         SemanticValue::Number(value) => number_to_python(py, value.as_str(), decimal),
         SemanticValue::String(value) => Ok(PyString::new(py, value).into_any()),
+        SemanticValue::Temporal(value) => {
+            crate::temporal::to_python(py, value.as_borrowed().into_owned())
+        }
         SemanticValue::Sequence(items) => {
             let out = PyList::empty(py);
             for item in items {

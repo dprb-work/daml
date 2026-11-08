@@ -14,6 +14,9 @@ export type SemanticNode =
   | { kind: 'bool'; value: boolean; tag?: Tag }
   | { kind: 'number'; value: string; tag?: Tag }
   | { kind: 'string'; value: string; tag?: Tag }
+  | { kind: 'date'; value: string; tag?: Tag }
+  | { kind: 'time'; value: string; tag?: Tag }
+  | { kind: 'datetime'; value: string; tag?: Tag }
   | { kind: 'list'; items: SemanticNode[]; tag?: Tag }
   | { kind: 'map'; entries: { key: string; value: SemanticNode }[]; tag?: Tag };
 export type Origin =
@@ -33,6 +36,9 @@ export type SummaryValue =
   | { kind: 'bool'; value: boolean }
   | { kind: 'number'; value: string }
   | { kind: 'string'; value: string }
+  | { kind: 'date'; value: string }
+  | { kind: 'time'; value: string }
+  | { kind: 'datetime'; value: string }
   | { kind: 'list' | 'map'; length: number };
 export type NodeSummary = (
   | Exclude<SummaryValue, { kind: 'list' | 'map' }>

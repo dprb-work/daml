@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use daml::{
     AdmissionStage, CopyEdge, Document, Node, NodeSummary, Origin, ResolvedNode, ResolvedValue,
-    SemanticNode, SemanticTag, SemanticValue, StageEdit, StageOutcome, SummaryValue, Value,
+    SemanticNode, SemanticTag, SemanticValue, StageEdit, StageOutcome, SummaryValue, TemporalKind,
+    TemporalValue, Value,
 };
 use js_sys::{Array, Function, JsString, Object, Reflect, Uint8Array, WeakSet};
 use wasm_bindgen::{JsCast, prelude::*};
@@ -343,6 +344,19 @@ pub(crate) fn decode_with_budget(
                     let text = budget.text(&fields.get("value", path)?, path)?;
                     SemanticValue::String(text)
                 }
+                "date" | "time" | "datetime" => {
+                    fields.allow(&["kind", "value", "tag"], path)?;
+                    let temporal_kind = match kind.as_str() {
+                        "date" => TemporalKind::Date,
+                        "time" => TemporalKind::Time,
+                        _ => TemporalKind::DateTime,
+                    };
+                    let text = budget.text(&fields.get("value", path)?, path)?;
+                    SemanticValue::Temporal(
+                        TemporalValue::parse(temporal_kind, text)
+                            .map_err(|error| invalid("InvalidInput", &error.to_string(), path))?,
+                    )
+                }
                 "list" => {
                     fields.allow(&["kind", "items", "tag"], path)?;
                     let (values, length) = array(fields.get("items", path)?, path)?;
@@ -484,6 +498,14 @@ pub(crate) fn document(document: &Document) -> Result<JsValue, JsValue> {
                 budget.bytes(value.len(), path)?;
                 ("string", Some(JsValue::from_str(value)))
             }
+            Value::Temporal(_) => {
+                let value = document.temporal(value).expect("parsed temporal");
+                budget.bytes(value.as_str().len(), path)?;
+                (
+                    value.kind().as_str(),
+                    Some(JsValue::from_str(value.as_str())),
+                )
+            }
             Value::Sequence(_) => ("list", None),
             Value::Mapping(_) => ("map", None),
         };
@@ -607,6 +629,13 @@ fn resolved_snapshot(
                 budget.bytes(value.len(), path)?;
                 ("string", Some(JsValue::from_str(value)))
             }
+            ResolvedValue::Temporal(value) => {
+                budget.bytes(value.as_str().len(), path)?;
+                (
+                    value.kind().as_str(),
+                    Some(JsValue::from_str(value.as_str())),
+                )
+            }
             ResolvedValue::Sequence(_) => ("list", None),
             ResolvedValue::Mapping(_) => ("map", None),
         };
@@ -682,6 +711,10 @@ fn summary_value(
         SummaryValue::String(value) => {
             budget.bytes(value.len(), path)?;
             ("string", Some(JsValue::from_str(value)), None)
+        }
+        SummaryValue::Temporal { kind, value } => {
+            budget.bytes(value.len(), path)?;
+            (kind.as_str(), Some(JsValue::from_str(value)), None)
         }
         SummaryValue::Sequence(length) => ("list", None, Some(length)),
         SummaryValue::Mapping(length) => ("map", None, Some(length)),

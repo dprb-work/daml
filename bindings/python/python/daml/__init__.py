@@ -5,6 +5,12 @@ from .daml import (
     Bundle as Bundle,
 )
 from .daml import (
+    Date as Date,
+)
+from .daml import (
+    DateTime as DateTime,
+)
+from .daml import (
     Document as Document,
 )
 from .daml import (
@@ -30,6 +36,9 @@ from .daml import (
 )
 from .daml import (
     SemanticError as SemanticError,
+)
+from .daml import (
+    Time as Time,
 )
 from .daml import (
     format_definition as format_definition,

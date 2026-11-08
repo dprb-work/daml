@@ -179,10 +179,43 @@ literal is valid only as `String.pattern`, not as an instance-data type.
 Unknown constructor metadata is rejected rather than ignored. Broader JSON
 Schema constraints remain available through the
 [bounded interchange profile](schemas.md); native syntax exposes a smaller set.
+### Temporal values
+
+`!Date`, `!Time`, and `!DateTime` constrain intrinsic temporal values, not
+strings that happen to contain ISO-looking text. Time and DateTime accept the
+metadata facet `offset: "optional"`, `"required"`, or `"forbidden"`; optional
+is the default. Date does not accept offset metadata.
+
+```daml
+closed !Object {
+  date: !Date
+  starts: !Time { offset: "required" }
+  deadline: !DateTime { offset: "forbidden" }
+} = {
+  date: !Date "2026-10-29"
+  starts: !Time "09:30:00+01:00"
+  deadline: !DateTime "2026-10-29T10:30"
+}
+```
+
+A constructor followed by quoted text is a typed temporal literal. A bare
+constructor in a definition is a kind constraint. A generic assertion on a
+temporal value is separate from construction; it does not make strings or
+arbitrary stacked assertions temporal.
+
+The exact supported ISO-based grammar, calendar and clock limits, canonical
+writing, exceptional labels, and JSON boundary are specified in the
+[syntax reference](syntax.md#temporal-literals). The profile is an explicit
+extended-calendar subset, not full ISO conformance.
+
+Native defaults retain temporal kinds through completion and semantic transport.
+Plain JSON output contains canonical ISO strings and cannot retain those kinds.
+Low-level schema adapters that need temporal defaults use
+`x-daml-default-temporals`, described in [default annotations](schemas.md#annotate-temporal-defaults).
+[bounded interchange profile](schemas.md); native syntax exposes a smaller set.
 
 Unqualified names are native built-ins. Loaded definitions use a bundle prefix.
 Low-level explicitly composed interchange bindings remain a separate API.
-
 ## Composition, records, and positions
 
 `A | B` accepts either constraint inclusively. `A & B` requires both. `&` binds

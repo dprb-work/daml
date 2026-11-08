@@ -109,6 +109,14 @@ generate native `.daml` definition files or typed instances. See the
 [Python types example](examples/python_types.py) and [Python API guide](docs/python.md).
 Other workflows can use handwritten DAML definitions.
 
+The native syntax also has first-class `!Date`, `!Time`, and `!DateTime`
+values. Their explicit ISO-based profile retains precision and offset presence;
+schema constraints can require or forbid offsets. See the
+[temporal syntax reference](docs/syntax.md#temporal-literals),
+[native temporal example](examples/temporal/), and
+[Python temporal example](examples/python_temporal.py). This feature is
+documented on the source branch and does not imply release publication.
+
 ## What can I use today?
 
 | Component | Availability |

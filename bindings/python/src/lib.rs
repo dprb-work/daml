@@ -9,6 +9,7 @@ use pyo3::{
 };
 mod semantic;
 mod stage;
+mod temporal;
 
 create_exception!(daml, ParseError, PyValueError);
 create_exception!(daml, NativeError, PyValueError);
@@ -178,6 +179,13 @@ fn source_to_python<'py>(
                 .expect("parsed document owns its string nodes"),
         )
         .into_any()),
+        Value::Temporal(_) => temporal::to_python(
+            py,
+            document
+                .temporal(node)
+                .expect("parsed temporal has valid data")
+                .into_owned(),
+        ),
         Value::Sequence(items) => {
             let list = PyList::empty(py);
             for child in items {
@@ -597,6 +605,9 @@ fn daml(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PySchemas>()?;
     module.add_class::<PySchemaModule>()?;
     module.add_class::<PyResolvedDocument>()?;
+    module.add_class::<temporal::PyDate>()?;
+    module.add_class::<temporal::PyTime>()?;
+    module.add_class::<temporal::PyDateTime>()?;
     module.add("ParseError", module.py().get_type::<ParseError>())?;
     module.add("NativeError", module.py().get_type::<NativeError>())?;
     module.add("SchemaError", module.py().get_type::<SchemaError>())?;

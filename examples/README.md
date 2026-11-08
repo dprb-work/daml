@@ -18,6 +18,23 @@ toolchain installed. For native binaries without a checkout, start with
 | [Third-party provider](tutorial/data/external.daml) | The same consumer accepts a different structural definition |
 | [Invalid endpoint](tutorial/invalid/endpoint.daml) | Expected validation failure at `/adapter/endpoint` |
 
+## Temporal values
+
+The standalone [temporal bundle](temporal/) demonstrates intrinsic Date, Time,
+and DateTime values, explicit offset requirements, precision preservation, and
+default completion. Its `daml.bundle` is `{}` and its expected root is
+`self.Schedule`.
+
+```sh
+cargo run --locked --example native -- examples/temporal examples/temporal/data.daml
+```
+
+The checked-in `invalid.daml` uses an impossible calendar date and is intended
+to fail temporal admission. See the [Python temporal example](python_temporal.py)
+for type-derived schemas, dedicated Python values, and explicit conversion
+limits. Neither example implies that temporal features have been published in a
+release.
+
 Follow the [tutorial](../docs/tutorial.md) for definitions, commands, and expected
 results. [The example bundle](tutorial/README.md) is the canonical source of those
 files. Files under `tutorial/invalid/` are deliberately invalid against the
@@ -42,6 +59,7 @@ These examples show how a program consumes DAML, rather than only its syntax:
 |---|---|
 | Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
 | Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
+| Python temporal values and type-derived schemas | [Runnable example](python_temporal.py) |
 
 Start with [values versus requirements](../docs/data-and-schema.md) if the
 schema/data distinction is new. That explanation also maps DAML concepts to
