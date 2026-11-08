@@ -231,10 +231,13 @@ def _provenance(
         require(build.get("target") == target, "BUILD target mismatch")
 
 
-def _legal(read: Callable[[str], bytes], prefix: str) -> None:
+def _legal(
+    read: Callable[[str], bytes], prefix: str, *, license_name: str = "LICENSE"
+) -> None:
     for name in ("LICENSE", "SOURCES.md"):
         require(
-            read(prefix + name) == (ROOT / name).read_bytes(),
+            read(prefix + (license_name if name == "LICENSE" else name))
+            == (ROOT / name).read_bytes(),
             f"noncanonical legal payload: {prefix}{name}",
         )
     notices = read(prefix + "THIRD-PARTY-NOTICES.txt")
@@ -321,6 +324,16 @@ def inspect_payload(
                 "dist/daml_browser_bg.wasm",
                 "dist/daml_browser_bg.wasm.d.ts",
             }
+            snippets = {
+                name.removeprefix(prefix)
+                for name in files
+                if re.fullmatch(
+                    r"package/dist/snippets/daml-browser-[0-9a-f]{16}/src/byte-view\.js",
+                    name,
+                )
+            }
+            require(len(snippets) == 1, "browser archive requires its byte-view helper")
+            outputs |= snippets
             require(
                 files
                 == {
@@ -395,7 +408,7 @@ def inspect_payload(
             build = load_json(read(prefix + "BUILD.json"))
             _provenance(build, version=version, source_sha=source_sha, target=None)
             require(build.get("kind") == "vsix", "VSIX BUILD kind mismatch")
-            _legal(read, prefix)
+            _legal(read, prefix, license_name="LICENSE.txt")
         else:
             raise ValueError(f"unsupported asset kind: {kind}")
 

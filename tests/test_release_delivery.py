@@ -8,6 +8,7 @@ Real release bytes are checked separately by tests/release_candidate_check.py.
 import argparse
 import copy
 import importlib.util
+import hashlib
 import json
 import os
 import sys
@@ -353,6 +354,43 @@ class PublicationPolicyTests(unittest.TestCase):
                 responses[path]["total_count"] = count
                 with self.assertRaises(RuntimeError):
                     self.admit_preparation(responses)
+
+    def test_staged_draft_requires_an_existing_tag_at_the_exact_approved_commit(self) -> None:
+        # Ordinary JSON bytes suffice for this direct remote draft/tag policy.
+        # This fixture does not claim to be a compiled release or pass bundle admission.
+        with tempfile.TemporaryDirectory(prefix="daml-draft-tag-policy-") as temporary:
+            directory = Path(temporary)
+            contents = b'{"fixture":"remote draft asset binding"}\n'
+            (directory / "RELEASE.json").write_bytes(contents)
+            args = argparse.Namespace(
+                bundle=directory, version="0.2.0", source_sha=SOURCE_SHA, release_id=23456789,
+            )
+            release = {
+                "id": 23456789,
+                "draft": True,
+                "tag_name": "v0.2.0",
+                "target_commitish": SOURCE_SHA,
+                "assets": [{
+                    "name": "RELEASE.json",
+                    "state": "uploaded",
+                    "size": len(contents),
+                    "digest": "sha256:" + hashlib.sha256(contents).hexdigest(),
+                }],
+            }
+            exact = {"ref": "refs/tags/v0.2.0", "object": {"type": "commit", "sha": SOURCE_SHA}}
+            responses = {"git/ref/tags/v0.2.0": exact}
+            with patch.object(self.publisher, "github", side_effect=lambda path, **kwargs: responses[path]):
+                self.publisher.validate_draft(release, args)
+            for reference in (
+                None,
+                {"ref": "refs/tags/v0.2.0", "object": {"type": "commit", "sha": "f" * 40}},
+                {"ref": "refs/tags/v0.2.0", "object": {"type": "tag", "sha": SOURCE_SHA}},
+            ):
+                with self.subTest(reference=reference):
+                    responses["git/ref/tags/v0.2.0"] = reference
+                    with patch.object(self.publisher, "github", side_effect=lambda path, **kwargs: responses[path]):
+                        with self.assertRaises(RuntimeError):
+                            self.publisher.validate_draft(release, args)
 
     def test_main_only_release_with_required_human_and_no_self_review_is_admitted(self) -> None:
         self.publisher.validate_environment(*release_environment())

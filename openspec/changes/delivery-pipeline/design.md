@@ -18,7 +18,7 @@ Older-main promotion was considered, then rejected before implementation accepta
 
 ## Publication ordering and recovery
 
-GitHub draft/tag creation and asset staging happen after approval but before PyPI, so GitHub permission errors occur before irreversible registry upload. Public registry file hashes are checked before the draft becomes public. These providers do not offer a shared transaction: a failed attempt may leave a draft, tag, assets or some/all registry files.
+The approved publisher explicitly creates and verifies the public Git tag, then stages the draft and assets before PyPI. A draft alone does not establish that tag creation is permitted. Current-main admission still precedes the first write; no API is used to bypass workflow-write restrictions. Public registry file hashes are checked before the draft becomes public. These providers do not offer a shared transaction: a failed attempt may leave a public tag, draft, assets or some/all registry files.
 
 Existing objects are not overwritten. There is no automatic retry, rollback or skip-existing mode. Operators inspect the original run, exact hashes and public state, then obtain a new bounded recovery decision. A read-only plan describes state without pretending that unexecuted publication has been verified.
 

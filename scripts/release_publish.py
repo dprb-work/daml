@@ -404,11 +404,11 @@ def validate_draft(release: dict, args: argparse.Namespace) -> None:
     if len(assets) != len(actual) or actual != expected:
         raise RuntimeError("draft assets differ from the unchanged approved bundle")
     reference = github(f"git/ref/tags/v{args.version}", missing_ok=True)
-    if reference is not None and (
+    if reference is None or (
         reference["object"].get("type") != "commit"
         or reference["object"].get("sha") != args.source_sha
     ):
-        raise RuntimeError("release tag was replaced or points to a different source")
+        raise RuntimeError("release tag is missing or points to a different source")
 
 
 def stage_github(args: argparse.Namespace) -> None:
@@ -427,6 +427,19 @@ def stage_github(args: argparse.Namespace) -> None:
     # can need workflows:write, which GITHUB_TOKEN cannot grant; never bypass it.
     require_current_main(args)
     tag = f"v{args.version}"
+    # Draft releases need not materialize a new Git tag. Exercise tag creation
+    # permissions and rulesets before any irreversible registry upload.
+    github(
+        "git/refs",
+        method="POST",
+        data={"ref": f"refs/tags/{tag}", "sha": args.source_sha},
+    )
+    reference = github(f"git/ref/tags/{tag}")
+    if (
+        reference["object"].get("type") != "commit"
+        or reference["object"].get("sha") != args.source_sha
+    ):
+        raise RuntimeError("new release tag does not match the approved source")
     subprocess.run(
         [
             "gh",
@@ -437,6 +450,7 @@ def stage_github(args: argparse.Namespace) -> None:
             "--repo",
             f"github.com/{REPOSITORY}",
             "--draft",
+            "--verify-tag",
             "--target",
             args.source_sha,
             "--generate-notes",

@@ -165,14 +165,17 @@ self-approve.
 
 The approved job then:
 
-1. Stages the exact GitHub draft/tag and all approved files, without overwrite.
+1. Creates and verifies the public Git tag at the approved source, then stages
+   a GitHub draft with all approved files, without overwrite.
 2. Uploads only the three unchanged wheels through the official PyPA action.
 3. Observes the public PyPI version's exact wheel hashes.
 4. Makes only that newly staged GitHub draft public.
 
 No source build, blanket `skip-existing` or automatic retry occurs in that job.
-The draft-first order exposes GitHub permission failures before irreversible
-registry upload. Rust crates, npm and editor marketplaces remain untouched.
+The tag-first order exercises GitHub tag permissions/rulesets before irreversible
+registry upload; a draft alone does not prove that permission. A failure can leave
+the tag publicly visible even when the release remains a draft. Rust crates, npm
+and editor marketplaces remain untouched.
 
 ## Inspect partial effects before recovery
 
