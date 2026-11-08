@@ -27,6 +27,8 @@ The helper rejects a candidate before `uv pip install` if it fails:
 
 - Exact SHA-256 sidecar content and filename; safe, regular, unencrypted,
   nonduplicate ZIP members (including case collisions and file/directory clashes).
+  Original entry names must be canonical and unchanged by ZIP filename
+  normalization; embedded NULs and backslash separators are rejected on every OS.
 - Complete SHA-256/size RECORD coverage, matching distribution/version metadata,
   stable-ABI filename/WHEEL tags, minimum Python, and optional `types` metadata.
 - Current source bytes for the import package, native stub, `py.typed`, and
