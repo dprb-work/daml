@@ -1,14 +1,62 @@
 # Python API
 
-The optional `daml` Python package delegates parsing, formatting, bundle loading,
-completion, and validation to the Rust library. Install it from a source checkout;
-no PyPI package or release wheel is provided. It is separate from the native
-`daml-fmt` and `daml-lsp` archives. Neither the Rust library nor those executables
-requires Python at runtime.
+The optional `daml-config` Python distribution (`import daml`) delegates parsing,
+formatting, bundle loading, completion, and validation to the Rust library.
+Install a verified candidate wheel or build from source. Nothing is published
+to PyPI yet. The native `daml-fmt` and `daml-lsp` archives are separate and do not
+require Python.
 
 Start with [Configure a Python program with DAML](python-quickstart.md) for a
 complete type-derived schema, a configuration file, and visible results.
 This page is the API reference.
+
+## Install a candidate wheel
+
+Candidate wheels target standard CPython 3.12 or later on Linux x64, macOS ARM64
+and Windows x64. They use `cp312-abi3`, so the same platform wheel works across
+compatible standard CPython versions. PyPy and free-threaded builds are not
+supported. Linux requires glibc 2.35 or later; it is not a musl/Alpine wheel.
+
+Wheels are qualification artifacts, not published PyPI packages or permanent
+release downloads. Obtain the wheel and matching `.sha256` sidecar from a
+successful **Binaries** workflow run. Its `daml-config-<Rust target>` artifact
+contains the files. With an authenticated GitHub CLI, for example:
+
+```sh
+gh run download RUN_ID --repo dprb-work/daml \
+  --name daml-config-x86_64-unknown-linux-gnu --dir download
+```
+
+Choose the run revision and target deliberately. Verify the wheel against its
+sidecar before installing it: use `sha256sum -c` on Linux, `shasum -a 256 -c`
+on macOS, or compare `Get-FileHash -Algorithm SHA256` in PowerShell. A checksum
+detects corruption, not an unknown publisher's identity.
+
+In a working directory outside the source checkout, create an environment with
+[uv](https://docs.astral.sh/uv/getting-started/installation/):
+
+```sh
+uv venv --python 3.12
+```
+
+Activate it with `. .venv/bin/activate` on Linux/macOS or
+`.\.venv\Scripts\Activate.ps1` in PowerShell. Install the exact downloaded wheel;
+the following Linux example includes optional Pydantic/dataclass schema support:
+
+```sh
+uv pip install --only-binary=:all: './download/daml_config-0.1.0-cp312-abi3-manylinux_2_35_x86_64.whl[types]'
+python -c "import daml; print(daml.parse('{ retries: 3 }').to_python())"
+```
+
+It prints `{'retries': 3}`. Use the actual wheel filename for your platform.
+Omit `[types]` if you only need the base API. A wheel installation needs no Rust
+toolchain, source checkout, or native DAML executable. Continue with the
+[Python quickstart](python-quickstart.md) using this environment.
+
+The distribution name is **`daml-config`**, but the import remains **`daml`**.
+Do not install the unrelated [PyPI `daml` project](https://pypi.org/project/daml/)
+in the same environment. A bare `pip install daml` installs that other project;
+`pip install daml-config` is not a supported registry route until publication.
 
 ## Install from source
 
@@ -17,7 +65,7 @@ Install [Rust through rustup](https://rustup.rs/) and
 checkout, build the extension into its locked Python 3.12 environment:
 
 ```sh
-uv sync --project bindings/python --locked --python 3.12 --group dev --reinstall-package daml
+uv sync --project bindings/python --locked --python 3.12 --group dev --reinstall-package daml-config
 ```
 
 This uses the repository's pinned Rust toolchain and includes development tools.
@@ -26,7 +74,7 @@ run `./scripts/check-python`. The aggregate `./scripts/check` includes that gate
 
 Rerun the gate after changing Rust source. uv's default editable cache does not
 track the Rust dependency graph; the gate re-enters maturin with
-`--reinstall-package daml` so Cargo owns incremental rebuild decisions. See
+`--reinstall-package daml-config` so Cargo owns incremental rebuild decisions. See
 [uv's cache rules](https://docs.astral.sh/uv/concepts/cache/#dynamic-metadata).
 Do not copy a shared library into the environment by hand.
 
@@ -45,7 +93,7 @@ models or standard dataclasses to an in-memory JSON Schema module. Install it
 while building the Python extension from this checkout:
 
 ```sh
-uv sync --project bindings/python --locked --python 3.12 --group dev --extra types --reinstall-package daml
+uv sync --project bindings/python --locked --python 3.12 --group dev --extra types --reinstall-package daml-config
 ```
 
 The minimum Pydantic version is 2.14.2. The base `daml` import and a caller
@@ -434,28 +482,21 @@ chains become Python `__cause__` chains; filesystem causes use `OSError`
 subclasses. Materialization errors from Python's own numeric constructors
 propagate normally.
 
-## Local packages
+## Prepare wheels
 
-Build a wheel and a self-contained source archive from the repository root:
+Use the repository-owned producer, not a bare `maturin build`, when preparing
+redistributable candidates:
 
 ```sh
-uv run --project bindings/python --locked --python 3.12 maturin build \
-  --manifest-path bindings/python/Cargo.toml --release --locked \
-  --interpreter bindings/python/.venv/bin/python --out .scratch/python-dist
-uv run --project bindings/python --locked --python 3.12 maturin sdist \
-  --manifest-path bindings/python/Cargo.toml --out .scratch/python-dist
+python scripts/package-python.py --out dist/python
 ```
 
-Maturin includes the Rust path dependency and adjusts the source archive's build
-entrypoint. The Python project and Cargo package metadata declare MIT. The
-canonical root `LICENSE` is not included by an external-path metadata reference:
-Cargo rejects a license-file path outside this workspace. Python wheel and sdist
-license-text and third-party-notice inclusion have not been verified, so those
-artifacts are not part of the current release route. Native compilation from
-source still needs Rust. A matching wheel needs only a compatible Python
-interpreter and platform libraries.
+The build needs the pinned Rust toolchain, maturin 1.15.0 and cargo-about 0.9.2.
+The producer includes the canonical MIT license, source inventory, generated
+dependency notices and build provenance. It writes the wheel and a matching
+checksum without uploading either. See
+[Python wheel preparation](development/distribution.md#python-wheel-candidates)
+for prerequisites, the platform matrix and installed-artifact verification.
 
-The ABI floor is CPython 3.12 (`cp312-abi3`). Local Linux checks do not establish
-Windows, macOS, PyPy, or free-threaded compatibility. No Python wheel or sdist
-release assets are currently provided; any future redistribution needs generated
-third-party notices in addition to DAML's MIT license.
+Source builds still use `uv sync` above. No Python sdist, wheel release asset or
+PyPI upload is implied by a candidate build.

@@ -7,7 +7,7 @@ seeing a configuration work.
 
 - **Use the types already in my Python program.** [Configure a Python program](python-quickstart.md).
   Derive a schema from a Pydantic model or dataclass, author a DAML file, and see
-  defaults and validation work. This path builds the Python bindings from source.
+  defaults and validation work. Install a candidate wheel or build from source.
 - **Compose independent providers.** [Build a service configuration](tutorial.md).
   Write native DAML definitions, then swap providers without changing the
   service's requirements. This path uses a source checkout and Rust.

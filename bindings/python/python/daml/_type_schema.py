@@ -36,8 +36,9 @@ def schema_from_types(
 ) -> SchemaModule:
     """Derive a schema module from explicitly named Python type expressions.
 
-    The default exporter requires ``daml[types]`` and uses Pydantic's validation
-    JSON Schema, with aliases. Only declarative JSON contracts are supported;
+    The default exporter requires the ``daml-config`` distribution's ``types``
+    extra and uses Pydantic's validation JSON Schema, with aliases.
+    Only declarative JSON contracts are supported;
     this does not instantiate models or reproduce Python coercion/serialization.
     An explicit exporter owns its translation and does not require Pydantic.
     """
@@ -198,7 +199,8 @@ def _export_pydantic(type_expression: Any, context: str) -> dict[str, Any]:
             raise
         raise ImportError(
             "schema_from_types requires the optional 'types' extra; "
-            "install daml[types] or supply exporter="
+            "install the 'types' extra from your daml-config wheel or source "
+            "checkout, or supply exporter="
         ) from error
 
     class DeclarativeJsonSchema(GenerateJsonSchema):

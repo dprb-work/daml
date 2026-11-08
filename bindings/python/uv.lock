@@ -21,7 +21,7 @@ wheels = [
 ]
 
 [[package]]
-name = "daml"
+name = "daml-config"
 source = { editable = "." }
 
 [package.optional-dependencies]
