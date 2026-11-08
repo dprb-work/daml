@@ -1,0 +1,7 @@
+# raw regex, verbose comments, final comment
+!String {
+  pattern: !Regex """
+    (?x)a | abc # alternative
+    d # final comment
+    """ # outside
+}

@@ -40,6 +40,29 @@ results. [The example bundle](tutorial/README.md) is the canonical source of tho
 files. Files under `tutorial/invalid/` are deliberately invalid against the
 selected definitions, not templates to copy.
 
+## Raw multiline Regex
+
+The [Regex bundle](regex/) uses a literal block and inline `(?x)` to separate a
+code pattern into commented groups. Its [valid input](regex/data.daml) is
+`AB-1234`; the [invalid input](regex/invalid.daml) has an extra digit and fails
+full-string validation.
+
+```sh
+cargo run --locked --example native -- examples/regex examples/regex/data.daml
+cargo run --locked --bin daml-fmt -- examples/regex/Code.daml
+```
+
+[FoldedCode.daml](regex/FoldedCode.daml) uses `'''` without verbose mode, so its
+inserted space is significant. Run it with:
+
+```sh
+cargo run --locked --example native -- examples/regex examples/regex/folded.daml
+```
+
+Backslashes are raw in every native Regex form. Neither multiline syntax nor
+formatting enables flags or turns Regex into an instance-data object.
+
+
 ## Inspect and consume
 
 ```sh
@@ -60,6 +83,7 @@ These examples show how a program consumes DAML, rather than only its syntax:
 | Python parsing and native resolution | [Parse, complete, and inspect](../docs/python.md#parse-complete-and-inspect) |
 | Python type-derived schemas and resolution | [Runnable Pydantic/dataclass example](python_types.py) and [API guide](../docs/python.md#derive-schemas-from-python-types) |
 | Python temporal values and type-derived schemas | [Runnable example](python_temporal.py) |
+| Native raw Regex, verbose flags and literal/folded layout | [Runnable Regex bundle](regex/) and [syntax contract](../docs/syntax.md#native-regex-literals) |
 
 Start with [values versus requirements](../docs/data-and-schema.md) if the
 schema/data distinction is new. That explanation also maps DAML concepts to

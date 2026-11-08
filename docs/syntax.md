@@ -145,14 +145,41 @@ Native definitions add one typed scalar that ordinary data documents do not:
 pattern: !Regex "\d{4}-\d{2}-\d{2}"
 ```
 
-The double quotes delimit the Regex body. Backslashes and other characters
-inside remain raw source for Rust `regex`; ordinary DAML string escapes are not
-decoded. The body must stay on one physical line and cannot contain a double
-quote; use the regex escape `\x22` when matching one. The body remains subject
-to the scalar-size limit. The formatter preserves its contents exactly.
-Semantic compilation, full-string matching, and
-the valid position under `String.pattern` belong to the
-[native authoring contract](native-authoring.md).
+Regex accepts ordinary double quotes and both triple forms. Pattern backslashes
+remain raw in every form: `\d` reaches the Rust Regex engine unchanged, and `\\`
+is not collapsed by DAML. Ordinary single quotes remain unsupported.
+
+The single-line form ends at the next double quote, even after a backslash.
+Use `\x22` to match a quote in that form. Triple forms use the
+[shared boundaries and layout](#triple-string-boundaries): `"""` dedents literal
+lines, while `'''` folds nonblank lines into one space-separated pattern.
+Line endings normalize to LF. Regex does not perform DAML string escape decoding
+or backslash-newline continuation; an escape before a triple delimiter remains
+in the raw pattern after preventing that delimiter from closing the payload.
+
+For readable patterns with comments, enable verbose mode explicitly:
+
+```daml
+!String {
+  pattern: !Regex """
+    (?x)
+    [A-Z]{2}  # prefix
+    -
+    \d{4}     # identifier
+  """
+}
+```
+
+`(?x)` makes pattern whitespace insignificant and enables `#` line comments.
+It is not enabled by multiline syntax. Prefer `"""` for verbose comments:
+folding `'''` removes the line boundaries that end those comments. Use `\x20`
+for a literal space in verbose mode. Other supported flags also remain inline.
+
+The formatter preserves authored pattern spelling and matching behavior.
+Single-line payload limits remain compatible; triple source tokens and
+normalized patterns are bounded like other multiline strings. Compilation,
+bounded full-string matching and the valid position under `String.pattern`
+belong to the [native authoring contract](native-authoring.md).
 
 ## Triple string boundaries
 
@@ -165,11 +192,15 @@ The opening line ending and one line ending immediately before the closing
 line are syntax, not content. Closing-line indentation is not content. Extra
 blank lines inside literal strings remain data; there is no chomping suffix.
 
-`\\` produces a literal backslash in either triple form. A backslash immediately
-before that form's matching triple delimiter makes the delimiter literal. Other
-backslashes remain data, except the continuation rule for triple-double strings.
-For example, a literal `\n` remains those two characters in triple text; it is not
-an ordinary-string newline escape.
+For ordinary and temporal strings, `\\` produces a literal backslash in either
+triple form. A backslash immediately before that form's matching triple delimiter
+makes the delimiter literal. Other backslashes remain data, except the
+continuation rule for triple-double strings. For example, a literal `\n` remains
+those two characters in triple text; it is not an ordinary-string newline escape.
+
+Native Regex shares these boundaries and layout rules but keeps every pattern
+backslash, including a backslash used to escape a delimiter. It does not perform
+the decoded-string escape or continuation steps.
 
 ### Triple double quotes: literal, mandatory dedent
 
@@ -183,17 +214,19 @@ an ordinary-string newline escape.
    lines, preserving remaining data and the number of internal line breaks.
 4. If the complete body is blank, instead remove all spaces/tabs from every
    content line while preserving the number of internal line breaks.
-5. Decode escaped backslashes/delimiters and process explicit continuations.
+5. For ordinary and temporal strings, decode escaped backslashes/delimiters and
+   process explicit continuations. Native Regex instead retains raw pattern text.
 
 The closing delimiter's column and enclosing node depth do not set the margin.
 Moving equivalent content deeper into a map/list must preserve its decoded
 bytes. Additional indentation within the text remains meaningful.
 
-An unescaped backslash directly before an internal line ending removes itself,
-the line ending, and the next line's leading spaces/tabs. Joining inserts no
-space: a space before the backslash stays data. A backslash followed by spaces/
-tabs before the newline is an error. Escaped backslashes do not continue lines.
-A dangling continuation at the excluded closing boundary is an error.
+For ordinary and temporal strings, an unescaped backslash directly before an
+internal line ending removes itself, the line ending, and the next line's leading
+spaces/tabs. Joining inserts no space: a space before the backslash stays data.
+A backslash followed by spaces/tabs before the newline is an error. Escaped
+backslashes do not continue lines. A dangling continuation at the excluded closing
+boundary is an error. Native Regex does not use this continuation rule.
 
 Dedent precedes joining because a continuation can consume the physical line
 that establishes the minimum margin. It must not change that margin retroactively.

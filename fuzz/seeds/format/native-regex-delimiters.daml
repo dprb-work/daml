@@ -1,0 +1,4 @@
+!String { pattern: !Regex """
+  a \""" b
+  """
+}
