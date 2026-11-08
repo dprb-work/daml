@@ -119,7 +119,7 @@ fn normalize_temporal_defaults(schema: &mut Value) -> Result<(), SchemaError> {
                 .as_str()
                 .ok_or_else(|| invalid("default temporal target must be a string"))?;
         }
-        // Canonicalize in the existing JSON storage; no second ISO payload is retained.
+        // Canonicalize in the existing JSON storage; no second scalar payload is retained.
         let annotations = object
             .remove("x-daml-default-temporals")
             .expect("checked annotations");
@@ -205,7 +205,10 @@ fn scalar_config(value: &Value) -> Result<NativeScalar, String> {
     let offset = match config.get("offset") {
         None => "optional",
         Some(Value::String(value))
-            if kind.is_some_and(|kind| kind != crate::TemporalKind::Date) =>
+            if matches!(
+                kind,
+                Some(crate::TemporalKind::Time | crate::TemporalKind::DateTime)
+            ) =>
         {
             match value.as_str() {
                 "optional" => "optional",
@@ -218,7 +221,7 @@ fn scalar_config(value: &Value) -> Result<NativeScalar, String> {
     };
     let constant = if let Some(value) = config.get("const") {
         let kind = kind.ok_or("typed scalar const is only valid for temporal kinds")?;
-        let text = value.as_str().ok_or("temporal const must be ISO text")?;
+        let text = value.as_str().ok_or("temporal const must be text")?;
         let value = crate::TemporalValue::parse(kind, text)
             .map_err(|error| error.to_string())?
             .into_owned();

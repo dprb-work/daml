@@ -1,0 +1,4 @@
+# One concrete pattern overrides the schema's month-end preset.
+!self.Schedule {
+  month_end: !Cron "0 0 17 L * *"
+}

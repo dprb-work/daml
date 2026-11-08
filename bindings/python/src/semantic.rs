@@ -223,7 +223,7 @@ pub(crate) fn decode_with_budget(
             let kind = text(&kind, 16, pointer)?;
             let allowed: &[&str] = match kind {
                 "null" => &["kind", "tag"],
-                "bool" | "number" | "string" | "date" | "time" | "datetime" => {
+                "bool" | "number" | "string" | "date" | "time" | "datetime" | "cron" => {
                     &["kind", "value", "tag"]
                 }
                 "list" => &["kind", "items", "tag"],
@@ -284,11 +284,12 @@ pub(crate) fn decode_with_budget(
                 "string" => SemanticValue::String(
                     budget.string(&required(record, "value", pointer)?, pointer)?,
                 ),
-                "date" | "time" | "datetime" => {
+                "date" | "time" | "datetime" | "cron" => {
                     let temporal_kind = match kind {
                         "date" => TemporalKind::Date,
                         "time" => TemporalKind::Time,
-                        _ => TemporalKind::DateTime,
+                        "datetime" => TemporalKind::DateTime,
+                        _ => TemporalKind::Cron,
                     };
                     let text = budget.string(&required(record, "value", pointer)?, pointer)?;
                     SemanticValue::Temporal(TemporalValue::parse(temporal_kind, text).map_err(

@@ -1,4 +1,4 @@
-//! Lossless admission for DAML's bounded ISO extended-calendar profile.
+//! Lossless admission for DAML's ISO calendar values and Spring cron patterns.
 use crate::{Span, StringValue};
 use std::{borrow::Cow, error::Error, fmt, fmt::Write as _};
 
@@ -11,6 +11,8 @@ pub enum TemporalKind {
     Time,
     /// A calendar date and clock label with an optional explicit offset.
     DateTime,
+    /// A validated Spring Framework 7.0.10 cron expression, without a scheduler.
+    Cron,
 }
 impl TemporalKind {
     /// Returns the stable semantic transport spelling.
@@ -19,6 +21,7 @@ impl TemporalKind {
             Self::Date => "date",
             Self::Time => "time",
             Self::DateTime => "datetime",
+            Self::Cron => "cron",
         }
     }
     pub(crate) fn constructor(self) -> &'static str {
@@ -26,6 +29,7 @@ impl TemporalKind {
             Self::Date => "Date",
             Self::Time => "Time",
             Self::DateTime => "DateTime",
+            Self::Cron => "Cron",
         }
     }
     pub(crate) fn from_constructor(name: &str) -> Option<Self> {
@@ -33,6 +37,7 @@ impl TemporalKind {
             "Date" => Some(Self::Date),
             "Time" => Some(Self::Time),
             "DateTime" => Some(Self::DateTime),
+            "Cron" => Some(Self::Cron),
             _ => None,
         }
     }
@@ -41,12 +46,13 @@ impl TemporalKind {
             "date" => Some(Self::Date),
             "time" => Some(Self::Time),
             "datetime" => Some(Self::DateTime),
+            "cron" => Some(Self::Cron),
             _ => None,
         }
     }
 }
 
-/// An invalid ISO-profile value. No host clock, timezone or leap schedule is consulted.
+/// An invalid intrinsic scalar. No host clock, timezone or scheduler is consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TemporalError(&'static str);
 impl fmt::Display for TemporalError {
@@ -69,7 +75,7 @@ impl TemporalMetadata {
         }
     }
     pub(crate) fn canonical(kind: TemporalKind, text: &str) -> Self {
-        let offset = if kind == TemporalKind::Date {
+        let offset = if matches!(kind, TemporalKind::Date | TemporalKind::Cron) {
             None
         } else if text.ends_with('Z') {
             Some(0)
@@ -99,12 +105,20 @@ pub struct TemporalValue<'a> {
     metadata: TemporalMetadata,
 }
 impl<'a> TemporalValue<'a> {
-    /// Admits the documented ISO profile and canonicalizes only when necessary.
+    /// Admits the documented ISO profile or Spring 7.0.10 cron syntax.
     ///
-    /// Omitted lower clock fields become zero; fractional digits and exceptional
-    /// labels are retained. An absent offset never becomes UTC.
+    /// Omitted lower ISO clock fields become zero; fractional digits and
+    /// exceptional labels are retained. An absent offset never becomes UTC.
+    /// Cron expands macros and trims outer Java whitespace, otherwise retaining
+    /// expression spelling. This does not evaluate or execute a schedule.
     pub fn parse(kind: TemporalKind, text: impl Into<Cow<'a, str>>) -> Result<Self, TemporalError> {
         let text = text.into();
+        if kind == TemporalKind::Cron {
+            return Ok(Self {
+                text: crate::cron::admit(text).map_err(TemporalError)?,
+                metadata: TemporalMetadata { kind, offset: None },
+            });
+        }
         let parsed = admit(kind, text.as_ref())?;
         let text = if parsed.canonical {
             text
@@ -123,7 +137,7 @@ impl<'a> TemporalValue<'a> {
     pub fn kind(&self) -> TemporalKind {
         self.metadata.kind
     }
-    /// Returns canonical ISO text with every supplied fractional digit.
+    /// Returns canonical ISO text or the retained resolved cron expression.
     pub fn as_str(&self) -> &str {
         self.text.as_ref()
     }
@@ -149,7 +163,11 @@ impl<'a> TemporalValue<'a> {
 impl PartialEq for TemporalValue<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.metadata == other.metadata
-            && equality_parts(self.as_str()) == equality_parts(other.as_str())
+            && if self.kind() == TemporalKind::Cron {
+                self.as_str() == other.as_str()
+            } else {
+                equality_parts(self.as_str()) == equality_parts(other.as_str())
+            }
     }
 }
 impl Eq for TemporalValue<'_> {}
@@ -219,7 +237,27 @@ impl ParsedTemporal {
                 let admitted = TemporalValue::parse(kind, &source[span.start..span.end])?;
                 let metadata = admitted.metadata;
                 let text = match admitted.text {
-                    Cow::Borrowed(_) => StringValue::Source(span),
+                    Cow::Borrowed(text) => {
+                        // Admission may retain a trimmed source slice or return
+                        // a static macro expansion. Only source-backed bytes may
+                        // become a span; canonical replacements must be owned.
+                        let start = (text.as_ptr() as usize)
+                            .checked_sub(source.as_ptr() as usize)
+                            .filter(|start| {
+                                *start >= span.start
+                                    && start
+                                        .checked_add(text.len())
+                                        .is_some_and(|end| end <= span.end)
+                            });
+                        if let Some(start) = start {
+                            StringValue::Source(Span {
+                                start,
+                                end: start + text.len(),
+                            })
+                        } else {
+                            StringValue::Decoded(text.to_owned())
+                        }
+                    }
                     Cow::Owned(text) => StringValue::Decoded(text),
                 };
                 Ok(Self {

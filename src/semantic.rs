@@ -32,7 +32,7 @@ pub enum SemanticValue {
     Number(Number),
     /// String data.
     String(String),
-    /// An admitted temporal scalar with exact canonical ISO text.
+    /// An admitted temporal scalar with retained ISO text or Spring cron expression.
     Temporal(crate::TemporalValue<'static>),
     /// Ordered sequence entries.
     Sequence(Vec<SemanticNode>),
@@ -385,21 +385,29 @@ fn build_doc<'node: 'doc, 'doc>(
             arena.text(quote(value, path)?)
         }
         SemanticValue::Temporal(value) => {
-            if value.as_str().len().saturating_add(2) > MAX_SCALAR_BYTES {
+            let encoded_len = if value.kind() == crate::TemporalKind::Cron {
+                escaped_len(value.as_str())
+            } else {
+                value.as_str().len().saturating_add(2)
+            };
+            if encoded_len > MAX_SCALAR_BYTES {
                 return Err(error(
                     SemanticErrorKind::LimitExceeded,
                     path,
                     "temporal exceeds scalar byte bound",
                 ));
             }
-            *bytes =
-                bytes.saturating_add(value.as_str().len() + value.kind().constructor().len() + 4);
+            *bytes = bytes.saturating_add(encoded_len + value.kind().constructor().len() + 2);
+            let payload = if value.kind() == crate::TemporalKind::Cron {
+                arena.text(quote(value.as_str(), path)?)
+            } else {
+                arena.text("\"").append(value.as_str()).append("\"")
+            };
             arena
                 .text("!")
                 .append(value.kind().constructor())
-                .append(" \"")
-                .append(value.as_str())
-                .append("\"")
+                .append(" ")
+                .append(payload)
         }
         SemanticValue::Sequence(items) => {
             if items.len() > MAX_NODES.saturating_sub(*nodes) {

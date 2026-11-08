@@ -136,12 +136,34 @@ raise `ValueError`. Extra trailing zero fraction digits can convert exactly;
 the DAML value itself retains its original precision either way. DAML temporal
 objects are not `datetime` subclasses and are not implicitly converted.
 
-The semantic editing representation uses `kind: "date"`, `"time"`, or
-`"datetime"` and canonical ISO `value`, plus optional assertion metadata.
+The semantic editing representation uses `kind: "date"`, `"time"`, `"datetime"`,
+or `"cron"` with canonical ISO or resolved cron expression text in `value`.
 The core Rust `to_json()` projection instead emits canonical strings and loses
 intrinsic temporal identity; Python objects require an explicit JSON serialization
 choice. Do not use date-looking strings to request typed values; use a temporal
 constructor or a real Python temporal object as a static default.
+
+Cron patterns use the same intrinsic lifecycle but expose a different Python API:
+
+```python
+pattern = daml.parse('!Cron "0 0 9 LW * *"').to_python()
+print(pattern.expression)  # 0 0 9 LW * *
+print(str(daml.Cron("@daily")))  # 0 0 0 * * *
+```
+
+`daml.Cron` is immutable and validates the
+[Spring cron dialect](syntax.md#cron-literals). Its read-only `expression`
+contains the resolved pattern. It has no ISO formatting, standard-library
+datetime conversion or next-run method. Resolved defaults return the same kind
+of object. Equality compares retained resolved expression text, not future
+occurrence sets. Plain Python strings do not become Cron values by inference.
+
+There is no standard-library Cron annotation to project. This feature does not
+add third-party cron adapters or custom Pydantic hooks to `schema_from_types`;
+use native `!Cron`, explicit schema metadata or the existing custom-exporter
+boundary. The [runnable cron example](../examples/python_cron.py) resolves a
+native bundle and edits its typed patterns.
+
 
 An explicit `exporter(type) -> JSON Schema object or boolean` owns its translation
 conventions and errors; exceptions propagate without fallback. For example, a
@@ -270,8 +292,9 @@ JSON/YAML; it is not silently converted to float.
 
 `Document.value()` and `ResolvedDocument.value()` return editable semantic trees,
 not ordinary JSON-shaped values. Each node has `kind`: `null`, `bool`, `number`,
-`string`, `date`, `time`, `datetime`, `list`, or `map`. Numbers carry an exact JSON
-numeric string in `value`; temporal nodes carry canonical ISO text. Lists use
+`string`, `date`, `time`, `datetime`, `cron`, `list`, or `map`. Numbers carry an
+exact JSON numeric string in `value`; temporal nodes carry canonical ISO text
+or resolved cron expression text. Lists use
 `items`; maps use `entries` of `{"key": ..., "value": ...}` records.
 An optional `tag` retains the assertion name and, after resolution, its opaque
 binding identity. Numeric strings in this representation are number nodes, not

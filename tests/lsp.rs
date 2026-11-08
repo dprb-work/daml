@@ -349,6 +349,42 @@ fn formatting_cannot_push_a_valid_literal_past_native_scalar_limits() {
 }
 
 #[test]
+fn cron_intrinsics_and_native_constraints_use_real_lsp_admission_and_formatting() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    let uri = "untitled:spring-cron";
+    let source = "!Object {when:!Cron}={when:!Cron \" @weekly \"}";
+    open(&mut server, uri, 1, source);
+    diagnostics(&server, uri, 1, 0);
+    let edits = format_request(&mut server, 2, uri).response_result.unwrap();
+    let formatted = edits[0]["newText"].as_str().unwrap();
+    assert!(formatted.contains("!Cron"));
+    assert!(formatted.contains("\" @weekly \""));
+    daml::parse_definition(formatted).unwrap();
+    server.notify(
+        "textDocument/didChange",
+        json!({"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": formatted}]}),
+    );
+    diagnostics(&server, uri, 2, 0);
+    assert_eq!(
+        format_request(&mut server, 3, uri).response_result.unwrap(),
+        json!([])
+    );
+    server.notify(
+        "textDocument/didChange",
+        json!({"textDocument": {"uri": uri, "version": 3}, "contentChanges": [{"text": "!Cron \"0 0 24 * * *\""}]}),
+    );
+    diagnostics(&server, uri, 3, 1);
+    assert!(format_request(&mut server, 4, uri).response_result.is_err());
+    server
+        .request(5, "shutdown", Value::Null)
+        .response_result
+        .unwrap();
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+}
+
+#[test]
 fn invalid_initialization_delivers_error_and_allows_client_correction() {
     let mut server = LanguageServer::start();
     let before_init = format_request(&mut server, 1, "untitled:not-initialized");

@@ -1,0 +1,4 @@
+# Spring uses six fields, including seconds; this five-field pattern is invalid.
+!self.Schedule {
+  month_end: !Cron "0 9 L * *"
+}

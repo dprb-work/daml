@@ -17,7 +17,7 @@ pub enum SummaryValue<'a> {
     Temporal {
         /// Intrinsic temporal kind.
         kind: crate::TemporalKind,
-        /// Exact canonical ISO payload.
+        /// Canonical ISO text or retained resolved Spring cron expression.
         value: &'a str,
     },
     /// Sequence length, without descendants.

@@ -4,7 +4,7 @@ DAML is an experimental configuration language and tooling project. The componen
 
 | Component | Status | Scope |
 |---|---|---|
-| Data syntax and Rust library | Implemented | Parses ordinary and first-class Date/Time/DateTime values, preserves source information, and exposes typed library operations. See the [syntax contract](syntax.md). |
+| Data syntax and Rust library | Implemented | Parses ordinary and first-class Date/Time/DateTime/Cron values, preserves source information, and exposes typed library operations. See the [syntax contract](syntax.md). |
 | Native definitions and bundles | Implemented | Loads local definitions, compiles constraints, completes defaults, and validates values, including temporal kinds and offset policies. See [native authoring](native-authoring.md). |
 | JSON Schema interchange | Implemented bounded profile | Accepts explicit Draft 2020-12 schema modules and resolves values within documented limits. See [schema modules](schemas.md). |
 | Formatter | Implemented | Formats data and native definitions. See [formatting](formatting.md). |

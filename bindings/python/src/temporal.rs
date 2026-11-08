@@ -26,6 +26,7 @@ fn to_stdlib<'py>(py: Python<'py>, value: &TemporalValue<'_>) -> PyResult<Bound<
         TemporalKind::Date => "date",
         TemporalKind::Time => "time",
         TemporalKind::DateTime => "datetime",
+        TemporalKind::Cron => unreachable!("Cron has no stdlib datetime conversion"),
     };
     // fromisoformat rejects unsupported years, leap seconds and hour 24. Extra
     // fraction digits were proved zero above, so no numeric precision is lost.
@@ -140,6 +141,35 @@ impl PyDateTime {
     }
 }
 
+#[derive(PartialEq)]
+#[pyclass(frozen, eq, name = "Cron", module = "daml")]
+pub(crate) struct PyCron {
+    inner: TemporalValue<'static>,
+}
+
+#[pymethods]
+impl PyCron {
+    #[new]
+    fn new(expression: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: parse(TemporalKind::Cron, expression)?,
+        })
+    }
+
+    #[getter]
+    fn expression(&self) -> &str {
+        self.inner.as_str()
+    }
+
+    fn __str__(&self) -> &str {
+        self.inner.as_str()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Cron({:?})", self.inner.as_str())
+    }
+}
+
 pub(crate) fn to_python<'py>(
     py: Python<'py>,
     value: TemporalValue<'static>,
@@ -152,6 +182,9 @@ pub(crate) fn to_python<'py>(
             .into_bound(py)
             .into_any()),
         TemporalKind::DateTime => Ok(Py::new(py, PyDateTime { inner: value })?
+            .into_bound(py)
+            .into_any()),
+        TemporalKind::Cron => Ok(Py::new(py, PyCron { inner: value })?
             .into_bound(py)
             .into_any()),
     }

@@ -137,6 +137,60 @@ JSON has no temporal primitive. Plain JSON export writes canonical ISO text and
 loses the intrinsic kind. Semantic representations retain a `date`, `time`, or
 `datetime` discriminator with canonical text.
 
+## Cron literals
+
+`!Cron` constructs a typed recurrence pattern, distinct from an ordinary string:
+
+```daml
+month_end: !Cron "0 0 9 L * *"
+last_weekday: !Cron "0 0 9 LW * *"
+third_friday: !Cron "0 0 9 * * FRI#3"
+```
+
+DAML uses the complete
+[Spring Framework 7.0.10 cron expression dialect](https://docs.spring.io/spring-framework/docs/7.0.10/javadoc-api/org/springframework/scheduling/support/CronExpression.html),
+not a DAML-specific subset. Its six fields are **second, minute, hour,
+day-of-month, month, day-of-week**. A five-field Kubernetes expression or a
+seventh Quartz year field is not accepted.
+
+The dialect supports numbers, `*`, lists, ascending ranges, `/` steps and
+case-insensitive three-letter English month/weekday names. Sunday is `0` or `7`,
+Monday is `1`. A `?` in a day field means `*`. Calendar rules include:
+
+| Form | Meaning |
+|---|---|
+| `L`, `L-n` in day-of-month | Last day of the month, or an offset before it |
+| `nW`, `LW` | Nearest Monday–Friday day to day n, or last weekday of the month |
+| `FRIL` | Last Friday of the month |
+| `FRI#3` | Third Friday of the month |
+
+Weekdays are not a holiday-aware business calendar. Both day conditions must
+match: `0 0 9 13 * FRI` describes 09:00 on Fridays that fall on the thirteenth.
+This differs from Unix cron's historical OR rule and Quartz's day-field
+restriction. Overflowing hour ranges such as `22-2`, hash/jitter syntax and
+other dialect extensions are not added.
+
+Spring's macros are accepted: `@yearly`/`@annually`, `@monthly`, `@weekly`,
+`@daily`/`@midnight` and `@hourly`. Admission uses the pinned reference's trimming,
+field parsing and macro expansion, not an arbitrary whitespace rewrite.
+Semantic values retain the resolved expression text; `@daily` becomes
+`0 0 0 * * *`. Other accepted expression spelling stays intact. Source formatting
+retains the authored scalar spelling. Cron equality compares retained resolved
+expression text, not sets of future occurrences.
+
+The reserved constructor may follow an ordinary assertion, as in
+`!app.Pattern !Cron "0 0 9 LW * *"`. Native `!Cron` requires the intrinsic kind,
+not a string that resembles a schedule. Cron has no offset facet. Plain JSON
+projects it to an expression string and loses intrinsic kind; semantic values
+use `kind: "cron"` with expression text in `value`.
+
+DAML validates and transports the pattern. It does not execute jobs, calculate
+the next occurrence, infer a timezone or choose daylight-saving/catch-up policy.
+Keep any timezone or execution policy in the consuming application's schema.
+See the [native example](../examples/cron/) and
+[Python consumer](../examples/python_cron.py).
+
+
 ## Native Regex literals
 
 Native definitions add one typed scalar that ordinary data documents do not:

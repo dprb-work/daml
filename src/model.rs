@@ -180,6 +180,8 @@ pub enum ErrorKind {
     InvalidString,
     /// An intrinsic temporal constructor has a missing or invalid ISO payload.
     InvalidTemporal,
+    /// An intrinsic Cron constructor has a missing or invalid Spring payload.
+    InvalidCron,
     /// A string has no closing delimiter.
     UnterminatedString,
     /// A mapping or sequence has no closing delimiter.
@@ -226,6 +228,7 @@ impl fmt::Display for ParseError {
             ErrorKind::InvalidEscape => "invalid escape or continuation",
             ErrorKind::InvalidString => "invalid string syntax",
             ErrorKind::InvalidTemporal => "invalid temporal literal",
+            ErrorKind::InvalidCron => "invalid Spring cron literal",
             ErrorKind::UnterminatedString => "unterminated string",
             ErrorKind::UnterminatedCollection => "unterminated collection",
             ErrorKind::InvalidTag => "invalid or stacked tag",

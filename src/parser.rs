@@ -279,20 +279,25 @@ impl Parser<'_> {
     ) -> Result<Node, ParseError> {
         self.count_node(start)?;
         let payload_start = self.pos;
+        let invalid = if kind == crate::TemporalKind::Cron {
+            ErrorKind::InvalidCron
+        } else {
+            ErrorKind::InvalidTemporal
+        };
         if !matches!(self.peek(), Some('"' | '\'')) {
-            return Err(self.error(ErrorKind::InvalidTemporal, start, self.char_end(self.pos)));
+            return Err(self.error(invalid, start, self.char_end(self.pos)));
         }
         let (text, end) = crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)
             .map_err(|error| {
                 if error.kind == ErrorKind::LimitExceeded {
                     error
                 } else {
-                    self.error(ErrorKind::InvalidTemporal, payload_start, error.span.end)
+                    self.error(invalid, payload_start, error.span.end)
                 }
             })?;
         self.pos = end;
         let value = crate::ParsedTemporal::parse(kind, text, self.source)
-            .map_err(|_| self.error(ErrorKind::InvalidTemporal, payload_start, end))?;
+            .map_err(|_| self.error(invalid, payload_start, end))?;
         if value
             .value(self.source)
             .expect("admitted source")

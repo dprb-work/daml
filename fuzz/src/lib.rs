@@ -234,6 +234,10 @@ fn native_fixture() -> &'static NativeFixture {
                     "items": {"type": "array", "items": {"type": "integer"}, "uniqueItems": true, "default": [1, 2]},
                     "nullable": {"default": null},
                     "adapter": {"type": "object"},
+                    "when": {
+                        "x-daml-scalar": {"kind": "cron"}, "default": "@weekly",
+                        "x-daml-default-temporals": [{"path": "", "kind": "cron"}]
+                    },
                     "choice": {"anyOf": [{"type": "string", "default": "left"}, {"type": "string", "default": "right"}]}
                 },
                 "required": ["name", "count", "items"], "additionalProperties": true
@@ -295,6 +299,7 @@ fn fixed_documents() -> &'static [Document] {
         "!fuzz.Config { name: null\n count: 0\n items: []\n choice: \"selected\"\n adapter: !fuzz.NativeProvider { enabled: true } }",
         "!fuzz.Item { id: 42\n metadata: { label: \"wide\" } }",
         "!fuzz.List [!fuzz.Count 1\n!fuzz.Count 2]",
+        "!fuzz.Config { choice: \"selected\"\n when: !Cron \"0 17 9 LW * *\" }",
     ].into_iter().map(|source| parse_with_limits(source, PARSE_LIMITS).expect("fixed document")).collect()
     });
     &DOCUMENTS
@@ -393,6 +398,7 @@ pub fn exercise_schema(data: &[u8]) {
             "!fuzz.Config 1e400",
             "!fuzz.Config \"é\"",
             "!fuzz.Config null",
+            "!fuzz.Config { when: !Cron \"0 17 9 ? * FRI#3\" }",
             "{}",
         ]
         .into_iter()

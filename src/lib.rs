@@ -46,6 +46,7 @@
 
 use std::borrow::Cow;
 
+mod cron;
 mod format;
 mod json_backend;
 #[cfg(feature = "lsp")]
