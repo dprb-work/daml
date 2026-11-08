@@ -15,7 +15,9 @@ npm ci
 npm run package
 cd ../verify
 npm ci
-DAML_LSP_PATH=/absolute/path/to/released/bin/daml-lsp npm run test:vscode
+DAML_LSP_PATH=/absolute/path/to/released/bin/daml-lsp \
+  DAML_VSIX_PATH=/absolute/path/to/definitively-asserted-daml-0.2.0.vsix \
+  npm run test:vscode
 ```
 
 The runner downloads pinned VS Code 1.105.1, installs the generated VSIX in
@@ -26,6 +28,10 @@ non-destructiveness, and process cleanup after a client restart. It also checks
 that a hostile workspace `serverPath` sentinel remains unused. The untrusted
 case checks `workspace.isTrusted` before and after opening a DAML document and
 that its user-scoped sentinel remains unused. No mock LSP is used.
+
+Both the installed-host and visual runners require that exact absolute VSIX
+path. They do not choose a latest file or import a product manifest to infer
+which archive the caller intended to test.
 
 If the Electron check fails, the runner prints wrapper and test-driver events
 plus recorded process IDs before cleaning its scratch directory. The diagnostic

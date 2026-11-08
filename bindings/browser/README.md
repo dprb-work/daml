@@ -6,8 +6,8 @@ The browser SDK runs DAML's Rust parser, native definition compiler, resolver, v
 
 The browser package is a public asset of the [DAML GitHub
 releases](https://github.com/dprb-work/daml/releases); it is not published to
-npm. Choose the `browser-sdk-v<version>` release and download the package
-archive and SHA-256 sidecar. For version 0.1.0:
+npm. The historical `browser-sdk-v0.1.0` release provides the following package
+archive and SHA-256 sidecar:
 
 ```sh
 base=https://github.com/dprb-work/daml/releases/download/browser-sdk-v0.1.0
@@ -29,6 +29,11 @@ endpoints.
 contracts require SDK 0.2.0 or newer. The 0.1.0 download example does not provide
 those capabilities. Source changes and SDK artifact publication are separate;
 select an actual release matching the APIs and native source revision you use.
+
+Current 0.2.0 candidates use the
+[coordinated delivery pipeline](../../docs/development/releases.md). Approved
+future uploads place the SDK archive alongside other components in `v<version>`,
+not another required browser-only release. Existing 0.1.0 URLs remain valid.
 
 ## Load and edit
 

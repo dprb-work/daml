@@ -1,0 +1,20 @@
+name: Prepare release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Full read-only release qualification
+    uses: ./.github/workflows/ci-heavy.yml
+    with:
+      checks: '["docs","core","dependencies","fuzz","editors","binaries"]'
+      ref: ${{ github.sha }}
+      prepare_release: true

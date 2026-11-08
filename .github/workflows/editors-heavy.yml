@@ -36,6 +36,7 @@ jobs:
         working-directory: integrations/vscode
         run: npm run typecheck
       - name: Package installable VSIX
+        id: package
         working-directory: integrations/vscode
         run: npm run package
       - name: Build locked DAML language server
@@ -53,13 +54,16 @@ jobs:
         working-directory: integrations/verify
         env:
           DAML_LSP_PATH: ${{ github.workspace }}/target/release/daml-lsp
+          DAML_VSIX_PATH: ${{ steps.package.outputs.vsix }}
           DAML_VSCODE_NO_SANDBOX: '1'
         run: npm run test:vscode
       - name: Retain private VSIX artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: definitively-asserted-daml-vsix
-          path: integrations/vscode/definitively-asserted-daml-0.1.0.vsix
+          path: |
+            integrations/vscode/*.vsix
+            integrations/vscode/*.vsix.sha256
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

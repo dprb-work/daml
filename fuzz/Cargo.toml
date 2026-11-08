@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "=0.4.13"
-daml = { version = "=0.1.0", path = ".." }
+daml = { version = "=0.2.0", path = ".." }
 serde_json = { version = "=1.0.154", features = ["arbitrary_precision", "raw_value"] }
 
 [[bin]]

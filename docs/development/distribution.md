@@ -11,6 +11,10 @@ crate, PyPI package, sdist or release asset. See the
 [user installation instructions](../distribution.md) for native releases and
 [candidate-wheel installation](../python.md#install-a-candidate-wheel) for Python.
 
+The [release operator guide](releases.md) owns coordinated candidate collection,
+protected publication and partial-effect recovery. The build workflows described
+here still publish no registry package or public release by themselves.
+
 ## Build matrix and downloads
 
 The automatic `Check` workflow selects native archive verification for pull requests and pushes to `main` when source, package metadata, toolchain, or archive inputs affect the distribution contract. Draft pull requests skip archive builds. Manual `Check` dispatch selects the full CI plan; the standalone `Binaries` workflow remains a manual archive-verification entrypoint. Each selected native job builds and exercises the archive on its runner:
@@ -75,7 +79,7 @@ From the repository root, run:
 
 ```sh
 python3 skills/verify-daml-distribution/scripts/archive.py \
-  dist/daml-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+  dist/daml-0.2.0-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 The [LSP guide](../lsp.md) describes protocol capabilities. The VS Code extension is separate from native archives. The [Python extension](../python.md) has a separate package and build graph; it does not change these archives or add a Python runtime requirement.
@@ -84,8 +88,8 @@ The [LSP guide](../lsp.md) describes protocol capabilities. The VS Code extensio
 
 The same three native jobs prepare the `daml-config` distribution. Its import
 package remains `daml`; the unrelated PyPI project named `daml` is not this
-distribution. The Python Cargo manifest owns version `0.1.0` independently of
-the older native release archives.
+distribution. The Python Cargo manifest declares `0.2.0`; the release policy
+checks it against the other shipping components before qualification.
 
 | Platform | Wheel contract |
 |---|---|
@@ -153,10 +157,10 @@ against the exact wheel and sidecar. For example, on Linux:
 ```sh
 uv run --no-project --python 3.12 python \
   skills/verify-daml-distribution/scripts/wheel.py \
-  dist/python/daml_config-0.1.0-cp312-abi3-manylinux_2_35_x86_64.whl
+  dist/python/daml_config-0.2.0-cp312-abi3-manylinux_2_35_x86_64.whl
 uv run --no-project --python 3.13 python \
   skills/verify-daml-distribution/scripts/wheel.py \
-  dist/python/daml_config-0.1.0-cp312-abi3-manylinux_2_35_x86_64.whl
+  dist/python/daml_config-0.2.0-cp312-abi3-manylinux_2_35_x86_64.whl
 ```
 
 The helper checks artifact identity/legal payloads and installs into a new

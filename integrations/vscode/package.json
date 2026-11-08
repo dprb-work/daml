@@ -2,7 +2,7 @@
   "name": "definitively-asserted-daml",
   "displayName": "Definitively Asserted DAML",
   "description": "Syntax highlighting, diagnostics, and formatting for DAML documents.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "dprb-work",
   "license": "MIT",
   "repository": {
@@ -52,7 +52,7 @@
   },
   "scripts": {
     "build": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --metafile=dist/meta.json --outfile=dist/extension.js && node scripts/stage-runtime-assets.mjs",
-    "package": "npm run build && node scripts/stage-license.mjs && node scripts/stage-third-party-notices.mjs && vsce package --no-dependencies --out definitively-asserted-daml-0.1.0.vsix",
+    "package": "node scripts/package.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

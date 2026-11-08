@@ -47,7 +47,7 @@ async function startClient(): Promise<void> {
     const detail = error instanceof Error ? error.message : String(error);
     const missing = /enoent|not found|cannot find/i.test(detail);
     const message = missing
-      ? `Cannot start DAML language server: executable “${executable}” was not found. Install the daml-lsp binary from the private DAML v0.1.0 release, or set definitivelyAssertedDaml.serverPath to its absolute path in user settings.`
+      ? `Cannot start DAML language server: executable “${executable}” was not found. Install daml-lsp from https://github.com/dprb-work/daml/releases, or set definitivelyAssertedDaml.serverPath to its absolute path in user settings.`
       : `Cannot start DAML language server (${executable}): ${detail}`;
     void vscode.window.showErrorMessage(message);
     throw error;
