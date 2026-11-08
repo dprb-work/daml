@@ -1,0 +1,1 @@
+{"types":{"app.Loop":{"schema":{"$ref":"urn:loop"}}},"resources":[{"uri":"urn:loop","schema":{"$ref":"urn:loop"}}]}

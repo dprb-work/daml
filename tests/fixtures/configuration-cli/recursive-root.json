@@ -1,0 +1,1 @@
+{"types":{"app.Node":{"schema":{"$ref":"urn:recursive:node"}},"app.Other":{"schema":{"type":"object","properties":{"other":{"type":"string"}},"required":["other"]}}}}

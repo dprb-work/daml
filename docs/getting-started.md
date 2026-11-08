@@ -20,8 +20,8 @@ daml-lsp --help
 ```
 
 They run without Rust or Python. `daml-fmt` formats files; `daml-lsp` supports
-editors. The VS Code extension is a separate package, and neither native command
-is a configuration-validation CLI.
+editors. The VS Code extension is a separate package. To validate configuration,
+build the separate [`daml` CLI](cli.md) from source.
 
 ## 2. Write something to format
 

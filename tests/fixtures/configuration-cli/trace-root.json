@@ -1,0 +1,1 @@
+{"types":{"app.Trace":{"schema":{"allOf":[{"type":"object","properties":{"value":{"type":"integer","minimum":0,"maximum":20}},"required":["value"]},{"type":"object","properties":{"value":{"anyOf":[{"type":"integer","minimum":10},{"type":"integer","maximum":5}]}}}]}}}}
