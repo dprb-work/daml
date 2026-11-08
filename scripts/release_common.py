@@ -17,6 +17,8 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 
+from release_security import validate_evidence
+
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "dprb-work/daml"
 TARGETS = {
@@ -466,12 +468,13 @@ def validate_bundle(
             "prepare_run_id",
             "run_attempt",
             "assets",
+            "security",
         },
         "release manifest fields differ",
     )
     require(
         type(manifest["schema"]) is int
-        and manifest["schema"] == 1
+        and manifest["schema"] == 2
         and manifest["repository"] == REPOSITORY
         and manifest["source_sha"] == source_sha
         and manifest["version"] == version,
@@ -524,6 +527,9 @@ def validate_bundle(
         )
         check_sidecar(path, digest)
         inspect_payload(path, version=version, source_sha=source_sha, **expected[name])
+    validate_evidence(
+        ROOT, manifest["security"], source_sha=source_sha, assets=manifest["assets"]
+    )
     return manifest
 
 

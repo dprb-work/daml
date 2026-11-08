@@ -57,6 +57,8 @@ jobs:
         run: python3 scripts/release_common.py check-version
       - name: Exercise frozen release admission regressions
         run: python3 -B -m unittest discover -s tests -p test_release_delivery.py
+      - name: Exercise release security admission without running scanners
+        run: python3 -B -m unittest discover -s tests -p test_release_security.py
 
   core:
     name: Check
@@ -95,21 +97,23 @@ jobs:
       ref: ${{ inputs.ref }}
 
   collect:
-    name: Collect qualified release candidate
+    name: Collect candidate and run complete release security suite
     needs: [versions, core, editors, binaries, browser]
     if: inputs.prepare_release
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+      - name: Require the runner's existing Docker daemon for isolated release scans
+        run: docker info --format '{{.ServerVersion}}'
       - name: Download only this run's producer artifacts into separate directories
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: ${{ runner.temp }}/daml-producer-artifacts
-      - name: Admit unchanged payloads and write the approval packet
+      - name: Admit payloads, run every security check, and seal the approval packet
         id: candidate
         env:
           SOURCE_SHA: ${{ inputs.ref }}

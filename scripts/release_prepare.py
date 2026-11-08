@@ -23,6 +23,7 @@ from release_common import (
     source_identity,
     validate_bundle,
 )
+from release_security import print_summary, run_suite
 
 
 def prepare(
@@ -105,7 +106,7 @@ def prepare(
         )
         sources[name] = path
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "repository": REPOSITORY,
         "source_sha": source_sha,
         "version": version,
@@ -124,6 +125,13 @@ def prepare(
             "x", encoding="ascii", newline="\n"
         ) as sidecar:
             sidecar.write(f"{asset['sha256']}  {name}\n")
+    # Scan the admitted bytes before sealing the manifest used for release approval.
+    # Even a failed suite is retained locally as evidence; validation below blocks
+    # candidate retention/publication unless every required category passed.
+    manifest["security"] = run_suite(
+        ROOT, out, source_sha=source_sha, assets=manifest["assets"]
+    )
+    print_summary(manifest["security"])
     with (out / "RELEASE.json").open("x", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     validate_bundle(
@@ -134,7 +142,7 @@ def prepare(
         "## DAML prepared candidate (not publication authorization)\n\n"
         f"- Repository: `{REPOSITORY}`\n- Source SHA: `{source_sha}`\n"
         f"- Version: `{version}`\n- Preparation run: `{prepare_run_id}` (attempt `{run_attempt}`)\n"
-        "- Artifact: `daml-release-candidate` (8 payloads, 8 SHA-256 sidecars, RELEASE.json)\n"
+        "- Artifact: `daml-release-candidate` (8 payloads, 8 SHA-256 sidecars, RELEASE.json with security evidence)\n"
         f"- Approval manifest SHA-256: `{digest}`\n\n"
         "Only a successful canonical `prepare-release.yml` run on main qualifies for promotion. "
         "A Check dispatch is a qualification preview. A rerun or changed manifest needs a new approved digest.\n"
