@@ -29,6 +29,9 @@ reference admission, completion and default checks.
 Native default checks separate same-instance admission from structural child
 traversal. A local phase with no reachable same-instance preset is omitted;
 descendant presets and every structural branch remain in the walk.
+The native-only `x-daml-native-literal` marker keeps composite value-literal
+presence constraints intact in the partial-default projection. Typed descendant
+schemas retain temporal equality without substituting JSON-string equality.
 
 ## Implementation defaults
 
