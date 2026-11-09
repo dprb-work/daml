@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,6 +183,35 @@ try {
         return { events: [], error: { code: error.code ?? null, message: error.message } };
       }
     }
+    async function readLaunchLogs(userData) {
+      const logs = [];
+      async function visit(directory, depth) {
+        if (depth > 8 || logs.length >= 20) return;
+        let entries;
+        try {
+          entries = await readdir(directory, { withFileTypes: true });
+        } catch (error) {
+          if (error.code !== 'ENOENT') logs.push({ path: directory, error: error.message });
+          return;
+        }
+        for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+          const path = join(directory, entry.name);
+          if (entry.isDirectory()) {
+            await visit(path, depth + 1);
+          } else if (entry.isFile() && (entry.name === 'exthost.log' || entry.name.toLowerCase().includes('daml'))) {
+            try {
+              const text = await readFile(path, 'utf8');
+              logs.push({ path, omittedCharacters: Math.max(0, text.length - 65_536), text: text.slice(-65_536) });
+            } catch (error) {
+              logs.push({ path, error: error.message });
+            }
+          }
+          if (logs.length >= 20) break;
+        }
+      }
+      await visit(join(userData, 'logs'), 0);
+      return logs;
+    }
     const [wrapperStatus, testStages, wrapperPid, childPid] = await Promise.all([
       readEvents(lifecycleStatusFile),
       readEvents(lifecycleStageFile),
@@ -196,6 +225,11 @@ try {
       testStages: testStages.events,
       testStagesError: testStages.error,
       pidFiles: { wrapper: wrapperPid, child: childPid },
+    }, null, 2));
+    console.error(JSON.stringify({
+      event: 'lifecycle-vscode-launch-logs',
+      trusted: await readLaunchLogs(trustedUserData),
+      untrusted: await readLaunchLogs(untrustedUserData),
     }, null, 2));
   }
   try {

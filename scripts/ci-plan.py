@@ -70,7 +70,9 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
             or path in {"Cargo.toml", "Cargo.lock", "deny.toml"}
         ):
             selected.add("fuzz")
-        if path.startswith(("integrations/", "src/")):
+        if path.startswith(
+            ("integrations/", "src/", "tests/fixtures/semantic-editor/")
+        ):
             selected.add("editors")
         if path.startswith("src/") or path in {
             "Cargo.toml",

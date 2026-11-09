@@ -1,7 +1,7 @@
 {
   "name": "definitively-asserted-daml",
   "displayName": "Definitively Asserted DAML",
-  "description": "Syntax highlighting, diagnostics, and formatting for DAML documents.",
+  "description": "Syntax highlighting, formatting, and explicitly selected schema-aware authoring for DAML documents.",
   "version": "0.2.0",
   "publisher": "dprb-work",
   "license": "MIT",
@@ -23,11 +23,48 @@
     }
   },
   "contributes": {
+    "commands": [
+      {
+        "command": "definitivelyAssertedDaml.useConfiguration",
+        "category": "DAML",
+        "title": "Use Configuration Context",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "definitivelyAssertedDaml.useDefinition",
+        "category": "DAML",
+        "title": "Use Definition Context",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
+        "command": "definitivelyAssertedDaml.useSyntax",
+        "category": "DAML",
+        "title": "Use Syntax Only",
+        "enablement": "isWorkspaceTrusted"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "definitivelyAssertedDaml.useConfiguration",
+          "when": "editorLangId == definitively-asserted-daml"
+        },
+        {
+          "command": "definitivelyAssertedDaml.useDefinition",
+          "when": "editorLangId == definitively-asserted-daml"
+        },
+        {
+          "command": "definitivelyAssertedDaml.useSyntax",
+          "when": "editorLangId == definitively-asserted-daml"
+        }
+      ]
+    },
     "languages": [
       {
         "id": "definitively-asserted-daml",
         "aliases": ["Definitively Asserted DAML", "DAML"],
         "extensions": [".daml"],
+        "filenames": ["daml.bundle"],
         "configuration": "./language-configuration.json"
       }
     ],

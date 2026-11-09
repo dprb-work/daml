@@ -91,6 +91,44 @@ impl Encoding {
             end_position.unwrap_or(eof_position),
         )
     }
+
+    /// Convert a negotiated position to a UTF-8 boundary; clamp past line end,
+    /// but never invent a boundary within a supplementary/multibyte character.
+    pub(super) fn offset(self, source: &str, position: Position) -> Option<usize> {
+        let bytes = source.as_bytes();
+        let mut offset = 0;
+        let mut line = 0_u32;
+        let mut character = 0_u32;
+        loop {
+            if line == position.line && character == position.character {
+                return Some(offset);
+            }
+            if offset == bytes.len() {
+                return (line == position.line).then_some(offset);
+            }
+            if let Some(next) = crate::source::line_end(bytes, offset) {
+                if line == position.line {
+                    return Some(offset);
+                }
+                offset = next;
+                line = line.checked_add(1)?;
+                character = 0;
+                continue;
+            }
+            let ch = source[offset..].chars().next()?;
+            let units = match self {
+                Self::Utf8 => ch.len_utf8(),
+                Self::Utf16 => ch.len_utf16(),
+                Self::Utf32 => 1,
+            } as u32;
+            let next = character.checked_add(units)?;
+            if line == position.line && position.character < next {
+                return None;
+            }
+            character = next;
+            offset += ch.len_utf8();
+        }
+    }
 }
 
 #[cfg(test)]

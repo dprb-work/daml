@@ -1,10 +1,13 @@
 # DAML language server
 
-`daml-lsp` provides native-definition syntax diagnostics and whole-document
-formatting over stdio. Install a released executable using the [command-line
-installation guide](distribution.md), or build it from a source checkout below.
-The server does not resolve aliases, load bundles, validate bundle semantics,
-apply defaults, or discover schemas.
+`daml-lsp` provides syntax diagnostics and whole-document formatting over stdio.
+The source-built server adds opt-in semantic diagnostics, completion, hover,
+and definition navigation. Documents remain syntax-only until a client selects
+a [semantic context](#semantic-context).
+
+Released executables may predate semantic providers. Use matching source-built
+server and client for the behavior below; see [installation](distribution.md)
+for versioned release artifacts.
 
 ## Build and launch
 
@@ -29,14 +32,17 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 |---|---|
 | Initialization | Standard initialize/initialized handshake and server information. Invalid parameters return InvalidParams with `InitializeError.retry: true`; initialization remains pending for client correction or exit. |
 | Position encoding | First supported client offer among UTF-8, UTF-16, UTF-32; mandatory UTF-16 fallback when absent or unsupported. |
-| Diagnostics | Native definition syntax errors, with accepted document version and correctly encoded byte-span ranges. Valid replacements publish an empty list. |
-| Formatting | Canonical native definition reflow at 80 columns and two-space indentation, through `format_definition`. |
+| Diagnostics | Syntax errors by default; native compilation and configuration validation in selected semantic contexts. Versioned, correctly encoded source ranges and related definition locations. |
+| Formatting | Canonical data or native definition reflow at 80 columns and two-space indentation, according to the selected role. |
+| Completion | Visible assertion/reference names and contract fields, including required/optional/default details and reliable incomplete prefixes. |
+| Hover | Applicable constraints/defaults; checked configuration values distinguish supplied input from completed defaults. Invalid/incomplete data receives labeled hints only. |
+| Definition | Actual native source locations for references and configuration fields; no invented built-in targets. |
 | Shutdown | Standard shutdown response followed by exit; graceful sessions terminate successfully even while the client stdin pipe remains open. |
 
-Documents are identified only by client-provided URIs and text. Untitled buffers
-and nonexistent file URIs work without filesystem access. Workspace roots,
-initialization options, configuration notifications, process cwd, and document
-locations do not select schemas or affect parsing.
+Without a selected context, documents use only client-provided URIs and text.
+Untitled buffers and nonexistent file URIs work without filesystem access.
+Workspace roots, initialization options, configuration notifications, and cwd
+do not select schemas. Closing a document clears its selected context.
 
 One synchronous session owns each connection's document map. Duplicate opens,
 changes for unopened documents, and older/equal versions cannot overwrite
@@ -54,6 +60,79 @@ Diagnostics carry versions; clients must also discard a formatting result if
 their buffer changes after the request. Standard document-formatting requests
 and edits do not contain a document version, so the server does not claim to
 solve client-side edit races.
+
+## Semantic context
+
+Send standard `workspace/executeCommand` with exactly one argument object:
+
+```json
+{
+  "command": "daml.setContext",
+  "arguments": [{
+    "uri": "file:///project/config.daml",
+    "kind": "configuration",
+    "bundleRoot": "file:///project",
+    "expected": "app.Config"
+  }]
+}
+```
+
+| Kind | Contract |
+|---|---|
+| `configuration` | Compile and resolve against the root assertion and optional `expected` native type. At least one must select a root contract; both remain obligations when present. |
+| `definition` | Compile the local file as a native definition, with its bundle-relative `self` identity. Does not accept `expected`. |
+| `syntax` | Clear semantic context. Accepts neither `bundleRoot` nor `expected`. |
+
+`uri` must identify an open document. `bundleRoot` is an optional absolute local
+file URI; without it, discover the nearest ancestor `daml.bundle` from the
+document path. Virtual configuration needs an explicit bundle. Definition
+context requires a local file identity. Local file URIs reject remote
+authorities, query/fragment, NUL and nonabsolute paths; `localhost` is local.
+Unknown fields/kinds and invalid combinations fail without changing prior state.
+
+Acceptance returns `{ "generation": number }` before analysis notifications.
+Each accepted change, including syntax reset, receives a fresh nonzero,
+session-monotonic `u32` generation. Exhaustion fails rather than wrapping.
+At most 64 documents may have semantic context in one connection.
+This acknowledgment accepts context; it neither certifies data nor signals that
+an editor's OS watchers are armed.
+
+Open source overrides disk, including unsaved definitions and `daml.bundle`.
+Incomplete or over-limit open versions never fall back to stale disk text.
+Changes, closes and watched-file notifications refresh dependent contexts.
+Requests also refresh disk-backed analysis for clients without watcher support.
+The existing native compiler and resolver own aliases, scopes, defaults,
+validation and recursive references; the server introduces no second validator.
+
+Hints do not rewrite source, insert defaults or certify incomplete data.
+Visible-name completion enumerates bounded names, not every compatible provider
+or unreferenced definition body. Strings, comments and unreliable prefixes
+receive no unrelated structural suggestions.
+
+### Dependency notifications
+
+After context analysis, `daml/dependencies` carries:
+
+```json
+{"uri":"file:///project/config.daml","version":3,"generation":1,"files":["file:///project/daml.bundle"]}
+```
+
+These local-file URIs identify actual consulted/attempted dependencies, including
+imports outside workspace roots. Parent paths use native filesystem resolution,
+not lexical `..` collapse. File-symlink chains retain every entry and the current
+terminal path, including missing targets, so intermediate retargeting can invalidate
+analysis. Forward changes through standard
+`workspace/didChangeWatchedFiles`. A syntax reset or close sends an empty list;
+close uses its closing generation. Clients must match live document identity,
+version, acknowledged generation and connection before installing watchers.
+
+Each update is bounded to 10,000 files, 32,768 URI bytes per server URI and 8 MiB
+aggregate UTF-8 URI bytes. The VS Code client additionally admits at most 32,768
+UTF-16 units per URI and 10,000 distinct shared watchers, including tentative
+replacements. Watcher replacement is transactional; failure preserves previous
+memberships and is reported. Context reset, close and client disposal release
+ownership. Filesystem watcher support depends on the host; replacing or retargeting
+a watched parent directory may require context reselection or client restart.
 
 ## Diagnostics and source limits
 
@@ -82,16 +161,16 @@ authoritative, including hard newlines between entries, same-line tag payloads,
 comment retention, and decoded block-string preservation. Editor indentation
 preferences do not introduce another DAML style/configuration system.
 
-Before sending changed text, the server checks it with the same native parser
-and limits. Reflow can grow a scalar's source span, not just total file bytes;
-a proposed edit must not push an otherwise valid buffer outside this server's
-admission policy. This check does not mutate the current document.
+Before sending changed text, the server checks it with the selected data/native
+parser and limits. Reflow can grow a scalar's source span, not just total file
+bytes; a proposed edit must not push an otherwise valid buffer outside admission
+policy. This check does not mutate the current document.
 
 | Request failure | LSP error |
 |---|---|
 | Unknown method | MethodNotFound (`-32601`). |
-| Malformed formatting parameters or unopened URI | InvalidParams (`-32602`). |
-| Current source is invalid, formatting fails, or the proposed output violates native parser admission/limits | RequestFailed (`-32803`). |
+| Malformed request parameters, unopened URI, invalid context options or inbound character boundary | InvalidParams (`-32602`). |
+| Current source is invalid, formatting/output admission fails, or semantic analysis/presentation exceeds its bounds | RequestFailed (`-32803`), or a versioned diagnostic for context-analysis failures. |
 
 A fatal initialization-handshake, transport, or shutdown failure terminates the executable
 unsuccessfully. `daml::lsp::ServerError` retains its cause for explicit inspection,
@@ -102,16 +181,15 @@ on a client's still-open stdin. On graceful shutdown all provided threads join.
 
 ## Boundaries
 
-The server provides no completion, hover, symbol indexing, incremental parsing,
-schema diagnostics, or bundle semantic integration. Separate
-[client integrations](../integrations/README.md) own editor highlighting,
-process lifecycle, synchronization, and edit application; the grammar is not a
-second language authority.
+No incremental parser, global symbol index, remote schema fetch or application
+constructor execution is provided. Separate [client integrations](../integrations/README.md)
+own highlighting, process lifecycle, synchronization, dependency watching and
+edit application; the grammar is not a second language authority.
 
 The protocol DTOs, framing, stdio threads, and shutdown helper come from the
-pinned upstream libraries. The DAML-specific code owns versioned documents,
-byte-span conversion, and parser/formatter integration. Initialization uses
-fallible sends rather than upstream helpers that panic on a disconnected client;
+pinned upstream libraries. DAML code owns versioned documents, explicit context,
+byte-span conversion and integration with the parser, formatter and native compiler.
+Initialization uses fallible sends rather than upstream helpers that panic on a disconnected client;
 invalid parameters leave the handshake pending so its error response can flush.
-No second grammar, async runtime, JSON-RPC framer, or filesystem/configuration
-host is introduced.
+No second grammar, async runtime, JSON-RPC framer or remote configuration host is
+introduced. Semantic analysis reads explicitly selected local bundles only.

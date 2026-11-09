@@ -1,6 +1,6 @@
 # Editor integrations
 
-DAML's editor support currently includes a VS Code-compatible extension and a generic Language Server Protocol server. The server provides native-definition syntax diagnostics and whole-document formatting; it does not provide schema semantics, completion, or hover. See the [LSP guide](../docs/lsp.md) for its exact capabilities.
+DAML includes a VS Code-compatible extension and a generic Language Server Protocol server. Syntax diagnostics and whole-document formatting are available without schema discovery. Matching current source builds add explicitly selected semantic diagnostics, completion, hover and source navigation; older released servers may lack them. See the [LSP guide](../docs/lsp.md) for context selection and exact capabilities.
 
 | Client | Status | Setup |
 |---|---|---|

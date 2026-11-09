@@ -15,11 +15,11 @@
 - [x] 3.1 Exercise real CLI native/recursive-module success and failure, provenance, exact values, and unchanged inputs; retain observed results.
 - [x] 3.2 Reconcile user/API documentation, source-built availability, and release-owner integration boundary.
 - [x] 3.3 Run repository-required checks and OpenSpec validation on the integrated revision; resolve failures without changing frozen checks.
-- [ ] 3.4 Obtain human result acceptance after independent whole-change review and finding disposition; no merge or release.
+- [x] 3.4 Obtain human result acceptance after independent whole-change review and finding disposition; release remains separately authorized.
 
 ## Delivery state
 
-Current slice: issue #32 in `/home/jason/wt/daml/feat/validation-cli`, branch `feat/validation-cli`, prepared for exact-result acceptance. Issues #33 and #34 retain the accepted later delivery scope; they are not completed by this slice. Release/archive inclusion remains separately owned. The primary checkout is unchanged.
+Issue #32's CLI result `c31daace273fe48e8b3e94f55e91172b20ae344f` is human-accepted. The user's later “bring it in” authorizes integration through [PR #35](https://github.com/dprb-work/daml/pull/35#issuecomment-6735508216), not publication or deployment. Issue #33 is a separate result; #34 remains unimplemented. Release/archive inclusion remains separately owned. The primary checkout is unchanged.
 
 Independent check owners: `CliChecks` and `ExplanationChecks`; implementers do not edit their tests/fixtures. Frozen commands: `cargo test --locked --test configuration_cli` (test SHA-256 `3a31861548cd1d4da2248922494446ce70faee429b0a8b48fc257fa3146e834f`) and `cargo test --locked --test explanation` (test SHA-256 `2ec996d3075f27bec58e121a318e8bf935440eb5dc55fd1859edb86e39659bb3`). Check-owner amendments corrected invalid source/profile/API expectations and added branch/recursive coverage; expected consumer outcomes were preserved. The first CLI run passed seven cases and exposed three comma-separated source-fixture errors; their owner corrected the fixtures, after which all ten passed. Four core explanation checks passed. Prompt ownership is not hostile-write isolation. The baseline had no `daml` binary; no failing-before behavioral claim is made.
 

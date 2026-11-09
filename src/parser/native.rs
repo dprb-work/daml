@@ -5,29 +5,23 @@ use crate::{ErrorKind, Limits, ParseError, Span};
 
 pub(crate) fn parse_definition(source: &str, limits: Limits) -> Result<Expression, ParseError> {
     check_input(source, limits)?;
-    let mut parser = Parser {
-        source,
-        pos: usize::from(source.starts_with('\u{feff}')) * 3,
-        limits,
-        nodes: 0,
-    };
-    parser.trivia()?;
-    if parser.pos == source.len() {
-        return Err(parser.error(ErrorKind::ExpectedValue, parser.pos, parser.pos));
-    }
-    let root = parser.expression(0, false)?;
-    parser.trivia()?;
-    if parser.pos != source.len() {
-        return Err(parser.error(
-            ErrorKind::TrailingInput,
-            parser.pos,
-            parser.char_end(parser.pos),
-        ));
-    }
-    Ok(root)
+    Parser::<false>::new(source, limits).native_definition()
 }
 
-impl Parser<'_> {
+impl<const EDITOR: bool> Parser<'_, EDITOR> {
+    pub(super) fn native_definition(&mut self) -> Result<Expression, ParseError> {
+        self.trivia()?;
+        if self.pos == self.source.len() {
+            return Err(self.error(ErrorKind::ExpectedValue, self.pos, self.pos));
+        }
+        let root = self.expression(0, false)?;
+        self.trivia()?;
+        if self.pos != self.source.len() {
+            return Err(self.error(ErrorKind::TrailingInput, self.pos, self.char_end(self.pos)));
+        }
+        Ok(root)
+    }
+
     fn expression(&mut self, depth: usize, tuple_position: bool) -> Result<Expression, ParseError> {
         self.trivia()?;
         let start = self.pos;
@@ -179,6 +173,14 @@ impl Parser<'_> {
             while self.peek().is_some_and(is_name_char) {
                 self.pos += self.peek().unwrap().len_utf8();
             }
+            #[cfg(feature = "lsp")]
+            self.editor_hint(
+                super::editor::CompletionKind::Tag,
+                Span {
+                    start: name_start,
+                    end: self.pos,
+                },
+            )?;
             if self.pos == name_start {
                 return Err(self.error(ErrorKind::InvalidTag, name_start, self.pos));
             }

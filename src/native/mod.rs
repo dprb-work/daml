@@ -5,6 +5,8 @@ mod compiler;
 mod error;
 mod format;
 mod syntax;
+#[cfg(feature = "lsp")]
+pub(crate) mod tooling;
 
 use crate::{Node, Span, StringValue};
 
