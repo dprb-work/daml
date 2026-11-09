@@ -1,20 +1,21 @@
-//! Optional synchronous LSP adapter around DAML's checked parser and formatter.
+//! Optional synchronous protocol adapter; native/core owners retain language policy.
 //!
-//! This module is enabled by the `lsp` feature. It owns protocol/session state,
-//! not source discovery: every document comes from a client notification. Schema
-//! folder roots and relative-path policy are deliberately outside this adapter.
+//! Documents remain syntax-only until a caller explicitly selects their context.
+//! Session versions and context generations own diagnostics and watch metadata.
 
 mod positions;
+mod semantic;
+mod uri;
 
-use crate::{
-    Definition, FormatOptions, Limits, Span, format_definition, parser::native::parse_definition,
-};
+use crate::Span;
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response, ResponseError};
 use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, InitializeError, InitializeParams,
-    InitializeResult, OneOf, PublishDiagnosticsParams, Range, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Uri,
+    CompletionOptions, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    ExecuteCommandOptions, ExecuteCommandParams, HoverProviderCapability, InitializeError,
+    InitializeParams, InitializeResult, OneOf, PublishDiagnosticsParams, ServerCapabilities,
+    ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, Uri,
     notification::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
         Notification as _, PublishDiagnostics,
@@ -22,8 +23,13 @@ use lsp_types::{
     request::{Formatting, Initialize, Request as _},
 };
 use positions::Encoding;
+use semantic::{Context, Text};
 use serde::de::DeserializeOwned;
-use std::{collections::HashMap, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 type Cause = Box<dyn Error + Send + Sync>;
 
@@ -149,6 +155,17 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
                 },
             )),
             document_formatting_provider: Some(OneOf::Left(true)),
+            completion_provider: Some(CompletionOptions {
+                trigger_characters: Some(vec!["!".into(), ".".into(), ":".into()]),
+                resolve_provider: Some(false),
+                ..Default::default()
+            }),
+            hover_provider: Some(HoverProviderCapability::Simple(true)),
+            definition_provider: Some(OneOf::Left(true)),
+            execute_command_provider: Some(ExecuteCommandOptions {
+                commands: vec![semantic::SET_CONTEXT.into()],
+                ..Default::default()
+            }),
             ..ServerCapabilities::default()
         },
         server_info: Some(ServerInfo {
@@ -176,6 +193,8 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
     let mut session = Session {
         encoding,
         documents: HashMap::new(),
+        semantic_uris: HashSet::new(),
+        next_generation: 0,
     };
     loop {
         let message = connection
@@ -212,13 +231,16 @@ fn send(connection: &Connection, message: Message) -> Result<(), ServerError> {
 
 struct OpenDocument {
     version: i32,
-    // A rejected version retains no source buffer. Its diagnostic has been published.
-    parsed: Option<Definition>,
+    text: Text,
+    context: Option<Context>,
+    generation: u32,
 }
 
 struct Session {
     encoding: Encoding,
     documents: HashMap<Uri, OpenDocument>,
+    semantic_uris: HashSet<Uri>,
+    next_generation: u32,
 }
 
 impl Session {
@@ -249,16 +271,51 @@ impl Session {
                     notification_params::<DidCloseTextDocumentParams>(notification)
                 {
                     let uri = params.text_document.uri;
-                    if self.documents.remove(&uri).is_some() {
-                        let params = PublishDiagnosticsParams::new(uri, Vec::new(), None);
+                    if let Some(document) = self.documents.remove(&uri) {
                         send(
                             connection,
-                            Notification::new(PublishDiagnostics::METHOD.to_owned(), params).into(),
+                            Notification::new(
+                                PublishDiagnostics::METHOD.into(),
+                                PublishDiagnosticsParams::new(uri.clone(), Vec::new(), None),
+                            )
+                            .into(),
                         )?;
+                        if document.generation != 0 {
+                            semantic::dependencies(
+                                connection,
+                                uri,
+                                document.version,
+                                document.generation,
+                                Vec::new(),
+                            )?;
+                        }
+                        self.refresh(connection, None, None)?;
                     }
                 }
             }
-            _ => {} // Includes unsupported workspace/configuration and cancellation notifications.
+            "workspace/didChangeWatchedFiles" => {
+                if self
+                    .documents
+                    .values()
+                    .any(|document| document.context.is_some())
+                    && let Some(params) =
+                        notification_params::<DidChangeWatchedFilesParams>(notification)
+                {
+                    let bytes = params.changes.iter().try_fold(0usize, |sum, change| {
+                        sum.checked_add(change.uri.as_str().len())
+                    });
+                    if params.changes.len() <= 10_000
+                        && bytes.is_some_and(|bytes| bytes <= 8 * 1024 * 1024)
+                        && params
+                            .changes
+                            .iter()
+                            .any(|change| uri::file_path(&change.uri).is_ok())
+                    {
+                        self.refresh(connection, None, None)?;
+                    }
+                }
+            }
+            _ => {} // Unsupported configuration/cancellation notifications do not choose context.
         }
         Ok(())
     }
@@ -283,8 +340,6 @@ impl Session {
             return Ok(());
         }
         if let Some(change) = content_changes.pop() {
-            // Each full replacement supersedes the preceding replacements. Deprecated
-            // rangeLength has no meaning without a range and does not alter the text.
             self.replace(
                 connection,
                 text_document.uri,
@@ -296,6 +351,15 @@ impl Session {
                 .get_mut(&text_document.uri)
                 .expect("document remains open")
                 .version = text_document.version;
+            // Preserve syntax-only empty-update behavior; selected semantic peers
+            // still need current version stamps for their authoritative overlays.
+            if self
+                .documents
+                .values()
+                .any(|document| document.context.is_some())
+            {
+                self.refresh(connection, Some(&text_document.uri), None)?;
+            }
             Ok(())
         }
     }
@@ -307,54 +371,125 @@ impl Session {
         version: i32,
         source: String,
     ) -> Result<(), ServerError> {
-        let limits = Limits::default();
-        let oversized = source.len() > limits.max_input_bytes;
-        let (parsed, diagnostics) = match parse_definition(&source, limits) {
-            Ok(root) => (Some(Definition { source, root }), Vec::new()),
-            Err(error) => {
-                // Over-limit text is discarded; its document-level diagnostic does
-                // not require a position table for arbitrarily large client input.
-                let range = if oversized {
-                    Range::default()
-                } else {
-                    self.encoding.range(&source, error.span)
-                };
-                let diagnostic = Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    source: Some("daml".to_owned()),
-                    message: error.to_string(),
-                    ..Diagnostic::default()
-                };
-                (None, vec![diagnostic])
-            }
-        };
-        let params = PublishDiagnosticsParams::new(uri, diagnostics, Some(version));
-        let notification = Notification::new(PublishDiagnostics::METHOD.to_owned(), &params);
-        self.documents
-            .insert(params.uri, OpenDocument { version, parsed });
-        send(connection, notification.into())
+        let previous = self.documents.remove(&uri);
+        let (context, generation) = previous.map_or((None, 0), |document| {
+            (document.context, document.generation)
+        });
+        let text = Text::parse(source, context.as_ref().is_some_and(Context::data));
+        self.documents.insert(
+            uri.clone(),
+            OpenDocument {
+                version,
+                text,
+                context,
+                generation,
+            },
+        );
+        self.refresh(connection, Some(&uri), None)?;
+        Ok(())
     }
 
-    fn request(&self, connection: &Connection, request: Request) -> Result<(), ServerError> {
-        let response = if request.method == Formatting::METHOD {
-            match serde_json::from_value::<DocumentFormattingParams>(request.params) {
-                Ok(params) => match self.formatting(params) {
-                    Ok(edits) => Response::new_ok(request.id, edits),
-                    Err((code, message)) => Response::new_err(request.id, code as i32, message),
-                },
-                Err(_) => Response::new_err(
-                    request.id,
-                    ErrorCode::InvalidParams as i32,
-                    "invalid document formatting parameters".to_owned(),
-                ),
+    fn select_context(
+        &mut self,
+        params: ExecuteCommandParams,
+    ) -> Result<(Uri, u32), semantic::RequestFailure> {
+        if params.command != semantic::SET_CONTEXT || params.arguments.len() != 1 {
+            return Err(semantic::invalid(
+                "daml.setContext requires exactly one context object",
+            ));
+        }
+        let argument = params
+            .arguments
+            .into_iter()
+            .next()
+            .expect("one checked argument");
+        let (uri, context) = Context::parse(argument, &self.documents)?;
+        if context.is_some()
+            && self.documents[&uri].context.is_none()
+            && self
+                .documents
+                .values()
+                .filter(|document| document.context.is_some())
+                .count()
+                >= semantic::MAX_CONTEXTS
+        {
+            return Err(semantic::failed("active semantic context limit exceeded"));
+        }
+        let generation = self.next_generation.checked_add(1).ok_or_else(|| {
+            semantic::failed("context generation space exhausted; restart the connection")
+        })?;
+        let mut document = self
+            .documents
+            .remove(&uri)
+            .expect("context admission established open document");
+        document.text = document
+            .text
+            .reparse(context.as_ref().is_some_and(Context::data));
+        document.context = context;
+        document.generation = generation;
+        self.documents.insert(uri.clone(), document);
+        self.next_generation = generation;
+        Ok((uri, generation))
+    }
+
+    fn request(&mut self, connection: &Connection, request: Request) -> Result<(), ServerError> {
+        if request.method == "workspace/executeCommand" {
+            let result = serde_json::from_value::<ExecuteCommandParams>(request.params)
+                .map_err(|_| semantic::invalid("invalid execute-command parameters"))
+                .and_then(|params| self.select_context(params));
+            let selected = result.as_ref().ok().map(|(uri, _)| uri.clone());
+            let response = match result {
+                Ok((_, generation)) => {
+                    Response::new_ok(request.id, serde_json::json!({"generation":generation}))
+                }
+                Err((code, message)) => Response::new_err(request.id, code as i32, message),
+            };
+            // Acknowledgment precedes notifications; generation also protects
+            // clients whose asynchronous handlers observe them before continuation.
+            send(connection, response.into())?;
+            if let Some(uri) = selected {
+                self.refresh(connection, Some(&uri), None)?;
+                let document = &self.documents[&uri];
+                if document.context.is_none() {
+                    semantic::dependencies(
+                        connection,
+                        uri.clone(),
+                        document.version,
+                        document.generation,
+                        Vec::new(),
+                    )?;
+                }
             }
-        } else {
-            Response::new_err(
-                request.id,
-                ErrorCode::MethodNotFound as i32,
+            return Ok(());
+        }
+        let result = match request.method.as_str() {
+            Formatting::METHOD => {
+                serde_json::from_value::<DocumentFormattingParams>(request.params)
+                    .map_err(|_| semantic::invalid("invalid document formatting parameters"))
+                    .and_then(|params| self.formatting(params))
+                    .and_then(|edits| {
+                        serde_json::to_value(edits).map_err(|_| {
+                            (
+                                ErrorCode::InternalError,
+                                "formatting result could not be encoded".into(),
+                            )
+                        })
+                    })
+            }
+            "textDocument/completion" | "textDocument/hover" | "textDocument/definition" => {
+                match serde_json::from_value::<TextDocumentPositionParams>(request.params) {
+                    Ok(params) => self.provider(connection, &request.method, params)?,
+                    Err(_) => Err(semantic::invalid("invalid semantic position parameters")),
+                }
+            }
+            _ => Err((
+                ErrorCode::MethodNotFound,
                 "request method is not supported".to_owned(),
-            )
+            )),
+        };
+        let response = match result {
+            Ok(value) => Response::new_ok(request.id, value),
+            Err((code, message)) => Response::new_err(request.id, code as i32, message),
         };
         send(connection, response.into())
     }
@@ -362,36 +497,25 @@ impl Session {
     fn formatting(
         &self,
         params: DocumentFormattingParams,
-    ) -> Result<Vec<TextEdit>, (ErrorCode, String)> {
-        let state = self
+    ) -> Result<Vec<TextEdit>, semantic::RequestFailure> {
+        let document = self
             .documents
             .get(&params.text_document.uri)
-            .ok_or_else(|| (ErrorCode::InvalidParams, "document is not open".to_owned()))?;
-        let document = state.parsed.as_ref().ok_or_else(|| {
-            (
-                ErrorCode::RequestFailed,
-                "cannot format a document with parser diagnostics".to_owned(),
-            )
-        })?;
-        let output = format_definition(document, FormatOptions::default())
-            .map_err(|error| (ErrorCode::RequestFailed, error.to_string()))?;
-        if output == document.source() {
+            .ok_or_else(|| semantic::invalid("document is not open"))?;
+        let source = document
+            .text
+            .source()
+            .ok_or_else(|| semantic::failed("cannot format a document with parser diagnostics"))?;
+        let output = document.text.format()?;
+        if output == source {
             return Ok(Vec::new());
         }
-        // Layout can grow scalar source spans as well as total bytes. Admit the
-        // proposed text through the same parser before asking the client to apply it.
-        parse_definition(&output, Limits::default()).map_err(|error| {
-            (
-                ErrorCode::RequestFailed,
-                format!("formatted document rejected by parser: {error}"),
-            )
-        })?;
         Ok(vec![TextEdit {
             range: self.encoding.range(
-                document.source(),
+                source,
                 Span {
                     start: 0,
-                    end: document.source().len(),
+                    end: source.len(),
                 },
             ),
             new_text: output,

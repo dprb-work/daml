@@ -1,0 +1,7 @@
+closed !Object {
+  name: !String
+  adapter: !contracts.Adapter
+  retries: !Int
+} = {
+  retries: 3
+}

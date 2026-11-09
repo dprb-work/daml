@@ -430,5 +430,8 @@ The [tutorial](tutorial.md) explains the example in sequence. The [syntax
 contract](syntax.md) covers data and definition syntax; the [schema guide](schemas.md)
 documents the separate JSON Schema interchange API.
 
-Formatting and syntax-only LSP diagnostics share the native/data syntax reader;
-formatting does not resolve definitions, fetch bundles, or apply defaults.
+Formatting and default syntax-only LSP diagnostics share the native/data syntax
+reader; formatting does not resolve definitions or apply defaults. With explicit
+[semantic context](lsp.md#semantic-context), the source-built server uses this
+same bundle compiler/resolver for diagnostics, authoring hints and real-source
+navigation. Open definition and manifest buffers override disk.

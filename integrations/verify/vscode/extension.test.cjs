@@ -148,4 +148,28 @@ async function run() {
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 }
 
-module.exports = { run };
+async function runWithLaunchDiagnostics() {
+  try {
+    await run();
+  } catch (error) {
+    try {
+      const configuration = vscode.workspace.getConfiguration('definitivelyAssertedDaml');
+      console.error(JSON.stringify({
+        event: 'lifecycle-extension-host-environment',
+        nodeVersion: process.version,
+        execPath: process.execPath,
+        scenario: process.env.DAML_VSCODE_SCENARIO,
+        trusted: vscode.workspace.isTrusted,
+        selectedServerPath: configuration.get('serverPath'),
+        serverPathConfiguration: configuration.inspect('serverPath'),
+        environment: Object.fromEntries(['PATH', 'NODE_OPTIONS', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ASAR']
+          .map(name => [name, process.env[name] ?? null])),
+      }, null, 2));
+    } catch (diagnosticError) {
+      console.error('Could not collect launch diagnostics:', diagnosticError);
+    }
+    throw error;
+  }
+}
+
+module.exports = { run: runWithLaunchDiagnostics };

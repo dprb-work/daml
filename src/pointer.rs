@@ -4,12 +4,22 @@
 use std::borrow::Cow;
 
 pub(crate) fn join(parent: &str, segment: &str) -> String {
-    let escapes = segment
-        .bytes()
-        .filter(|byte| matches!(*byte, b'~' | b'/'))
-        .count();
-    let mut path = String::with_capacity(parent.len() + 1 + segment.len() + escapes);
+    let mut path = String::with_capacity(parent.len() + segment_len(segment));
     path.push_str(parent);
+    append(&mut path, segment);
+    path
+}
+
+pub(crate) fn segment_len(segment: &str) -> usize {
+    1 + segment.len()
+        + segment
+            .bytes()
+            .filter(|byte| matches!(*byte, b'~' | b'/'))
+            .count()
+}
+
+/// Append after the caller has admitted/reserved the resulting path size.
+pub(crate) fn append(path: &mut String, segment: &str) {
     path.push('/');
     for ch in segment.chars() {
         match ch {
@@ -18,7 +28,6 @@ pub(crate) fn join(parent: &str, segment: &str) -> String {
             _ => path.push(ch),
         }
     }
-    path
 }
 
 pub(crate) fn decode_segment(part: &str) -> Option<Cow<'_, str>> {

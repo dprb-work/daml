@@ -1,10 +1,18 @@
 # Definitively Asserted DAML for VS Code-compatible editors
 
-The source-buildable VSIX provides `.daml` language detection, TextMate syntax highlighting, syntax-only diagnostics, and whole-document formatting through `daml-lsp`. It does not validate schemas or bundle semantics. The language id `definitively-asserted-daml` is distinct from Digital Asset's DAML extension.
+The source-buildable VSIX provides `.daml` and `daml.bundle` detection, TextMate highlighting, diagnostics and formatting through `daml-lsp`. Matching current source builds add explicitly selected semantic diagnostics, completion, hover and definition navigation. Documents are syntax-only by default. The language id `definitively-asserted-daml` is distinct from Digital Asset's DAML extension.
 
 ## Install the language server
 
 Download the versioned `daml-lsp` archive for your operating system from the public [DAML releases](https://github.com/dprb-work/daml/releases), verify its SHA-256 sidecar, and add its `bin` directory to `PATH`. See the [command-line installation guide](https://github.com/dprb-work/daml/blob/main/docs/distribution.md) for platform-specific steps. The extension does not download, build, or install the server.
+
+Older released servers may lack semantic providers. For current semantics, build the server from the same checkout as this extension:
+
+```sh
+cargo build --locked --features lsp --bin daml-lsp
+```
+
+Run this at the repository root, then set the machine's user setting below to the absolute `target/debug/daml-lsp` path (`.exe` on Windows). The extension does not upgrade an installed release automatically.
 
 ## Build and install the VSIX
 
@@ -24,13 +32,27 @@ The extension uses `daml-lsp` from `PATH` by default. If it is elsewhere, set `d
 
 The server does not start while the workspace is untrusted. Trusting the workspace starts the client; VS Code does not support revoking trust as a workspace transition. Changing the executable setting in trusted state restarts the client. A missing executable produces an error naming the configured command and pointing to release installation options.
 
+## Select authoring context
+
+With a DAML document active, use the Command Palette:
+
+- **DAML: Use Configuration Context** — discover the nearest ancestor `daml.bundle` from this file, or choose a local bundle folder. Optionally enter an expected native root type; leave blank to use the source's root assertion.
+- **DAML: Use Definition Context** — compile this saved local file as a native definition in its selected/discovered bundle.
+- **DAML: Use Syntax Only** — clear semantic context and dependency watchers.
+
+Untitled configuration requires a selected bundle folder. Untitled definitions must be saved first. A context-selection failure preserves the prior server context; closing/reopening or restarting clears selection. Semantic hints do not insert defaults or validate incomplete buffers.
+
+The client watches actual consulted dependencies, including local imports outside the workspace. Unsaved definition and manifest buffers override disk. Shared watcher memberships are released on context reset, close and disposal; failed replacement preserves previous memberships and reports an error. Filesystem watcher limitations, protocol commands and resource bounds are documented in the [LSP guide](https://github.com/dprb-work/daml/blob/main/docs/lsp.md#semantic-context).
+
+Automation may invoke `definitivelyAssertedDaml.useConfiguration` with `{uri, bundleRoot?, expected?}`, `definitivelyAssertedDaml.useDefinition` with `{uri, bundleRoot?}`, or `definitivelyAssertedDaml.useSyntax` with `{uri}`. Arguments use URI strings and require an already open DAML document in a trusted workspace.
+
 ## Package maintenance
 
 `npm run package` bundles the extension and produces `definitively-asserted-daml-0.1.0.vsix`. It stages the canonical repository-root MIT `LICENSE` and generates `THIRD-PARTY-NOTICES.txt` from the esbuild metafile and license/notice files for packages actually included in the runtime bundle; both generated files are ignored and must not be maintained by hand. Dependencies are pinned in `package.json` and `package-lock.json`. Use `npm run typecheck` for strict TypeScript checking; it uses VS Code 1.85 API types matching the declared engine baseline.
 
 The build stages the pinned language client's upstream `terminateProcess.sh` beside the bundled JavaScript, with executable permission. Keep that runtime asset when changing bundlers: the standard client uses it to terminate lingering server process trees on Linux/macOS after shutdown.
 
-The grammar is editor presentation only. It follows constructs described in the [native authoring contract](https://github.com/dprb-work/daml/blob/main/docs/native-authoring.md) and [syntax contract](https://github.com/dprb-work/daml/blob/main/docs/syntax.md); it is not a parser or semantic validator. Diagnostics and formatting come from the language server.
+The grammar is editor presentation only. It follows the [native authoring contract](https://github.com/dprb-work/daml/blob/main/docs/native-authoring.md) and [syntax contract](https://github.com/dprb-work/daml/blob/main/docs/syntax.md); it is not a parser or semantic validator. Language behavior comes from the server.
 
 ### Temporary build-tool security exception
 

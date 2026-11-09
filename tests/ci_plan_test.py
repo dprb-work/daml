@@ -74,6 +74,18 @@ class CiPlanContractTests(unittest.TestCase):
             {"core", "fuzz"},
         )
 
+    def test_semantic_editor_fixture_changes_select_real_editor_checks(self) -> None:
+        for mode in ("ready", "push"):
+            for path in (
+                "tests/fixtures/semantic-editor/workspace/daml.bundle",
+                "tests/fixtures/semantic-editor/providers/Http.daml",
+                "tests/fixtures/semantic-editor/contracts/Adapter.daml",
+            ):
+                with self.subTest(mode=mode, path=path):
+                    result = plan(mode, path)
+                    self.assertEqual(result["tier"], "targeted")
+                    self.assertEqual(set(result["checks"]), {"core", "fuzz", "editors"})
+
     def test_parser_and_native_formatter_changes_require_editor_integration(self) -> None:
         required = {"core", "fuzz", "binaries", "editors"}
         for path in (

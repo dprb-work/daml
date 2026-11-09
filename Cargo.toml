@@ -10,7 +10,7 @@ license = "MIT"
 
 [features]
 default = []
-lsp = ["dep:lsp-server", "dep:lsp-types"]
+lsp = ["dep:lsp-server", "dep:lsp-types", "serde/derive"]
 
 [[bin]]
 name = "daml-lsp"

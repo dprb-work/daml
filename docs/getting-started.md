@@ -71,11 +71,12 @@ Follow [the VS Code guide](../integrations/vscode/README.md) to build and instal
 the extension VSIX. Set its server path if `daml-lsp` isn't on `PATH`, open your
 file in a trusted workspace, and run **Format Document**.
 
-Remove the final `}` and notice the syntax diagnostic; then put it back. That is
-the current editor experience: highlighting, syntax diagnostics, and formatting.
-Checking a value against its definitions is a separate operation, not something
-the language server does today. For another LSP-capable editor, use
-[the server guide](lsp.md).
+Remove the final `}` and notice the syntax diagnostic; then put it back.
+Highlighting, syntax diagnostics and formatting work without selecting schemas.
+For semantic validation, completion and navigation, build the current matching
+server/client and [select an authoring context](../integrations/vscode/README.md#select-authoring-context).
+The released server used above may predate these features. For another
+LSP-capable editor, use [the server guide](lsp.md).
 
 ## Next: give the file some requirements
 

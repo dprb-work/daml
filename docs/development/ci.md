@@ -68,15 +68,16 @@ archives package it; it selects binary build and installed archive proof.
 | `core` | `./scripts/check`: Rust formatting, library checks, all-feature Clippy and tests, rustdoc, and isolated Python binding checks. |
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
 | `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Source changes and retained fixture/fuzz inputs select this boundary. |
-| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron extension-host verification. Integration, protocol, shared parser, and native formatter inputs select this boundary. |
+| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Integration, protocol, shared parser, native formatter and semantic-editor fixture inputs select this boundary. |
 | `binaries` | Native archive builds/installed contracts and stable-ABI Python wheel builds/isolated installs on Linux x64, macOS ARM64 and Windows x64. The same wheel is exercised on CPython 3.12 and 3.13. Native source, package metadata, toolchain, and distribution inputs select this boundary. |
 
 The planner selects `core`, `fuzz`, `binaries`, and `editors` for `src/**`.
 The LSP consumes shared parser and native formatter behavior, so source-level
 engine changes retain the actual installed-editor integration proof instead of
 depending on a brittle per-file exclusion list. `tests/**` and `examples/**` select
-`core`; `tests/fixtures/**` also selects `fuzz`. `SOURCES.md` selects only
-`binaries`. `integrations/**` selects `core` and `editors`. Cargo manifests,
+`core`; `tests/fixtures/**` also selects `fuzz`, and
+`tests/fixtures/semantic-editor/**` additionally selects `editors`. `SOURCES.md`
+selects only `binaries`. `integrations/**` selects `core` and `editors`. Cargo manifests,
 lockfiles, the Rust toolchain, and dependency policy select the affected
 dependencies, fuzz, binary, and editor boundaries as well as `core`. Selection is
 based on the repository's input map, not file extensions.
