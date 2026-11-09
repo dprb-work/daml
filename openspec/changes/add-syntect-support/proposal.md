@@ -22,7 +22,7 @@ None. The DAML parser, formatter, LSP, existing TextMate grammar and client inst
 
 ## Impact
 
-DAML owns the grammar artifact, verification and integration guidance. Consumers own registering it in their syntax sets and applying their themes. This scope does not modify/rebuild OMP, add an LSP-to-renderer bridge, introduce a DAML runtime dependency on Syntect, or activate/release any client. DAML's main dependency manifests and policy remain unchanged. The isolated verification consumer must be independently audited under its narrowly approved admission rule.
+DAML owns the grammar artifact, verification and integration guidance. Consumers own registering it in their syntax sets and applying their themes. This scope does not modify/rebuild OMP, add an LSP-to-renderer bridge, introduce a DAML runtime dependency on Syntect, or activate/release any client. DAML's shipping dependency manifests and root `deny.toml` remain unchanged. The isolated verification consumer must be independently audited under its narrowly approved admission rule and included in the existing release-security lock inventory without scanner exclusions.
 
 ## Scope decision
 

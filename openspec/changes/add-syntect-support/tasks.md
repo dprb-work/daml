@@ -11,7 +11,7 @@
 
 ## 3. Verification and result
 
-- [ ] 3.1 Exercise actual Syntect loading, source scopes, fragment/streaming behavior and theme application; run applicable project gates and strict OpenSpec validation.
+- [x] 3.1 Exercise actual Syntect loading, source scopes, fragment/streaming behavior and theme application; run applicable project gates and strict OpenSpec validation.
 - [ ] 3.2 Complete independent whole-change review and resolve findings.
 - [ ] 3.3 Obtain human result acceptance; keep merge, consumer registration and host activation separately authorized.
 

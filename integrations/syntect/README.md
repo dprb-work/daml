@@ -54,11 +54,11 @@ The native DAML parser remains authoritative for grammar admission and semantic 
 
 A consumer must load/register this file through its own integration. Adding it to the DAML repository does not modify OMP, install a grammar into an existing application, rebuild a client or change any user's theme.
 
-Syntect itself belongs to the consuming application or verification tool, not to DAML's shipped APIs/executables. Syntect 5.3.0 uses unmaintained `yaml-rust 0.4.5` and `bincode 1.3.3`. Its isolated DAML verification tool has separately approved exceptions for [RUSTSEC-2024-0320](https://github.com/dprb-work/daml/issues/46#issuecomment-6752539695) and [RUSTSEC-2025-0141](https://github.com/dprb-work/daml/issues/46#issuecomment-6752772936), respectively. DAML's main policy remains unchanged, and no other advisory is waived. Consumers must apply their own dependency policy; these approvals are not a blanket waiver for applications that load the grammar.
+Syntect itself belongs to the consuming application or verification tool, not to DAML's shipped APIs/executables. Syntect 5.3.0 uses unmaintained `yaml-rust 0.4.5` and `bincode 1.3.3`. Its isolated DAML verification tool has separately approved exceptions for [RUSTSEC-2024-0320](https://github.com/dprb-work/daml/issues/46#issuecomment-6752539695) and [RUSTSEC-2025-0141](https://github.com/dprb-work/daml/issues/46#issuecomment-6752772936), respectively. DAML's shipping manifests and root `deny.toml` remain unchanged, and no other advisory is waived. The verifier lockfile joins the existing release-security inventory without a scanner exclusion. Consumers must apply their own dependency policy; these approvals are not a blanket waiver for applications that load the grammar.
 
 ## Verify the supplied artifact
 
-The isolated consumer pins Syntect 5.3.0 and loads this exact file through its standard YAML loader. From the DAML checkout:
+The isolated consumer pins Syntect 5.3.0 with the `regex-fancy` backend and loads this exact file through its standard YAML loader. From the DAML checkout:
 
 ```sh
 cargo test --manifest-path integrations/verify/syntect/Cargo.toml --locked
