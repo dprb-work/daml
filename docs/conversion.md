@@ -1,16 +1,17 @@
 # YAML and JSON interoperability
 
-DAML does not yet ship a general-purpose YAML/JSON import/export command.
-Library exports and the low-level JSON Schema API provide useful building
-blocks, but they are not a bidirectional file converter.
+DAML can export checked completed values through the source-built
+[`daml resolve --format json` command](cli.md). It does not provide general-purpose
+JSON/YAML import or a bidirectional file converter.
 
 ## Export completed values
 
-The Rust resolver can export completed values with `to_json()`. Python exposes
-ordinary Python values through `to_python()`; non-integer numbers use `Decimal`,
-so a JSON serializer needs an explicit exact-number policy. The
-[tutorial](tutorial.md) uses a Rust consumer that prints the completed value as
-JSON.
+The Rust resolver exports completed values with `to_json()`; the
+[`daml` CLI](cli.md#choose-the-output-representation) exposes the same plain-data
+projection with exact JSON numeric tokens. Python exposes ordinary Python values
+through `to_python()`; non-integer numbers use `Decimal`, so a JSON serializer
+needs an explicit exact-number policy. The [tutorial](tutorial.md) also includes
+a Rust consumer that prints completed JSON data.
 
 These plain exports omit tag metadata. Use the result's tag accessors if your
 consumer needs the assertions. Completion can add defaults, so exporting the

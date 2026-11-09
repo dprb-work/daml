@@ -47,6 +47,7 @@
 use std::borrow::Cow;
 
 mod cron;
+mod explain;
 mod format;
 mod json_backend;
 #[cfg(feature = "lsp")]
@@ -66,6 +67,7 @@ mod strict_json;
 mod strings;
 mod temporal;
 
+pub use explain::{ExplainError, Explanation, ExplanationConstraint};
 pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
 pub use native::{

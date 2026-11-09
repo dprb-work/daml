@@ -7,6 +7,7 @@ DAML is an experimental configuration language and tooling project. The componen
 | Data syntax and Rust library | Implemented | Parses ordinary and first-class Date/Time/DateTime/Cron values, preserves source information, and exposes typed library operations. See the [syntax contract](syntax.md). |
 | Native definitions and bundles | Implemented | Loads local definitions, compiles constraints, completes defaults, and validates values, including temporal kinds and offset policies. See [native authoring](native-authoring.md). |
 | JSON Schema interchange | Implemented bounded profile | Accepts explicit Draft 2020-12 schema modules and resolves values within documented limits. See [schema modules](schemas.md). |
+| Configuration CLI | Source-buildable | Checks configuration, resolves defaults, and explains values/provenance/constraints through the existing core. Not included in older native archives. See [CLI usage](cli.md). |
 | Formatter | Implemented | Formats data and native definitions. See [formatting](formatting.md). |
 | Language server | Implemented | Provides native syntax diagnostics and document formatting over stdio. It does not provide schema semantics, completion, or hover. See [LSP capabilities](lsp.md). |
 | VS Code-compatible extension | Source-buildable VSIX | Provides syntax highlighting and the language server's diagnostics and formatting. No marketplace listing is provided. See [installation](../integrations/vscode/README.md). |

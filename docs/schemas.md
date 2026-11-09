@@ -130,6 +130,31 @@ cargo run --locked --example resolve -- examples/application.daml \
 It validates nested records, scalars, and arrays; fills the adapter timeout and
 request ID; and prints completed JSON data. It does not invoke an adapter.
 
+## Explain a checked value
+
+`Schemas::explain(document, expected: Option<&str>, pointer: &str)` performs normal
+completion and strict validation, then selects a value at an RFC 6901 pointer.
+The root needs an explicit assertion or expected type; the empty pointer selects
+the root. Malformed pointers and absent paths are distinct failures.
+
+The returned `Explanation` retains the checked document and exposes `path()`,
+`node()`, and `constraints()`. The node keeps its exact value, assertion, and
+input/default origins. Each `ExplanationConstraint` borrows an admitted registry
+schema and canonical location and records its actual instance path. Direct and
+ancestor obligations, validation-only branches, and nested assertions remain
+visible without flattening references or treating rejected alternatives as
+applied contracts.
+
+The engine reserves evaluation output and metadata work before allocation using
+the invocation's remaining resolution limits. Explanation may exhaust those
+limits sooner than ordinary resolution; it never truncates a report as success.
+`ExplainError` distinguishes resolution failures, missing root selection,
+invalid pointers/array-index tokens, and absent values.
+
+The source-built [`daml explain` command](cli.md#read-an-explanation) presents the
+same result as JSON. No Python or browser explanation binding is added.
+
+
 ## Validate without completion
 
 `Schemas::validate_semantic(&SemanticNode, expected: Option<&str>)` checks only

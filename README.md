@@ -143,6 +143,7 @@ DAML validates the pattern; the consuming application owns scheduling.
 | Component | Availability |
 |---|---|
 | Rust library | Source; parsing, definitions, completion, validation, formatting |
+| Configuration CLI | [Source-built](docs/cli.md); validation, resolution, and provenance/constraint explanation |
 | Formatter and language server | [Native releases](docs/distribution.md); syntax diagnostics and formatting |
 | VS Code extension | Build a VSIX or use a qualified candidate; not published to a marketplace |
 | Python bindings | Source or [candidate wheel](docs/python.md#install-a-candidate-wheel); `daml-config` is not published to PyPI |

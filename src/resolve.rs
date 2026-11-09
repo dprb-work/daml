@@ -1,6 +1,8 @@
 use crate::{
-    Document, Node, Origin, ResolutionLimits, ResolveError, ResolveErrorKind, ResolvedDocument,
-    ResolvedNode, ResolvedValue, SchemaLocation, Schemas, SemanticNode, SemanticValue, Value,
+    Document, ExplainError, Explanation, ExplanationConstraint, Node, Origin, ResolutionLimits,
+    ResolveError, ResolveErrorKind, ResolvedDocument, ResolvedNode, ResolvedValue, SchemaLocation,
+    Schemas, SemanticNode, SemanticValue, Value,
+    explain::{CaptureError, capture_evaluation, reserve, select_pointer},
     json_backend::equal_resolved,
     resolved::{ErrorOrigin, ResolvedTag, check_number_limits, checked_number},
     schema::{SchemaId, SchemaView},
@@ -105,6 +107,110 @@ impl Schemas {
             pending_defaults: None,
         }
         .run(document, expected)
+    }
+
+    /// Admits the entire document, then explains one RFC 6901 instance pointer.
+    ///
+    /// Both a root assertion and an expected contract remain obligations when
+    /// supplied together. Returned values borrow the document and this registry;
+    /// constraints retain admitted schemas rather than expanding references.
+    /// Ordinary resolution does not collect or allocate this evaluation trace.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing root contracts, ordinary resolution failures, malformed or
+    /// absent pointers, and exhaustion of the cumulative resolution/trace budgets.
+    pub fn explain<'a>(
+        &'a self,
+        document: &'a Document,
+        expected: Option<&str>,
+        pointer: &str,
+    ) -> Result<Explanation<'a>, ExplainError> {
+        if expected.is_none() && document.tag(document.root()).is_none() {
+            return Err(ExplainError::MissingRootContract);
+        }
+        let mut resolver = Resolver {
+            schemas: self,
+            budget: Budget {
+                limits: ResolutionLimits::default(),
+                nodes: 0,
+                bytes: 0,
+                steps: 0,
+                stage: None,
+            },
+            search: CompletionSearch::default(),
+            contracts: BTreeMap::new(),
+            pending_defaults: None,
+        };
+        let resolved = resolver.run(document, expected)?;
+        let decoded_bytes = pointer
+            .split('/')
+            .filter(|part| part.contains('~'))
+            .fold(0usize, |bytes, part| bytes.saturating_add(part.len()));
+        resolver.budget.add_byte_count(
+            resolved.root(),
+            pointer
+                .len()
+                .saturating_add(decoded_bytes.saturating_mul(2)),
+            "",
+        )?;
+        resolver.budget.charge_work(
+            pointer.len().div_ceil(64).saturating_mul(3),
+            resolved.root(),
+            "",
+        )?;
+        select_pointer(resolved.root(), pointer)?;
+        let mut constraints = Vec::new();
+        let mut seen = HashSet::new();
+        if let Some(expected) = expected {
+            let schema = resolver.expected_view(resolved.root(), expected)?;
+            resolver.explain_contract(
+                resolved.root(),
+                schema,
+                "",
+                pointer,
+                &mut constraints,
+                &mut seen,
+            )?;
+        }
+        let mut node = resolved.root();
+        let mut path_end = 0;
+        if let Some(schema) = tag_schema(self, node) {
+            resolver.explain_contract(node, schema, "", pointer, &mut constraints, &mut seen)?;
+        }
+        if !pointer.is_empty() {
+            for part in pointer[1..].split('/') {
+                path_end += part.len() + 1;
+                let key = crate::pointer::decode_segment(part)
+                    .expect("the selected pointer has valid escapes");
+                node = match &node.value {
+                    ResolvedValue::Mapping(fields) => fields
+                        .get(key.as_ref())
+                        .expect("the selected mapping member exists"),
+                    ResolvedValue::Sequence(items) => {
+                        &items[key
+                            .parse::<usize>()
+                            .expect("the selected sequence index is canonical")]
+                    }
+                    _ => unreachable!("the selected pointer traverses only containers"),
+                };
+                if let Some(schema) = tag_schema(self, node) {
+                    resolver.explain_contract(
+                        node,
+                        schema,
+                        &pointer[..path_end],
+                        pointer,
+                        &mut constraints,
+                        &mut seen,
+                    )?;
+                }
+            }
+        }
+        Ok(Explanation {
+            document: resolved,
+            path: pointer.to_owned(),
+            constraints,
+        })
     }
 
     /// Completes and validates explicit in-memory semantic input without source conversion.
@@ -298,6 +404,149 @@ impl Schemas {
 }
 
 impl<'a> Resolver<'a, '_> {
+    fn explain_contract(
+        &mut self,
+        node: &ResolvedNode<'a>,
+        schema: SchemaView<'a>,
+        path: &str,
+        target: &str,
+        constraints: &mut Vec<ExplanationConstraint<'a>>,
+        seen: &mut HashSet<(usize, SchemaId)>,
+    ) -> Result<(), ResolveError> {
+        let identity = (node as *const ResolvedNode<'_> as usize, schema.id());
+        if seen.contains(&identity) {
+            return Ok(());
+        }
+        let mut remaining = ResolutionLimits {
+            max_nodes: self
+                .budget
+                .limits
+                .max_nodes
+                .saturating_sub(self.budget.nodes),
+            max_bytes: self
+                .budget
+                .limits
+                .max_bytes
+                .saturating_sub(self.budget.bytes),
+            max_steps: self
+                .budget
+                .limits
+                .max_steps
+                .saturating_sub(self.budget.steps),
+        };
+        let estimate = schema.explanation_resources(node, remaining);
+        reserve(
+            &mut remaining,
+            estimate.max_nodes,
+            estimate.max_bytes,
+            estimate.max_steps,
+        )
+        .map_err(|_| {
+            failure(
+                ResolveErrorKind::LimitExceeded,
+                node,
+                "eager explanation evaluation exceeds cumulative resolution bounds",
+                Some(schema.explanation_location().clone()),
+                path,
+            )
+        })?;
+        let record_bytes = std::mem::size_of::<ExplanationConstraint<'_>>()
+            + std::mem::size_of::<(usize, SchemaId)>();
+        let result = (|| {
+            // Always retain the actual entry contract, including a boolean or
+            // pure reference whose optimized evaluation may have no own unit.
+            reserve(
+                &mut remaining,
+                1,
+                path.len().saturating_add(record_bytes),
+                1,
+            )?;
+            seen.insert(identity);
+            constraints.push(ExplanationConstraint {
+                instance_path: path.to_owned(),
+                location: schema.explanation_location(),
+                schema: schema.value(),
+            });
+            let evaluation = schema.evaluate(node);
+            if !evaluation.is_valid() {
+                return Err(CaptureError::Invalid(
+                    "schema evaluation rejected a previously admitted value".into(),
+                ));
+            }
+            let target_suffix = target
+                .strip_prefix(path)
+                .expect("only selected ancestors are independently explained");
+            capture_evaluation(&evaluation, &mut remaining, &mut |mut unit, remaining| {
+                let Some(relative) = schema.evaluation_instance_path(&unit.instance_location)
+                else {
+                    // The private dispatch object's root/properties wrappers
+                    // are not contracts on user data, but their children are.
+                    return Ok(true);
+                };
+                if relative != target_suffix
+                    && !target_suffix
+                        .strip_prefix(relative)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+                {
+                    return Ok(false);
+                }
+                if unit.schema_location.contains('%') {
+                    reserve(
+                        remaining,
+                        0,
+                        unit.schema_location.len(),
+                        unit.schema_location.len().div_ceil(64),
+                    )?;
+                }
+                let Some((applied, descend)) = schema.evaluation_schema(&unit.schema_location)
+                else {
+                    return Ok(true);
+                };
+                let Some(applied) = applied else {
+                    return Ok(descend);
+                };
+                if relative.contains('~') {
+                    reserve(remaining, 0, relative.len(), relative.len().div_ceil(64))?;
+                }
+                let instance = node.at_pointer(relative).ok_or_else(|| {
+                    CaptureError::Invalid("evaluation identifies an absent instance".into())
+                })?;
+                let identity = (instance as *const ResolvedNode<'_> as usize, applied.id());
+                if !seen.contains(&identity) {
+                    reserve(remaining, 1, path.len().saturating_add(record_bytes), 1)?;
+                    // Reuse the already charged instance-location allocation;
+                    // remove only the engine's private singleton dispatch key.
+                    let dispatch_bytes = unit.instance_location.len() - relative.len();
+                    unit.instance_location.drain(..dispatch_bytes);
+                    unit.instance_location.insert_str(0, path);
+                    seen.insert(identity);
+                    constraints.push(ExplanationConstraint {
+                        instance_path: unit.instance_location,
+                        location: applied.explanation_location(),
+                        schema: applied.value(),
+                    });
+                }
+                Ok(descend)
+            })
+        })();
+        self.budget.nodes = self.budget.limits.max_nodes - remaining.max_nodes;
+        self.budget.bytes = self.budget.limits.max_bytes - remaining.max_bytes;
+        self.budget.steps = self.budget.limits.max_steps - remaining.max_steps;
+        result.map_err(|error| {
+            let kind = match error {
+                CaptureError::Limit => ResolveErrorKind::LimitExceeded,
+                CaptureError::Invalid(_) => ResolveErrorKind::SchemaViolation,
+            };
+            failure(
+                kind,
+                node,
+                error.to_string(),
+                Some(schema.explanation_location().clone()),
+                path,
+            )
+        })
+    }
+
     fn same_values(&self, left: &ResolvedNode<'_>, right: &ResolvedNode<'_>) -> bool {
         if self.budget.stage.is_some() {
             same_json(left, right)
