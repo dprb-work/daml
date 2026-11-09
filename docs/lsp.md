@@ -1,9 +1,10 @@
 # DAML language server
 
 `daml-lsp` provides syntax diagnostics and whole-document formatting over stdio.
-The source-built server adds opt-in semantic diagnostics, completion, hover,
-and definition navigation. Documents remain syntax-only until a client selects
-a [semantic context](#semantic-context).
+The source-built server adds standard semantic tokens for highlighting, plus
+opt-in semantic diagnostics, completion, hover and definition navigation.
+Highlighting needs no schema selection; validation and schema-aware providers
+require a [semantic context](#semantic-context).
 
 Released executables may predate semantic providers. Use matching source-built
 server and client for the behavior below; see [installation](distribution.md)
@@ -33,6 +34,7 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 | Initialization | Standard initialize/initialized handshake and server information. Invalid parameters return InvalidParams with `InitializeError.retry: true`; initialization remains pending for client correction or exit. |
 | Position encoding | First supported client offer among UTF-8, UTF-16, UTF-32; mandatory UTF-16 fallback when absent or unsupported. |
 | Diagnostics | Syntax errors by default; native compilation and configuration validation in selected semantic contexts. Versioned, correctly encoded source ranges and related definition locations. |
+| Semantic tokens | Full-document standard token categories and `defaultLibrary` modifier; no colors or editor theme rules. Available without a selected context. |
 | Formatting | Canonical data or native definition reflow at 80 columns and two-space indentation, according to the selected role. |
 | Completion | Visible assertion/reference names and contract fields, including required/optional/default details and reliable incomplete prefixes. |
 | Hover | Applicable constraints/defaults; checked configuration values distinguish supplied input from completed defaults. Invalid/incomplete data receives labeled hints only. |
@@ -60,6 +62,44 @@ Diagnostics carry versions; clients must also discard a formatting result if
 their buffer changes after the request. Standard document-formatting requests
 and edits do not contain a document version, so the server does not claim to
 solve client-side edit races.
+
+## Semantic token highlighting
+
+The source-built server advertises `semanticTokensProvider` with a standard
+legend and full-document support. Request `textDocument/semanticTokens/full`
+with an open document's `textDocument.uri`. Range and delta requests are not
+advertised.
+
+| Source role | Standard token type |
+|---|---|
+| Mapping keys and native members, including dotted literal keys | `property` |
+| Qualified assertion/reference prefix | `namespace` |
+| Final assertion/reference name or built-in type | `type` |
+| Ordinary and temporal/cron quoted payload | `string` |
+| Exact numeric source | `number` |
+| Grammar keywords, including boolean/null literals | `keyword` |
+| Comments outside quoted payloads | `comment` |
+| Native raw regular-expression payload | `regexp` |
+| Structural punctuation and operators | `operator` |
+
+Recognized unqualified built-in types receive `defaultLibrary`; a qualified
+name such as `app.String` does not acquire that modifier merely because its
+last segment is `String`. The server supplies categories, not a palette.
+Clients and user themes decide the appearance of those categories.
+
+Results describe the latest accepted source using the current data/native
+grammar role. They do not discover bundles, read files, resolve names or
+certify validity. Incomplete buffers can return tokens for a grounded parser
+prefix while retaining their syntax diagnostics; unparsed suffixes are not
+assigned guessed structural roles.
+
+Tokens are sorted, nonoverlapping and single-line. Multiline quoted payloads
+are split at physical line endings without including newline bytes. Character
+offsets and lengths use the negotiated UTF-8, UTF-16 or UTF-32 encoding.
+The existing parser bounds and a 100,000-token output limit apply; resource
+exhaustion fails explicitly, without truncated results or stale-token fallback.
+There is no server-side token-result cache. Clients must discard a response
+if their buffer changed after its request.
 
 ## Semantic context
 
@@ -170,7 +210,7 @@ policy. This check does not mutate the current document.
 |---|---|
 | Unknown method | MethodNotFound (`-32601`). |
 | Malformed request parameters, unopened URI, invalid context options or inbound character boundary | InvalidParams (`-32602`). |
-| Current source is invalid, formatting/output admission fails, or semantic analysis/presentation exceeds its bounds | RequestFailed (`-32803`), or a versioned diagnostic for context-analysis failures. |
+| Formatting source is invalid, output admission fails, or semantic/token analysis or presentation exceeds its bounds | RequestFailed (`-32803`), or a versioned diagnostic for context-analysis failures. |
 
 A fatal initialization-handshake, transport, or shutdown failure terminates the executable
 unsuccessfully. `daml::lsp::ServerError` retains its cause for explicit inspection,
@@ -183,8 +223,8 @@ on a client's still-open stdin. On graceful shutdown all provided threads join.
 
 No incremental parser, global symbol index, remote schema fetch or application
 constructor execution is provided. Separate [client integrations](../integrations/README.md)
-own highlighting, process lifecycle, synchronization, dependency watching and
-edit application; the grammar is not a second language authority.
+own highlighting presentation, process lifecycle, synchronization, dependency
+watching and edit application; the grammar is not a second language authority.
 
 The protocol DTOs, framing, stdio threads, and shutdown helper come from the
 pinned upstream libraries. DAML code owns versioned documents, explicit context,

@@ -13,9 +13,9 @@ use lsp_types::{
     CompletionOptions, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
     ExecuteCommandOptions, ExecuteCommandParams, HoverProviderCapability, InitializeError,
-    InitializeParams, InitializeResult, OneOf, PublishDiagnosticsParams, ServerCapabilities,
-    ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, Uri,
+    InitializeParams, InitializeResult, OneOf, PublishDiagnosticsParams, SemanticTokensParams,
+    ServerCapabilities, ServerInfo, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Uri,
     notification::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Initialized,
         Notification as _, PublishDiagnostics,
@@ -162,6 +162,7 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
             }),
             hover_provider: Some(HoverProviderCapability::Simple(true)),
             definition_provider: Some(OneOf::Left(true)),
+            semantic_tokens_provider: Some(semantic::token_options().into()),
             execute_command_provider: Some(ExecuteCommandOptions {
                 commands: vec![semantic::SET_CONTEXT.into()],
                 ..Default::default()
@@ -472,6 +473,25 @@ impl Session {
                             (
                                 ErrorCode::InternalError,
                                 "formatting result could not be encoded".into(),
+                            )
+                        })
+                    })
+            }
+            "textDocument/semanticTokens/full" => {
+                serde_json::from_value::<SemanticTokensParams>(request.params)
+                    .map_err(|_| semantic::invalid("invalid semantic token parameters"))
+                    .and_then(|params| {
+                        self.documents
+                            .get(&params.text_document.uri)
+                            .ok_or_else(|| semantic::invalid("document is not open"))?
+                            .text
+                            .tokens(self.encoding)
+                    })
+                    .and_then(|tokens| {
+                        serde_json::to_value(tokens).map_err(|_| {
+                            (
+                                ErrorCode::InternalError,
+                                "semantic token result could not be encoded".into(),
                             )
                         })
                     })
