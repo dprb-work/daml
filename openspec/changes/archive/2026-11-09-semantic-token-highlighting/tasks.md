@@ -13,7 +13,7 @@
 
 - [x] 3.1 Exercise actual stdio token responses and applicable existing LSP/parser boundaries; run the repository aggregate and strict OpenSpec validation.
 - [x] 3.2 Complete independent whole-change review and resolve retained findings.
-- [ ] 3.3 Obtain human result acceptance; no merge, release, host activation or client rendering changes.
+- [x] 3.3 Obtain human result acceptance; keep merge and activation authorization separate from that decision.
 
 ## Ownership and refinement
 
@@ -25,4 +25,6 @@ Local simplification removed a redundant full-name qualification scan: builtin m
 
 Final verification passed on `385af633aa025febbe2b9df678ad7d57c7cb4120`: the six independent stdio token checks, repository `./scripts/check` (formatting, portable library, all-feature Clippy, Rust tests/doctests/rustdoc, Python checks and 151 Python tests), and strict OpenSpec validation. Existing seven LSP and fourteen semantic-editor stdio checks remain passing. Separate actual-server probes exercised source roles, latest-version replacement, UTF-8/16/32 with BOM/supplementary characters and mixed line endings, opaque raw Regex, intrinsic Date, and unchanged-version data/native role changes.
 
-Independent whole-change review approved that revision with no findings and passing structural/alignment assessments. The subsequent task-completion metadata changes do not alter runtime source or frozen tests. Human result acceptance remains pending in the pull request; source editing, client rendering, range/delta tokens, merge and release effects are not delivered by this scope.
+Independent whole-change review approved final candidate `02bcf54c6e4b519fda34867c33d2bb8c89d8782b` with no findings and passing structural/alignment assessments. Runtime and frozen tests are unchanged from verified `385af633`. The user accepted this result and separately authorized checked integration and local activation in [PR #44](https://github.com/dprb-work/daml/pull/44). Ready-PR Check `42696622195` passed, including Required; the result merged as `7e8f9d3590ee3e30759d926d4e1423b83723edfe`.
+
+The clean optimized native artifact passed five formatter, seven LSP and six semantic-token installed contracts. Native OMP 18.18.5 registration and live full-token requests succeeded for `.daml` and `daml.bundle`, without restarting the conversation. An actual offline OMP rendering probe still left DAML plain while its Rust control highlighted: the client renderer uses bundled Syntect grammars rather than these token responses. Client rendering, source editing and range/delta tokens remain outside this completed server capability. No public release or preserved OMP source modification occurred.
