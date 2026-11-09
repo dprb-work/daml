@@ -145,15 +145,19 @@ DAML validates the pattern; the consuming application owns scheduling.
 | Rust library | Source; parsing, definitions, completion, validation, formatting |
 | Configuration CLI | [Source-built](docs/cli.md); validation, resolution, and provenance/constraint explanation |
 | Formatter and language server | [Native releases](docs/distribution.md); syntax diagnostics and formatting |
-| VS Code extension | Build and install a VSIX; not published to a marketplace |
+| VS Code extension | Build a VSIX or use a qualified candidate; not published to a marketplace |
 | Python bindings | Source or [candidate wheel](docs/python.md#install-a-candidate-wheel); `daml-config` is not published to PyPI |
-| Browser/WASM SDK | Separate GitHub release archive; not published to npm |
+| Browser/WASM SDK | GitHub release archive; not published to npm |
 | YAML/JSON converters | Not implemented; see [interoperability limits](docs/conversion.md) |
 
 [Components and availability](docs/components.md) links the installation guides.
 Source on `main` and versioned archives can expose different APIs; use the
 reference for the version you select. Editor support does not yet include
 schema-aware completion, hover, or semantic diagnostics.
+
+The source targets coordinated `0.2.0` delivery. The
+[release pipeline](docs/development/releases.md) keeps qualification and
+publication separate; a manifest version does not establish download availability.
 
 ## Is DAML a good fit?
 

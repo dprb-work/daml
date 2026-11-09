@@ -13,7 +13,7 @@ From this directory, with Node.js and npm available:
 ```sh
 npm ci
 npm run package
-code --install-extension definitively-asserted-daml-0.1.0.vsix
+code --install-extension definitively-asserted-daml-0.2.0.vsix
 ```
 
 For another VS Code-compatible editor, use its **Install from VSIX** command and select the generated file. The declared VS Code engine baseline is `^1.85.0`. This project does not publish the extension to a marketplace.
@@ -26,7 +26,19 @@ The server does not start while the workspace is untrusted. Trusting the workspa
 
 ## Package maintenance
 
-`npm run package` bundles the extension and produces `definitively-asserted-daml-0.1.0.vsix`. It stages the canonical repository-root MIT `LICENSE` and generates `THIRD-PARTY-NOTICES.txt` from the esbuild metafile and license/notice files for packages actually included in the runtime bundle; both generated files are ignored and must not be maintained by hand. Dependencies are pinned in `package.json` and `package-lock.json`. Use `npm run typecheck` for strict TypeScript checking; it uses VS Code 1.85 API types matching the declared engine baseline.
+`npm run package` derives the VSIX name from the manifest version and writes
+`definitively-asserted-daml-0.2.0.vsix` plus its checksum. It stages the canonical
+root `LICENSE` and `SOURCES.md`, records source/dirty-state provenance in
+`BUILD.json`, and generates dependency notices from the esbuild runtime graph.
+These files are generated, ignored inputs—not maintained legal copies.
+Move any previous same-version candidate before packaging; it is not silently
+overwritten. CI receives the exact output path from the producer rather than
+pinning a second filename in its installed-host checks. See
+[release preparation](../../docs/development/releases.md) for approved delivery.
+
+Dependencies are pinned in `package.json` and `package-lock.json`. Use
+`npm run typecheck` for strict TypeScript checking against the declared VS Code
+1.85 API baseline. Packaging does not publish to a marketplace.
 
 The build stages the pinned language client's upstream `terminateProcess.sh` beside the bundled JavaScript, with executable permission. Keep that runtime asset when changing bundlers: the standard client uses it to terminate lingering server process trees on Linux/macOS after shutdown.
 

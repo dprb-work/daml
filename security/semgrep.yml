@@ -1,0 +1,43 @@
+rules:
+  - id: python-subprocess-shell-true
+    languages: [python]
+    severity: ERROR
+    message: Shell execution interprets command data; use an argv list with shell disabled.
+    pattern-either:
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+      - pattern: subprocess.call(..., shell=True, ...)
+      - pattern: subprocess.check_call(..., shell=True, ...)
+      - pattern: subprocess.check_output(..., shell=True, ...)
+  - id: python-yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: Explicit unsafe YAML loaders can construct arbitrary Python objects; use safe_load.
+    pattern-either:
+      - pattern: yaml.unsafe_load(...)
+      - pattern: yaml.load(..., Loader=yaml.Loader, ...)
+      - pattern: yaml.load(..., Loader=yaml.UnsafeLoader, ...)
+  - id: javascript-child-process-shell-true
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Child process shell mode interprets command data; use argv without shell mode.
+    pattern-either:
+      - pattern: child_process.spawn($CMD, $ARGS, {..., shell:true, ...})
+      - pattern: child_process.spawnSync($CMD, $ARGS, {..., shell:true, ...})
+      - pattern: child_process.execFile($CMD, $ARGS, {..., shell:true, ...}, ...)
+  - id: javascript-eval-location
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Browser URL data must not be executed as JavaScript.
+    pattern-either:
+      - pattern: eval(window.location.$FIELD)
+      - pattern: eval(location.$FIELD)
+  - id: rust-command-shell-c
+    languages: [rust]
+    severity: ERROR
+    message: Shell -c interprets command data; invoke the executable with separate arguments.
+    pattern-either:
+      - pattern: Command::new("sh").arg("-c").arg($CMD)
+      - pattern: Command::new("bash").arg("-c").arg($CMD)
+      - pattern: std::process::Command::new("sh").arg("-c").arg($CMD)
+      - pattern: std::process::Command::new("bash").arg("-c").arg($CMD)

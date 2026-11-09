@@ -146,6 +146,9 @@ The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
 dependencies, not a copied or modified protocol implementation. Packaging
 generates `THIRD-PARTY-NOTICES.txt` from license/notice files belonging to packages
 identified by the esbuild bundle metadata and stages the canonical DAML license.
+The version-derived VSIX producer also carries this inventory and `BUILD.json`
+source provenance. Its checksum accompanies the original VSIX; release collection
+does not unpack and rebuild it.
 The build also copies that exact language-client package's
 `lib/node/terminateProcess.sh` beside the bundle with executable permission,
 retaining its Microsoft copyright/MIT notice and the standard client's Unix
@@ -183,6 +186,39 @@ the build source/output provenance. The [SDK guide](bindings/browser/README.md)
 owns exact values, resource admission, lifecycle, build, and package contracts.
 Registry publication and promotion to a versioned release are separate actions.
 
+## Delivery tooling
+
+Release preparation reuses the qualified native, wheel, browser and editor
+producers. Its stdlib-only collector admits the original payloads, their legal
+files and source provenance, then records hashes in `RELEASE.json`. See the
+[release operator guide](docs/development/releases.md) for approval and publication.
+
+The browser qualification workflow uses the official `wasm-bindgen` 0.2.129
+Linux CLI archive, pinned by SHA-256
+`82d12bb940e2d4e72e0d5605387fc1b8ca179044e012b620f0ce4e7440e8320e`.
+This is build tooling, not an additional SDK runtime dependency.
+
+The VSIX producer pins `@vscode/vsce` 4.0.0. Its parent-scoped npm override selects
+`minimatch` 11.0.1 instead of that packager's declared `^10.2.6`, to remediate the
+reported CVE-2026-118764. Release-side dependency inspection found that VSCE 4.1.0
+and 4.1.1-0 still declare the affected range. This is a bounded local dependency
+override, not upstream endorsement or an advisory suppression. The inspected
+VSCE calls use retained named minimatch APIs through CommonJS, and the release
+build uses Node 24.19.0, above minimatch 11's Node 22 minimum. The installed
+language client's minimatch 5 dependency is outside this override.
+Real VSIX packaging, installed Electron-host behavior and a fresh complete Trivy
+scan must establish compatibility and remediation before release acceptance;
+the override alone is not passing evidence.
+
+The separately approved Python upload uses
+[`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish)
+v1.14.3, pinned to commit
+`7245906fb61fa33a13554f9d5fb856fe61758086`
+([BSD-3-Clause](https://github.com/pypa/gh-action-pypi-publish/blob/v1.14.3/LICENSE.md)).
+It runs only in GitHub Actions with PyPI Trusted Publishing; it is neither
+vendored DAML code nor part of any distributed runtime. Configuring this workflow
+does not activate a PyPI publisher or authorize an upload.
+
 ## Spring cron reference
 
 Cron admission is independently authored Rust against
@@ -204,3 +240,25 @@ distributed packages.
 
 The [cron syntax contract](docs/syntax.md#cron-literals) owns supported expression
 behavior and the boundary between a validated pattern and scheduler execution.
+
+## Release security engines
+
+Deliberate release preparation uses external scanner executables in official
+container images, pinned by immutable digest in `security/policy.json`. They are
+release tooling, not new dependencies bundled into DAML's native, Python, browser
+or editor payloads:
+
+- [Trivy](https://github.com/aquasecurity/trivy), Apache-2.0: known dependency
+  vulnerabilities and current-snapshot secrets. Its supported lock formats include
+  Cargo, uv and npm/pnpm inputs. This is not full Git-history secret coverage.
+- [Semgrep CE](https://semgrep.dev/docs/licensing), LGPL-2.1 engine: runs the
+  locally authored `security/semgrep.yml` rules, not fetched commercial/registry
+  rules. Community single-function analysis is not paid cross-file analysis.
+- [ClamAV](https://docs.clamav.net/), GPLv2: scans the admitted delivered artifacts
+  with the recorded signature database. A clean result is not proof that all
+  unknown malware or application vulnerabilities are absent.
+
+Preparation obtains public tool/advisory/signature data without mounting source;
+scan containers have no network access. No source/report upload, platform login
+or malware-sample submission is part of the suite. `docs/development/releases.md`
+owns invocation, evidence admission and separate publication authority.
