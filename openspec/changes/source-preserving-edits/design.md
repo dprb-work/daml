@@ -1,6 +1,6 @@
 ## Status and decision owner
 
-Proposal for issue #34; detailed scope is pending the user's decision. CLI #32 is integrated. LSP #33 is human-accepted and undergoing integration. This document does not authorize implementation, merge, publication or host activation.
+Proposal for issue #34; detailed scope is pending the user's decision. CLI #32 and LSP #33 are human-accepted and integrated through PRs #35 and #40. This document does not authorize implementation, merge, publication or host activation.
 
 ## Existing owners and evidence
 
