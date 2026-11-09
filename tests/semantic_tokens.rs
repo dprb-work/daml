@@ -308,7 +308,7 @@ fn decode(server: &Server, source: &str, value: &Value) -> Vec<Token> {
     }
     let mut tokens = Vec::new();
     let (mut line, mut start) = (0usize, 0usize);
-    for item in data.chunks_exact(5) {
+    for item in data.as_chunks::<5>().0 {
         line += item[0] as usize;
         start = if item[0] == 0 {
             start + item[1] as usize
@@ -668,7 +668,7 @@ fn token_exhaustion_is_request_failed_not_partial_result() {
         .iter()
         .position(|kind| kind == "keyword")
         .unwrap() as u64;
-    for (index, token) in data.chunks_exact(5).enumerate() {
+    for (index, token) in data.as_chunks::<5>().0.iter().enumerate() {
         let is_null = index == MAX_TOKENS - 1;
         assert_eq!(token[0].as_u64(), Some(u64::from(index != 0)));
         assert_eq!(token[1].as_u64(), Some(0));

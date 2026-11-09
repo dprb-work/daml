@@ -13,11 +13,11 @@
 
 - [ ] 3.1 Exercise actual stdio token responses and applicable existing LSP/parser boundaries; run the repository aggregate and strict OpenSpec validation.
 - [ ] 3.2 Complete independent whole-change review and resolve retained findings.
-- [ ] 3.3 Present the verified result for human acceptance; no merge, release, host activation or client rendering changes.
+- [ ] 3.3 Obtain human result acceptance; no merge, release, host activation or client rendering changes.
 
 ## Ownership and refinement
 
-Independent checks use the actual stdio binary in `tests/semantic_tokens.rs`; implementation owners do not edit their expectations. The final check-owner amendment corrects the pinned `lsp-server` response API and parser-valid fixtures, proves exact negotiated source ranges, and distinguishes the token-output limit from existing parser-node limits. Its frozen SHA-256 is `e3ae070856831a2231f5531cc66617732bbfdd57b1517628aba09d7e3250ad4a`.
+Independent checks use the actual stdio binary in `tests/semantic_tokens.rs`; implementation owners do not edit their expectations. The final check-owner amendment corrects the pinned `lsp-server` response API and parser-valid fixtures, proves exact negotiated source ranges, and distinguishes the token-output limit from existing parser-node limits. Its frozen SHA-256 is `6f257fcfa43d2a75b8d72c1a2f88eb5c4aecf7857dd769b85bb892fcc9d17357`.
 
 Parser observations retain one grammar/string/trivia owner; builtin membership reuses the existing native list, with native Regex constructor identity established at its existing grammar branch. A bounded span buffer permits rollback and keeps protocol coordinates outside the parser. Forward coordinate conversion avoids per-token prefix rescanning. Ordinary parsing has no token metadata allocation, and no second lexer, result cache, schema lookup or compatibility path was added.
 
