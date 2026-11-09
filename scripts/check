@@ -6,8 +6,11 @@ cd "$(dirname "$0")/.."
 
 cargo fmt --all --check
 cargo fmt --manifest-path fuzz/Cargo.toml --check
+cargo fmt --manifest-path integrations/verify/syntect/Cargo.toml --check
 cargo check --lib --no-default-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 cargo test --all-features --locked
+cargo clippy --manifest-path integrations/verify/syntect/Cargo.toml --all-targets --locked -- -D warnings
+cargo test --manifest-path integrations/verify/syntect/Cargo.toml --locked
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --all-features --no-deps --locked
 ./scripts/check-python

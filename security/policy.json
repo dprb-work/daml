@@ -25,6 +25,7 @@
     "bindings/python/uv.lock",
     "fuzz/Cargo.lock",
     "integrations/verify/package-lock.json",
+    "integrations/verify/syntect/Cargo.lock",
     "integrations/vscode/package-lock.json"
   ],
   "sast_rule_ids": [
