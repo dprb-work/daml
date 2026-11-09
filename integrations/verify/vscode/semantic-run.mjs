@@ -8,7 +8,8 @@ import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTest
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../../..');
-const vsix = resolve(repo, 'integrations/vscode/definitively-asserted-daml-0.1.0.vsix');
+const vsix = process.env.DAML_VSIX_PATH;
+if (!vsix || !isAbsolute(vsix)) throw new Error('Set DAML_VSIX_PATH to the absolute path of the packaged VSIX.');
 const lsp = process.env.DAML_LSP_PATH;
 if (!lsp || !isAbsolute(lsp)) throw new Error('Set DAML_LSP_PATH to the absolute path of the source-built daml-lsp.');
 await access(lsp, constants.X_OK);
