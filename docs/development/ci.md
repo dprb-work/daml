@@ -36,9 +36,11 @@ unsupported path bytes fail closed instead of truncating the change set.
   workflow/control changes, and unknown paths fail closed to this tier. Invalid
   or incomplete path input fails planning, so the required aggregate cannot pass.
 - **Manual full:** dispatching `Check` runs every check group through the same
-  planner. The standalone `Editor integrations` and `Binaries` workflows remain
-  available for their verification contracts; only `Binaries` retains its prior
-  manual-dispatch entrypoint.
+  planner and additionally qualifies the packed browser SDK and collects a complete
+  release candidate. This is a non-publishing preparation preview; it does not make
+  a feature-branch candidate eligible for promotion. The standalone `Editor
+  integrations` and `Binaries` workflows remain available for their verification
+  contracts; only `Binaries` retains its prior manual-dispatch entrypoint.
 
 An `edited` PR event is metadata-only only when `changes` is nonempty, contains
 only `title` or `body`, and each value has exactly a `from` field. A previous
@@ -89,6 +91,14 @@ and exercises installed base and `types`-extra consumers. It publishes no
 registry package or release asset. Editor verification runs in an Ubuntu
 Electron integration test. Linux uses Ubuntu 22.04; a local Linux run does not
 prove macOS or Windows execution.
+
+Selected heavy work first checks coordinated shipping versions and the release
+admission regressions. Release preparation adds browser package/type/native-parity
+and Chromium verification without adding a planner identity. Collection waits for
+all qualification groups, validates the unchanged eight payloads, runs corruption
+probes and retains the candidate for 14 days. The canonical `Prepare release`
+workflow uses this same graph; only its successful main-branch runs can be
+promoted. See [release operations](releases.md).
 
 The automatic aggregate is `Check / Required`. Keep any existing required checks
 in repository rulesets and require this aggregate there; workflow YAML cannot

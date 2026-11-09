@@ -1,13 +1,13 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { downloadAndUnzipVSCode, resolveCliArgsFromVSCodeExecutablePath, runTests } from '@vscode/test-electron';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const repo = resolve(here, '../../..');
-const vsix = resolve(repo, 'integrations/vscode/definitively-asserted-daml-0.1.0.vsix');
+const vsix = process.env.DAML_VSIX_PATH;
+if (!vsix || !isAbsolute(vsix)) throw new Error('Set DAML_VSIX_PATH to the absolute path of the packaged VSIX.');
 const lsp = process.env.DAML_LSP_PATH;
 if (!lsp || !lsp.startsWith('/')) throw new Error('Set DAML_LSP_PATH to the absolute path of the released daml-lsp executable.');
 await readFile(vsix);

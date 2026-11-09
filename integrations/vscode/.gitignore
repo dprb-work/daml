@@ -2,4 +2,7 @@ node_modules/
 dist/
 LICENSE
 THIRD-PARTY-NOTICES.txt
+SOURCES.md
+BUILD.json
 *.vsix
+*.vsix.sha256

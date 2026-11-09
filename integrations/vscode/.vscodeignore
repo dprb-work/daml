@@ -6,3 +6,5 @@ package-lock.json
 .vscodeignore
 tsconfig.json
 dist/meta.json
+*.vsix
+*.vsix.sha256
