@@ -1,10 +1,12 @@
 #[cfg(feature = "lsp")]
 pub(crate) mod editor;
 pub(crate) mod native;
+pub(crate) mod tokens;
 use crate::names::{valid_key, valid_tag};
 use crate::source::line_end;
 use crate::{Entry, ErrorKind, Limits, Node, ParseError, Span, Value};
 use std::collections::HashSet;
+use tokens::Kind as TokenKind;
 
 const HARD_MAX_DEPTH: usize = 128;
 
@@ -77,16 +79,18 @@ pub(crate) fn parse(source: &str, limits: Limits) -> Result<Node, ParseError> {
     Parser::<false>::new(source, limits).document()
 }
 
-struct Parser<'a, const EDITOR: bool = false> {
+struct Parser<'a, const EDITOR: bool = false, const TOKENS: bool = false> {
     source: &'a str,
     pos: usize,
     limits: Limits,
     nodes: usize,
     #[cfg(feature = "lsp")]
     editor: Option<editor::Cursor>,
+    #[cfg(feature = "lsp")]
+    tokens: Vec<tokens::Token>,
 }
 
-impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
+impl<'a, const EDITOR: bool, const TOKENS: bool> Parser<'a, EDITOR, TOKENS> {
     fn new(source: &'a str, limits: Limits) -> Self {
         Self {
             source,
@@ -95,6 +99,8 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
             nodes: 0,
             #[cfg(feature = "lsp")]
             editor: None,
+            #[cfg(feature = "lsp")]
+            tokens: Vec::new(),
         }
     }
 
@@ -138,6 +144,10 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
 
     fn trivia(&mut self) -> Result<bool, ParseError> {
         #[cfg(feature = "lsp")]
+        if TOKENS {
+            return self.token_trivia();
+        }
+        #[cfg(feature = "lsp")]
         if EDITOR {
             let cursor = self.editor.as_mut().expect("editor mode has cursor state");
             let (end, newline) = scan_trivia(self.source, self.pos, self.source.len(), |span| {
@@ -172,7 +182,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         )?;
         let start = self.pos;
         let tag = if self.peek() == Some('!') {
-            self.pos += 1;
+            self.operator()?;
             let tag = self.tag_name()?;
             let tag_end = tag.end;
             self.horizontal();
@@ -191,7 +201,15 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 if let Some(kind) =
                     crate::TemporalKind::from_constructor(&self.source[intrinsic_start..end])
                 {
+                    self.operator()?;
                     self.pos = end;
+                    self.observe_name(
+                        Span {
+                            start: intrinsic_start,
+                            end,
+                        },
+                        false,
+                    )?;
                     self.horizontal();
                     return self.temporal_literal(start, Some(tag), kind);
                 }
@@ -202,7 +220,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 if parent_depth + 1 > self.limits.max_depth || parent_depth + 1 > HARD_MAX_DEPTH {
                     return Err(self.error(ErrorKind::LimitExceeded, start, tag_end));
                 }
-                self.pos = tag_end;
+                self.rewind(tag_end);
                 self.count_node(start)?;
                 return Ok(Node {
                     span: Span {
@@ -226,14 +244,12 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 if self.source[self.pos..].starts_with("\"\"\"")
                     || self.source[self.pos..].starts_with("'''") =>
             {
-                let (string, end) =
-                    crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)?;
+                let (string, end) = self.quoted(false)?;
                 self.pos = end;
                 Value::String(string)
             }
             Some('"') => {
-                let (string, end) =
-                    crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)?;
+                let (string, end) = self.quoted(false)?;
                 self.pos = end;
                 Value::String(string)
             }
@@ -246,14 +262,35 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
             }
             Some('t') if self.keyword("true") => {
                 self.pos += 4;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Bool(true)
             }
             Some('f') if self.keyword("false") => {
                 self.pos += 5;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Bool(false)
             }
             Some('n') if self.keyword("null") => {
                 self.pos += 4;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Null
             }
             Some('-' | '.' | '0'..='9') => self.number()?,
@@ -317,6 +354,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         if self.pos == start || !valid_tag(&self.source[start..self.pos]) {
             return Err(self.error(ErrorKind::InvalidTag, start, self.pos));
         }
+        self.observe_name(span, false)?;
         Ok(span)
     }
 
@@ -336,14 +374,13 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         if !matches!(self.peek(), Some('"' | '\'')) {
             return Err(self.error(invalid, start, self.char_end(self.pos)));
         }
-        let (text, end) = crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)
-            .map_err(|error| {
-                if error.kind == ErrorKind::LimitExceeded {
-                    error
-                } else {
-                    self.error(invalid, payload_start, error.span.end)
-                }
-            })?;
+        let (text, end) = self.quoted(false).map_err(|error| {
+            if error.kind == ErrorKind::LimitExceeded {
+                error
+            } else {
+                self.error(invalid, payload_start, error.span.end)
+            }
+        })?;
         self.pos = end;
         let value = crate::ParsedTemporal::parse(kind, text, self.source)
             .map_err(|_| self.error(invalid, payload_start, end))?;
@@ -432,6 +469,13 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         if self.peek().is_some_and(is_name_char) {
             return Err(self.error(ErrorKind::InvalidNumber, start, self.char_end(self.pos)));
         }
+        self.observe(
+            Span {
+                start,
+                end: self.pos,
+            },
+            TokenKind::Number,
+        )?;
         Ok(Value::Number(Span {
             start,
             end: self.pos,
@@ -443,7 +487,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         if depth > self.limits.max_depth || depth > HARD_MAX_DEPTH {
             return Err(self.error(ErrorKind::LimitExceeded, open, self.char_end(open)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut entries = Vec::new();
         let mut keys = HashSet::new();
         let mut separated = true;
@@ -461,7 +505,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 matches!(self.peek(), None | Some('}')),
             )?;
             if self.peek() == Some('}') {
-                self.pos += 1;
+                self.operator()?;
                 #[cfg(feature = "lsp")]
                 self.editor_leave_map(map_scope);
                 return Ok(Value::Mapping(entries));
@@ -515,6 +559,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 start: key_start,
                 end: self.pos,
             };
+            self.observe(key, TokenKind::Property)?;
             if !keys.insert(&self.source[key_start..self.pos]) {
                 return Err(self.error(ErrorKind::DuplicateKey, key_start, self.pos));
             }
@@ -526,7 +571,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                     self.char_end(self.pos),
                 ));
             }
-            self.pos += 1;
+            self.operator()?;
             #[cfg(feature = "lsp")]
             let parent_path = self.editor_field(key)?;
             let value = self.value(depth)?;
@@ -542,7 +587,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
         if depth > self.limits.max_depth || depth > HARD_MAX_DEPTH {
             return Err(self.error(ErrorKind::LimitExceeded, open, self.char_end(open)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut items = Vec::new();
         let mut separated = true;
         loop {
@@ -559,7 +604,7 @@ impl<'a, const EDITOR: bool> Parser<'a, EDITOR> {
                 matches!(self.peek(), None | Some(']')),
             )?;
             if self.peek() == Some(']') {
-                self.pos += 1;
+                self.operator()?;
                 #[cfg(feature = "lsp")]
                 self.editor_leave_path(parent_path);
                 return Ok(Value::Sequence(items));

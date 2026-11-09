@@ -145,6 +145,32 @@ pub(super) fn failed(message: impl Into<String>) -> RequestFailure {
     (ErrorCode::RequestFailed, message.into())
 }
 
+pub(super) fn token_options() -> lsp_types::SemanticTokensOptions {
+    use lsp_types::{
+        SemanticTokenModifier as Modifier, SemanticTokenType as Type, SemanticTokensFullOptions,
+        SemanticTokensLegend, SemanticTokensOptions,
+    };
+    SemanticTokensOptions {
+        legend: SemanticTokensLegend {
+            // Same order as parser::tokens::Kind.
+            token_types: vec![
+                Type::PROPERTY,
+                Type::NAMESPACE,
+                Type::TYPE,
+                Type::STRING,
+                Type::NUMBER,
+                Type::KEYWORD,
+                Type::COMMENT,
+                Type::REGEXP,
+                Type::OPERATOR,
+            ],
+            token_modifiers: vec![Modifier::DEFAULT_LIBRARY],
+        },
+        full: Some(SemanticTokensFullOptions::Bool(true)),
+        ..Default::default()
+    }
+}
+
 // One source owner per accepted version. Incomplete text remains useful for
 // cursor hints; rejected oversized text is discarded and blocks disk fallback.
 pub(super) enum Text {
@@ -232,6 +258,30 @@ impl Text {
             Self::Native(definition) => Some(definition),
             _ => None,
         }
+    }
+
+    pub(super) fn tokens(
+        &self,
+        encoding: Encoding,
+    ) -> Result<lsp_types::SemanticTokens, RequestFailure> {
+        if let Some(error) = self.error()
+            && matches!(
+                error.kind,
+                crate::ErrorKind::LimitExceeded | crate::ErrorKind::InvalidLimits
+            )
+        {
+            return Err(failed(display(error)));
+        }
+        let source = self
+            .source()
+            .ok_or_else(|| failed("semantic tokens require admitted document source"))?;
+        let data = matches!(self, Self::Data(_) | Self::Incomplete { data: true, .. });
+        let tokens =
+            parser::tokens::collect(source, data).map_err(|error| failed(display(&error)))?;
+        Ok(lsp_types::SemanticTokens {
+            result_id: None,
+            data: encoding.tokens(source, tokens),
+        })
     }
 
     pub(super) fn format(&self) -> Result<String, RequestFailure> {

@@ -4644,7 +4644,7 @@ fn is_positive_number_literal(raw: &str) -> bool {
 }
 
 #[cfg(feature = "lsp")]
-pub(super) const EDITOR_BUILTINS: &[&str] = &[
+pub(crate) const EDITOR_BUILTINS: &[&str] = &[
     "Any", "Bool", "Cron", "Date", "DateTime", "Int", "List", "Map", "Never", "Number", "Object",
     "String", "Time", "Tuple",
 ];
