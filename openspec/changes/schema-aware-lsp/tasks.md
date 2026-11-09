@@ -16,11 +16,11 @@
 - [x] 3.1 Exercise the actual stdio server and real VS Code completion, hover, navigation, unsaved changes and watched-file updates.
 - [x] 3.2 Run repository aggregate, focused protocol checks, editor type/build/runtime verification, and strict OpenSpec validation.
 - [x] 3.3 Complete independent whole-change review, resolve findings and prepare the exact result decision without merge or release.
-- [ ] 3.4 Obtain human result acceptance before dependent #34 implementation.
+- [x] 3.4 Obtain human result acceptance before dependent #34 implementation.
 
 ## Delivery state
 
-Issue #33 follows accepted CLI result `c31daace273fe48e8b3e94f55e91172b20ae344f`; its result decision is recorded in issue #32. No host links, installed editor profiles, release producers, or primary-checkout source are changed. Human acceptance of this result gates dependent #34 implementation.
+Issue #33 follows accepted CLI result `c31daace273fe48e8b3e94f55e91172b20ae344f`. The user accepted LSP result `01afb792fed8fcd1b7ab47e32485da34fee1592c` and authorized integration through [PR #40](https://github.com/dprb-work/daml/issues/33#issuecomment-6735541105). Current-main integration preserves the accepted runtime semantics and release/security contracts; the PR owns its exact reviewed and verified candidate. No host links, installed editor profiles, release producers, or primary-checkout source are changed. Issue #34 still requires acceptance of its detailed source-editing contract before implementation.
 
 ### Verification ownership
 
