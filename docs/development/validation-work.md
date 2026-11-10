@@ -28,6 +28,12 @@ bound schema constraints; no tag-name membership rule or synthetic data field
 is introduced. The original unions still validate completed values, preserving
 `oneOf` overlap rejection and ambiguous-completion errors.
 
+Validation-only unions bypass compatibility proofs. Finite intersections start
+from the smallest available domain. Property-name hashing, required-name scans
+and ordered property lookups reserve text work before running. Immutable schema
+metadata stores the name-work bounds so estimating a lookup does not rescan its
+names. Proofs visit fields lazily and stop at the first contradiction.
+
 `SchemaView::evaluation_work` now owns both acyclic and recursive runtime
 reservations. Unused definitions and default payloads no longer multiply every
 instance check. `check_node` reserves a validity probe first, then separately
@@ -49,14 +55,14 @@ timeout. These are conservative budget thresholds, not timings or engine visits.
 
 | Depth | Alternatives | Root-only before | Root-only after | Tagged before | Tagged after |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 4 | 4,672 | 929 | 8,900 | 1,140 |
-| 2 | 4 | 123,762 | 3,244 | 410,541 | 4,019 |
-| 3 | 4 | >1m | 11,207 | >1m | 13,958 |
-| 4 | 4 | >1m | 41,762 | >1m | 52,137 |
-| 3 | 1 | 3,905 | 1,328 | 5,857 | 1,994 |
-| 3 | 2 | 71,360 | 3,084 | 285,986 | 4,277 |
-| 3 | 8 | >1m | 59,436 | >1m | 67,253 |
-| 3 | 16 | >1m | 394,703 | >1m | 420,554 |
+| 1 | 4 | 4,672 | 1,211 | 8,900 | 1,467 |
+| 2 | 4 | 123,762 | 3,808 | 410,541 | 4,673 |
+| 3 | 4 | >1m | 12,053 | >1m | 14,939 |
+| 4 | 4 | >1m | 42,890 | >1m | 53,445 |
+| 3 | 1 | 3,905 | 1,526 | 5,857 | 2,210 |
+| 3 | 2 | 71,360 | 3,498 | 285,986 | 4,748 |
+| 3 | 8 | >1m | 61,146 | >1m | 69,254 |
+| 3 | 16 | >1m | 398,141 | >1m | 424,595 |
 
 Reproduce the diagnostic with:
 
@@ -85,7 +91,7 @@ the complete Olaf catalog.
 Before the fix, native semantic resolution failed specifically with
 `schema validation work exceeds step limit`, including with a diagnostic
 100-million-unit allowance. Afterwards it resolves with the unchanged default
-allowance; its minimum successful semantic work budget is 488,439 units. Only
+allowance; its minimum successful semantic work budget is 485,473 units. Only
 the two-way optional `optimize` completion remains a search choice.
 
 The rebuilt native Python extension resolves the same captured semantic tree.
@@ -108,6 +114,15 @@ are unchanged. Focused regressions retain duplicate-recursive-work rejection,
 exact numeric equality, optional-property omission, supplied-null precedence,
 `oneOf` ambiguity, staged mutation and retained-tag obligations. Two individually
 admitted modules exceeding the aggregate schema-node bound are still rejected.
+
+Review regressions also cover large enum intersections and mandatory common
+defaults under validation-only unions. Both initially failed with work exhaustion
+despite inexpensive valid completions. A private proof-boundary test uses
+100 schema names of about 16 KiB each and a budget smaller than one text pass;
+it rejects before uncharged hashing or required-name comparisons, with and
+without required fields. The rejected implementation returned `true` at that
+boundary. Default-bearing optional/numeric cases exercise pruning rather than
+merely checking the original validator's final rejection.
 
 One existing reference/default uniqueness fixture depended on obsolete
 whole-schema overreservation: 500 distinct integers fit its 10-million-unit

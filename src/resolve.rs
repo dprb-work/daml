@@ -1471,6 +1471,29 @@ impl<'a> Resolver<'a, '_> {
                         branches: vec![*fixed],
                     }));
                 }
+                // Validation-only unions need no completion proof or search.
+                // In particular, do not intersect large absent-field domains
+                // before a common default has supplied their actual value.
+                let mut needs_selection = false;
+                for branch in schema.array_children(keyword) {
+                    self.budget.step(node, path)?;
+                    if branch.has_defaults()
+                        || (missing
+                            && self.schema_container_shapes(
+                                branch,
+                                node,
+                                path,
+                                &mut HashSet::new(),
+                            )? != 0)
+                        || self.has_implicit_branch_work(schemas, &[branch], node, path, 0)?
+                    {
+                        needs_selection = true;
+                        break;
+                    }
+                }
+                if !needs_selection {
+                    continue;
+                }
                 let mut branches = Vec::new();
                 let mut completion_work = false;
                 for branch in schema.array_children(keyword) {
@@ -1543,25 +1566,60 @@ impl<'a> Resolver<'a, '_> {
                 .any(|schema| schema.container_kind() == Some("object"))
                 || (self.budget.stage.is_none() && matches!(node.value, ResolvedValue::Mapping(_)));
             if object {
-                for schema in &combined {
-                    self.budget.charge_work(
-                        schema.property_names().count().saturating_add(1),
-                        node,
-                        path,
-                    )?;
-                }
-                for key in Self::property_names(&combined) {
-                    self.budget.charge_work(combined.len(), node, path)?;
-                    let supplied = present.then(|| node.get(key)).flatten();
-                    if supplied.is_none()
-                        && !combined.iter().any(|schema| schema.requires_property(key))
-                    {
-                        continue;
+                let mut supplied_lookup_work = 1usize;
+                if present && let ResolvedValue::Mapping(fields) = &node.value {
+                    for name in fields.keys() {
+                        let work = name.len().div_ceil(64).saturating_add(1);
+                        self.budget.charge_work(work, node, path)?;
+                        supplied_lookup_work = supplied_lookup_work.saturating_add(work);
                     }
-                    let properties = Self::property_schemas(&combined, key);
-                    let properties = self.schema_conjunction(properties, node, path)?;
-                    if !self.finite_domains_overlap(&properties, supplied, node, path)? {
-                        return Ok(false);
+                }
+                let mut seen = HashSet::new();
+                for schema in &combined {
+                    for key in schema.property_names() {
+                        // Charge before deduplication hashes a name or compares
+                        // it with a prior spelling. Stop as soon as a field
+                        // proves incompatibility; do not prepare later fields.
+                        self.budget.charge_work(
+                            key.len().div_ceil(64).saturating_add(1).saturating_mul(2),
+                            node,
+                            path,
+                        )?;
+                        if !seen.insert(key) {
+                            continue;
+                        }
+                        self.budget.charge_work(
+                            supplied_lookup_work.saturating_add(combined.len()),
+                            node,
+                            path,
+                        )?;
+                        let supplied = present.then(|| node.get(key)).flatten();
+                        if supplied.is_none() {
+                            let mut required = false;
+                            for schema in &combined {
+                                self.budget.charge_work(
+                                    schema.required_lookup_work(),
+                                    node,
+                                    path,
+                                )?;
+                                if schema.requires_property(key) {
+                                    required = true;
+                                    break;
+                                }
+                            }
+                            if !required {
+                                continue;
+                            }
+                        }
+                        for schema in &combined {
+                            self.budget
+                                .charge_work(schema.property_lookup_work(), node, path)?;
+                        }
+                        let properties = Self::property_schemas(&combined, key);
+                        let properties = self.schema_conjunction(properties, node, path)?;
+                        if !self.finite_domains_overlap(&properties, supplied, node, path)? {
+                            return Ok(false);
+                        }
                     }
                 }
             }
@@ -1630,13 +1688,14 @@ impl<'a> Resolver<'a, '_> {
             }
             return Ok(true);
         }
-        let Some(domain) = schemas
+        let Some((domain, values)) = schemas
             .iter()
-            .find(|schema| schema.finite_values().is_some())
+            .filter_map(|schema| schema.finite_values().map(|values| (schema, values)))
+            .min_by_key(|(_, values)| values.len())
         else {
             return Ok(true);
         };
-        for value in domain.finite_values().expect("selected finite domain") {
+        for value in values {
             // The local compiled body includes the entire const/enum payload.
             // Charge both sides before potentially deep JSON equality checks.
             self.budget
@@ -2945,5 +3004,71 @@ fn differing_default<'a>(left: &ResolvedNode<'a>, right: &ResolvedNode<'a>) -> O
         Some(right.origin)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod proof_work_tests {
+    use super::*;
+    use crate::SchemaModule;
+    use serde_json::{Map, json};
+
+    #[test]
+    fn compatible_branch_reserves_wide_schema_name_text_work() {
+        let prefix = "x".repeat(16 * 1024);
+        let names = (0..100)
+            .map(|index| format!("{prefix}{index:03}"))
+            .collect::<Vec<_>>();
+        // The proof cannot admit even one pass over this text within a budget
+        // smaller than its 64-byte work-unit count.
+        let max_steps = names
+            .iter()
+            .map(|name| name.len().div_ceil(64))
+            .sum::<usize>()
+            / 5;
+        let properties = names
+            .iter()
+            .map(|name| (name.clone(), json!({})))
+            .collect::<Map<String, JsonValue>>();
+        for required_names in [false, true] {
+            let module = SchemaModule::from_value(json!({
+                "types": {"app.Config": {"schema": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": if required_names { names.clone() } else { vec![] },
+                    "anyOf": [{"default": {}}]
+                }}}
+            }))
+            .expect("wide-name module fits existing source admission bounds");
+            let schemas = Schemas::compose([module])
+                .expect("wide-name schema fits existing compilation bounds");
+            let common = schemas.type_schema("app.Config").expect("root schema");
+            let branch = common.array_child("anyOf", 0).expect("default-bearing arm");
+            let document = crate::parse("{\n}\n").expect("empty object input");
+            let mut resolver = Resolver {
+                schemas: &schemas,
+                budget: Budget {
+                    limits: ResolutionLimits {
+                        max_steps,
+                        ..Default::default()
+                    },
+                    nodes: 0,
+                    bytes: 0,
+                    steps: 0,
+                    stage: None,
+                },
+                search: CompletionSearch::default(),
+                contracts: BTreeMap::new(),
+                pending_defaults: None,
+            };
+            let node = from_input(&document, document.root(), 0, "", &mut resolver.budget)
+                .expect("empty object capture needs no wide-name input work");
+            let error = resolver
+                .compatible_branch(&[common], branch, &node, "", true, &mut HashSet::new())
+                .expect_err(
+                    "compatibility must reserve schema-name text work before exceeding its budget",
+                );
+            assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
+        }
     }
 }

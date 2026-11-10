@@ -215,6 +215,8 @@ name-based discriminator. Ordinary resolution can also use supplied scalar
 values; staged resolution uses retained assertions and contracts instead of
 values that callbacks can replace. The original union remains a validation
 obligation, including `oneOf` overlap checks.
+These proofs run only when alternatives can affect completion. Finite-domain
+comparisons and schema-name hashing/lookups share the cumulative work budget.
 
 Defaults reachable in unsupported applicator positions—negation, conditionals,
 `contains`, `propertyNames`, `dependentSchemas`, pattern-selected properties, or

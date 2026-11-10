@@ -438,6 +438,9 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_array)
             .is_some_and(|required| required.iter().any(|name| name.as_str() == Some(key)))
     }
+    pub(crate) fn required_lookup_work(self) -> usize {
+        self.entry().required_lookup_work
+    }
 
     pub(crate) fn container_kind(self) -> Option<&'static str> {
         match self.value().get("type")?.as_str()? {
@@ -452,6 +455,13 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_object)
             .into_iter()
             .flat_map(|properties| properties.keys().map(String::as_str))
+    }
+    // A lookup can compare long shared prefixes against multiple stored keys.
+    // Reserve all stored key text: even a worst-case ordered lookup cannot
+    // compare more property-name text than that. Compute this bound at admission,
+    // not by rescanning the map before every runtime lookup.
+    pub(crate) fn property_lookup_work(self) -> usize {
+        self.entry().property_lookup_work
     }
     pub(crate) fn item(self, index: usize) -> Option<Self> {
         self.registry.locate(profile::item(self.value(), index)?)
@@ -1088,6 +1098,8 @@ struct SchemaEntry {
     default_tags: HashMap<usize, usize>,
     dispatch_key: String,
     local_work: usize,
+    property_lookup_work: usize,
+    required_lookup_work: usize,
     not_render_work: usize,
     default_temporals: HashMap<usize, crate::temporal::TemporalMetadata>,
     has_defaults: bool,
@@ -1686,6 +1698,25 @@ fn append_schema_entries(
             default_tags: HashMap::new(),
             dispatch_key: entries.len().to_string(),
             local_work: 0,
+            property_lookup_work: value.get("properties").and_then(Value::as_object).map_or(
+                1,
+                |properties| {
+                    properties.keys().fold(1usize, |work, name| {
+                        work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                    })
+                },
+            ),
+            required_lookup_work: value.get("required").and_then(Value::as_array).map_or(
+                1,
+                |required| {
+                    required
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .fold(1usize, |work, name| {
+                            work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                        })
+                },
+            ),
             not_render_work: 0,
             default_temporals: HashMap::new(),
             has_defaults: false,
