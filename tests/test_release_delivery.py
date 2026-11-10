@@ -12,6 +12,7 @@ import importlib.util
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -197,6 +198,124 @@ def release_environment() -> tuple[dict, dict]:
         }],
     }
     return environment, policies
+
+
+class CreatedTagVisibilityTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        with patch.dict(sys.modules, {"release_common": load_policy("release_common")}):
+            cls.publisher = load_policy("release_publish")
+
+    def reference(self) -> dict:
+        return {
+            "ref": "refs/tags/v0.2.1",
+            "object": {"type": "commit", "sha": SOURCE_SHA},
+        }
+
+    def response(self, body, status=200):
+        return subprocess.CompletedProcess(
+            [], 0 if status == 200 else 1,
+            stdout=json.dumps(body), stderr="" if status == 200 else f"HTTP {status}",
+        )
+
+    def exercise_protocol(self, responses):
+        """Keep the real gh JSON/404 boundary; replace only process and clock ports."""
+        remaining = iter(responses)
+        events = []
+
+        def command(argv, **kwargs):
+            method = argv[argv.index("--method") + 1]
+            path = argv[argv.index("X-GitHub-Api-Version: 2022-11-28") + 1]
+            data = json.loads(kwargs["input"]) if kwargs["input"] is not None else None
+            events.append((method, path, data))
+            self.assertEqual(
+                path,
+                f"{self.publisher.API_ROOT}/"
+                + ("git/refs" if method == "POST" else "git/ref/tags/v0.2.1"),
+            )
+            return next(remaining)
+
+        failure = None
+        with (
+            patch.object(self.publisher.subprocess, "run", side_effect=command),
+            patch.object(self.publisher.time, "sleep", side_effect=lambda delay: events.append(("sleep", delay))),
+        ):
+            try:
+                self.publisher.create_release_tag("0.2.1", SOURCE_SHA)
+            except RuntimeError as exc:
+                failure = exc
+        return failure, events
+
+    def test_transient_404_reads_observe_exact_tag_without_repeating_creation(self) -> None:
+        for absences in (0, 1, 5):
+            with self.subTest(absences=absences):
+                failure, events = self.exercise_protocol([
+                    self.response(self.reference()),
+                    *[self.response({"status": "404"}, 404) for _ in range(absences)],
+                    self.response(self.reference()),
+                ])
+                self.assertIsNone(failure)
+                expected = [(
+                    "POST", f"{self.publisher.API_ROOT}/git/refs",
+                    {"ref": "refs/tags/v0.2.1", "sha": SOURCE_SHA},
+                )]
+                for delay in (0, 1, 2, 4, 8, 15)[:absences + 1]:
+                    if delay:
+                        expected.append(("sleep", delay))
+                    expected.append(("GET", f"{self.publisher.API_ROOT}/git/ref/tags/v0.2.1", None))
+                self.assertEqual(events, expected)
+
+    def test_persistent_404_stops_after_six_reads_and_describes_created_tag_recovery(self) -> None:
+        failure, events = self.exercise_protocol([
+            self.response(self.reference()),
+            *[self.response({"status": "404"}, 404) for _ in range(6)],
+        ])
+        self.assertIsNotNone(failure)
+        self.assertIn("acknowledged creation of v0.2.1", str(failure))
+        self.assertIn("No release draft was created", str(failure))
+        self.assertIn("release_publish.py plan", str(failure))
+        self.assertEqual([event[0] for event in events].count("POST"), 1)
+        self.assertEqual([event[0] for event in events].count("GET"), 6)
+        self.assertEqual([event[1] for event in events if event[0] == "sleep"], [1, 2, 4, 8, 15])
+
+    def test_wrong_ref_source_or_object_fails_immediately_on_acknowledgment_or_read(self) -> None:
+        wrong_ref = {**self.reference(), "ref": "refs/tags/v99.0.0"}
+        wrong_source = copy.deepcopy(self.reference())
+        wrong_source["object"]["sha"] = "f" * 40
+        wrong_object = copy.deepcopy(self.reference())
+        wrong_object["object"]["type"] = "tag"
+        for reference in (wrong_ref, wrong_source, wrong_object, {}):
+            for boundary in ("acknowledgment", "read"):
+                with self.subTest(reference=reference, boundary=boundary):
+                    responses = [self.response(reference)]
+                    if boundary == "read":
+                        responses.insert(0, self.response(self.reference()))
+                    failure, events = self.exercise_protocol(responses)
+                    self.assertIsNotNone(failure)
+                    self.assertEqual([event[0] for event in events], ["POST"] if boundary == "acknowledgment" else ["POST", "GET"])
+
+    def test_non404_or_unparseable_read_errors_are_not_retried(self) -> None:
+        responses = [
+            self.response({"status": str(status)}, status) for status in (403, 429, 500)
+        ]
+        responses.append(subprocess.CompletedProcess([], 1, stdout="not JSON", stderr="connection failed"))
+        for response in responses:
+            with self.subTest(response=response):
+                failure, events = self.exercise_protocol([
+                    self.response(self.reference()), response,
+                ])
+                self.assertIsNotNone(failure)
+                self.assertEqual([event[0] for event in events], ["POST", "GET"])
+                self.assertIn(response.stderr, str(failure))
+
+    def test_failed_creation_is_never_retried_or_followed_by_reads(self) -> None:
+        for status in (403, 404, 422, 500):
+            with self.subTest(status=status):
+                failure, events = self.exercise_protocol([
+                    self.response({"status": str(status)}, status),
+                ])
+                self.assertIsNotNone(failure)
+                self.assertEqual([event[0] for event in events], ["POST"])
 
 
 class PublicationPolicyTests(unittest.TestCase):

@@ -3,7 +3,9 @@
 
 `check-environment` and `plan` perform external reads only. `preflight` also
 stages the approved files locally. `stage-github` creates a draft with unchanged
-assets; `promote` publishes only that draft. The explicit publication target
+assets, polling only a successfully created tag's visibility for at most six
+reads with delays of 0, 1, 2, 4, 8 and 15 seconds; no write is retried.
+`promote` publishes only that draft. The explicit publication target
 selects GitHub alone or GitHub plus PyPI. Only the latter prepares registry
 wheels and requires exact public PyPI hashes after the official PyPA action.
 Both write commands require the main-only protected publication workflow and
@@ -31,6 +33,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -427,6 +430,46 @@ def validate_draft(release: dict, args: argparse.Namespace) -> None:
         raise RuntimeError("release tag is missing or points to a different source")
 
 
+def create_release_tag(version: str, source_sha: str) -> None:
+    """Create once, then tolerate only bounded read-after-write absence."""
+    tag = f"v{version}"
+    expected_ref = f"refs/tags/{tag}"
+    reference = github(
+        "git/refs",
+        method="POST",
+        data={"ref": expected_ref, "sha": source_sha},
+    )
+    if (
+        reference.get("ref") != expected_ref
+        or (reference.get("object") or {}).get("type") != "commit"
+        or (reference.get("object") or {}).get("sha") != source_sha
+    ):
+        raise RuntimeError(
+            f"GitHub acknowledged creation of {tag} with an unexpected reference/source. "
+            + RECOVERY
+        )
+    # Only this attempt's successful creation permits absence polling. A
+    # matching pre-existing tag is still rejected by require_absent_github.
+    for delay in (0, 1, 2, 4, 8, 15):
+        if delay:
+            time.sleep(delay)
+        reference = github(f"git/ref/tags/{tag}", missing_ok=True)
+        if reference is None:
+            continue
+        if (
+            reference.get("ref") != expected_ref
+            or (reference.get("object") or {}).get("type") != "commit"
+            or (reference.get("object") or {}).get("sha") != source_sha
+        ):
+            raise RuntimeError("new release tag does not match the approved reference/source")
+        return
+    raise RuntimeError(
+        f"GitHub acknowledged creation of {tag}, but the tag remains unobservable "
+        "after six reads; the created tag may already exist. No release draft was created. "
+        + RECOVERY
+    )
+
+
 def stage_github(args: argparse.Namespace) -> None:
     require_publish_context(args.publication_target)
     check_environment()
@@ -448,17 +491,10 @@ def stage_github(args: argparse.Namespace) -> None:
     tag = f"v{args.version}"
     # Draft releases need not materialize a new Git tag. Exercise tag creation
     # permissions and rulesets before any irreversible registry upload.
-    github(
-        "git/refs",
-        method="POST",
-        data={"ref": f"refs/tags/{tag}", "sha": args.source_sha},
-    )
-    reference = github(f"git/ref/tags/{tag}")
-    if (
-        reference["object"].get("type") != "commit"
-        or reference["object"].get("sha") != args.source_sha
-    ):
-        raise RuntimeError("new release tag does not match the approved source")
+    create_release_tag(args.version, args.source_sha)
+    # Visibility polling can outlive the earlier main-tip admission. Recheck
+    # before the first release write; never recover by moving the created tag.
+    require_current_main(args)
     subprocess.run(
         [
             "gh",

@@ -132,14 +132,30 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
         "object": {"type": "commit", "sha": args.source_sha},
     }
     artifact_id = 87654321
-    cases = ("tag-permission-denied", "tag-not-observable", "wrong-tag-source", "wrong-tag-object", "exact-tag")
+    cases = (
+        "tag-permission-denied", "tag-not-observable", "wrong-tag-source",
+        "wrong-tag-object", "wrong-tag-ref", "wrong-tag-ack", "tag-read-forbidden",
+        "tag-read-server-error", "tag-visible-after-404", "tag-visible-last-read",
+        "main-moved-while-waiting", "exact-tag",
+    )
     passed = []
-    for case in cases:
+    for target, case in (
+        (target, case)
+        for target in ("github-only", "github-and-pypi")
+        for case in cases
+    ):
         with tempfile.TemporaryDirectory(prefix="daml-stage-boundary-") as temporary:
             output = Path(temporary) / "github-output"
-            state = {"tag_attempted": False, "reference": None, "tag_observed": False, "draft": None}
+            state = {
+                "writes": [], "reference": None, "tag_observed": False,
+                "tag_reads": 0, "draft": None, "delays": [],
+            }
             denied = RuntimeError("fixture GitHub POST git/refs: HTTP 403")
             missing = RuntimeError("fixture GitHub GET tag ref: HTTP 404")
+            read_error = RuntimeError(
+                "fixture GitHub GET tag ref: HTTP "
+                + ("403" if case == "tag-read-forbidden" else "500")
+            )
             context = {
                 "GITHUB_ACTIONS": "true",
                 "GITHUB_EVENT_NAME": "workflow_dispatch",
@@ -148,7 +164,7 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                 "GITHUB_SHA": args.source_sha,
                 "GITHUB_WORKFLOW_REF": "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/main",
                 "GITHUB_OUTPUT": str(output),
-                "RELEASE_TARGET": "github-and-pypi",
+                "RELEASE_TARGET": target,
             }
             responses = {
                 "environments/release": environment,
@@ -172,25 +188,40 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
 
             def github(path: str, *, method="GET", data=None, missing_ok=False):
                 if method == "POST" and path == "git/refs":
-                    state["tag_attempted"] = True
+                    state["writes"].append("tag")
                     if data != {"ref": f"refs/tags/{tag}", "sha": args.source_sha}:
                         raise AssertionError("tag write does not name the exact approved commit")
                     if case == "tag-permission-denied":
                         raise denied
                     reference = json.loads(json.dumps(exact_reference))
-                    if case == "wrong-tag-source":
-                        reference["object"]["sha"] = "f" * 40
-                    elif case == "wrong-tag-object":
-                        reference["object"]["type"] = "tag"
                     state["reference"] = reference
+                    if case == "wrong-tag-ack":
+                        return {**reference, "ref": "refs/tags/v99.0.0"}
                     return reference
                 if method != "GET":
                     raise AssertionError(f"unexpected external mutation: {method} {path}")
                 if path == f"git/ref/tags/{tag}":
-                    if state["tag_attempted"]:
-                        state["tag_observed"] = True
-                        if case == "tag-not-observable":
-                            raise missing
+                    if state["writes"] and state["draft"] is None:
+                        state["tag_reads"] += 1
+                        if case in ("tag-read-forbidden", "tag-read-server-error"):
+                            raise read_error
+                        absent_reads = {
+                            "tag-not-observable": 6, "tag-visible-after-404": 2,
+                            "tag-visible-last-read": 5, "main-moved-while-waiting": 1,
+                        }.get(case, 0)
+                        if state["tag_reads"] <= absent_reads:
+                            if not missing_ok:
+                                raise missing
+                            return None
+                        reference = json.loads(json.dumps(state["reference"]))
+                        if case == "wrong-tag-source":
+                            reference["object"]["sha"] = "f" * 40
+                        elif case == "wrong-tag-object":
+                            reference["object"]["type"] = "tag"
+                        elif case == "wrong-tag-ref":
+                            reference["ref"] = "refs/tags/v99.0.0"
+                        state["tag_observed"] = reference == exact_reference
+                        return reference
                     return state["reference"]
                 if path == f"releases/tags/{tag}":
                     return state["draft"]
@@ -205,6 +236,7 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                     raise AssertionError(f"unexpected subprocess effect: {command}")
                 if not state["tag_observed"] or state["reference"] != exact_reference:
                     raise AssertionError("draft creation attempted before exact tag materialization")
+                state["writes"].append("draft")
                 assets = []
                 for filename in command[4:command.index("--repo")]:
                     path = Path(filename)
@@ -220,42 +252,79 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                 }
                 return subprocess.CompletedProcess(command, 0)
 
+            def sleep(delay):
+                state["delays"].append(delay)
+                if case == "main-moved-while-waiting":
+                    responses["git/ref/heads/main"]["object"]["sha"] = "f" * 40
+
+            def pypi(version):
+                if target == "github-only":
+                    raise AssertionError("GitHub-only staging contacted PyPI")
+                if version != args.version:
+                    raise AssertionError("registry lookup differs from the approved version")
+                return None
+
             stage_args = argparse.Namespace(
                 version=args.version, source_sha=args.source_sha,
                 prepare_run_id=args.prepare_run_id, manifest_sha256=args.manifest_sha256,
                 artifact_id=artifact_id, bundle=candidate,
-                publication_target="github-and-pypi",
+                publication_target=target,
             )
             failure = None
             with (
-                patch.dict(os.environ, context),
+                patch.dict(os.environ, context, clear=True),
                 patch.object(publisher, "github", side_effect=github),
-                patch.object(publisher, "pypi_version", return_value=None),
+                patch.object(publisher, "pypi_version", side_effect=pypi),
                 patch.object(publisher.subprocess, "run", side_effect=release_command),
+                patch.object(publisher.time, "sleep", side_effect=sleep),
+                patch.object(publisher.urllib.request, "urlopen", side_effect=AssertionError("unexpected live network request")),
                 redirect_stdout(io.StringIO()),
             ):
                 try:
                     publisher.stage_github(stage_args)
                 except RuntimeError as exc:
                     failure = exc
-            if not state["tag_attempted"]:
-                raise AssertionError(f"case did not reach tag-permission boundary: {case}")
-            if case == "exact-tag":
+            identity = f"{target}:{case}"
+            if not state["writes"] or state["writes"].count("tag") != 1:
+                raise AssertionError(f"expected exactly one tag creation attempt: {identity}")
+            succeeds = case in ("exact-tag", "tag-visible-after-404", "tag-visible-last-read")
+            if succeeds:
                 if failure is not None:
                     raise failure
                 values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines())
                 if state["draft"] is None or values.get("release_id") != "23456789":
-                    raise AssertionError("exact tag did not produce a bound draft output")
+                    raise AssertionError(f"exact tag did not produce a bound draft output: {identity}")
+                if state["writes"] != ["tag", "draft"]:
+                    raise AssertionError(f"unexpected publication writes: {identity}")
             else:
-                if failure is None or state["draft"] is not None or output.exists():
-                    raise AssertionError(f"unsafe draft/output after failed tag admission: {case}")
+                if failure is None or state["writes"] != ["tag"] or state["draft"] is not None or output.exists():
+                    raise AssertionError(f"unsafe draft/output after failed tag admission: {identity}")
                 if case == "tag-permission-denied" and failure is not denied:
                     raise AssertionError("permission case failed before the intended 403 boundary")
-                if case == "tag-not-observable" and failure is not missing:
-                    raise AssertionError("missing-tag case failed before the intended 404 boundary")
-                if case.startswith("wrong-tag") and not state["tag_observed"]:
-                    raise AssertionError("wrong-tag case did not reach reference verification")
-            passed.append(case)
+                if case == "tag-not-observable":
+                    if state["tag_reads"] != 6 or "acknowledged creation" not in str(failure):
+                        raise AssertionError("persistent absence did not report bounded created-tag partial state")
+                    if "release_publish.py plan" not in str(failure):
+                        raise AssertionError("persistent absence omitted manual recovery guidance")
+                if case in ("tag-read-forbidden", "tag-read-server-error"):
+                    if failure is not read_error or state["tag_reads"] != 1:
+                        raise AssertionError("non-404 tag reads were retried or hidden")
+                if case in ("tag-permission-denied", "wrong-tag-ack") and state["tag_reads"]:
+                    raise AssertionError("tag reads followed a failed creation acknowledgment")
+                if case in ("wrong-tag-source", "wrong-tag-object", "wrong-tag-ref") and state["tag_reads"] != 1:
+                    raise AssertionError("wrong tag reference was retried")
+                if case == "main-moved-while-waiting":
+                    if "current default-main tip" not in str(failure) or not state["tag_observed"]:
+                        raise AssertionError("current main was not readmitted after visibility waiting")
+            expected_delays = {
+                "tag-not-observable": [1, 2, 4, 8, 15],
+                "tag-visible-after-404": [1, 2],
+                "tag-visible-last-read": [1, 2, 4, 8, 15],
+                "main-moved-while-waiting": [1],
+            }.get(case, [])
+            if state["delays"] != expected_delays:
+                raise AssertionError(f"unexpected visibility polling delays: {identity}")
+            passed.append(identity)
     return passed
 
 
