@@ -16,9 +16,9 @@
 
 - [x] 3.1 Exercise the actual edit/apply/reparse/resolve journey, focused boundaries and unchanged existing consumers.
 - [x] 3.2 Run repository-required checks and strict OpenSpec validation on the integrated candidate.
-- [ ] 3.3 Complete independent whole-change review and disposition findings.
+- [x] 3.3 Complete independent whole-change review and disposition findings.
 - [ ] 3.4 Obtain human result acceptance; merge, release and caller/host activation remain separate decisions.
 
 ## Current state
 
-Issue #34: the owner accepted core operation/comment/snapshot rules and selected CLI as the first caller. Core and CLI implementation, independently owned checks, actual CLI smoke, integrated challenge, aggregate verification and strict OpenSpec validation are complete. Final independent whole-change review and human result acceptance remain pending; no merge, release or host activation is claimed.
+Issue #34: the owner accepted core operation/comment/snapshot rules and selected CLI as the first caller. Implementation, independently owned checks, actual CLI smoke, integrated challenge, aggregate verification, strict OpenSpec validation and final independent review are complete with no unresolved findings. Human result acceptance remains pending; no merge, release or host activation is claimed.
