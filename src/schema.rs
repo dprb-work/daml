@@ -438,6 +438,9 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_array)
             .is_some_and(|required| required.iter().any(|name| name.as_str() == Some(key)))
     }
+    pub(crate) fn required_lookup_work(self) -> usize {
+        self.entry().required_lookup_work
+    }
 
     pub(crate) fn container_kind(self) -> Option<&'static str> {
         match self.value().get("type")?.as_str()? {
@@ -452,6 +455,19 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_object)
             .into_iter()
             .flat_map(|properties| properties.keys().map(String::as_str))
+    }
+    pub(crate) fn property_count(self) -> usize {
+        self.value()
+            .get("properties")
+            .and_then(Value::as_object)
+            .map_or(0, serde_json::Map::len)
+    }
+    // A lookup can compare long shared prefixes against multiple stored keys.
+    // Reserve all stored key text: even a worst-case ordered lookup cannot
+    // compare more property-name text than that. Compute this bound at admission,
+    // not by rescanning the map before every runtime lookup.
+    pub(crate) fn property_lookup_work(self) -> usize {
+        self.entry().property_lookup_work
     }
     pub(crate) fn item(self, index: usize) -> Option<Self> {
         self.registry.locate(profile::item(self.value(), index)?)
@@ -480,10 +496,65 @@ impl<'a> SchemaView<'a> {
     pub(crate) fn has_defaults(self) -> bool {
         self.entry().has_defaults
     }
+
+    // Finite domains are constraints, not discriminator/tag metadata. They can
+    // prove that conjunctive obligations have no common value before defaults
+    // are chosen, including when the constrained member is still absent.
+    pub(crate) fn finite_values(self) -> Option<&'a [Value]> {
+        self.value()
+            .get("const")
+            .map(std::slice::from_ref)
+            .or_else(|| {
+                self.value()
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+            })
+    }
+
+    pub(crate) fn finite_value_work(self) -> usize {
+        if self.finite_values().is_some() {
+            self.entry().local_work
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn permits_finite_value(self, value: &Value) -> bool {
+        self.value()
+            .get("const")
+            .is_none_or(|constant| jsonschema::json::cmp::equal(constant, value))
+            && self
+                .value()
+                .get("enum")
+                .and_then(Value::as_array)
+                .is_none_or(|values| {
+                    values
+                        .iter()
+                        .any(|candidate| jsonschema::json::cmp::equal(candidate, value))
+                })
+    }
+
+    pub(crate) fn permits_finite_node(self, node: &ResolvedNode<'_>) -> bool {
+        let instance = NodeRef::new(node);
+        self.value()
+            .get("const")
+            .is_none_or(|constant| instance.equals_value(constant))
+            && self
+                .value()
+                .get("enum")
+                .and_then(Value::as_array)
+                .is_none_or(|values| values.iter().any(|value| instance.equals_value(value)))
+    }
     /// Reserve an upper bound before calling the upstream engine. This walks
     /// structure, never decides whether a constraint or branch is valid.
     pub(crate) fn evaluation_cost(self, node: &ResolvedNode<'_>, limit: usize) -> usize {
-        self.evaluation_work::<()>(node, limit, None)
+        self.evaluation_work::<()>(node, limit, false, None)
+    }
+
+    /// Reserve validity checks without the eager error trees built by validate.
+    pub(crate) fn validity_cost(self, node: &ResolvedNode<'_>, limit: usize) -> usize {
+        self.evaluation_work::<()>(node, limit, true, None)
     }
 
     /// Reserve eager evaluation output as well as schema work before entering
@@ -499,8 +570,12 @@ impl<'a> SchemaView<'a> {
             max_bytes: 0,
             max_steps: 0,
         };
-        resources.max_steps =
-            self.evaluation_work::<usize>(node, limits.max_steps, Some((&mut resources, limits)));
+        resources.max_steps = self.evaluation_work::<usize>(
+            node,
+            limits.max_steps,
+            false,
+            Some((&mut resources, limits)),
+        );
         resources
     }
 
@@ -508,6 +583,7 @@ impl<'a> SchemaView<'a> {
         self,
         node: &ResolvedNode<'_>,
         limit: usize,
+        validity_only: bool,
         mut output: Option<(&mut crate::ResolutionLimits, crate::ResolutionLimits)>,
     ) -> usize {
         let explaining = output.is_some();
@@ -568,15 +644,6 @@ impl<'a> SchemaView<'a> {
             );
             (units, unique)
         }
-        if !explaining && let Some(work) = self.entry().work {
-            let (units, unique) = measure(node, self.entry().uses_uniqueness, &mut |_, _, _, _| {});
-            // Keep the admitted acyclic profile's existing cost and limits.
-            return work.saturating_mul(units.saturating_add(if self.entry().uses_uniqueness {
-                unique
-            } else {
-                0
-            }));
-        }
         let mut measured = HashMap::new();
         measure(
             node,
@@ -615,7 +682,8 @@ impl<'a> SchemaView<'a> {
             schema: self,
             instance: NodeRef::new(node),
             passes: Passes {
-                errors: 1,
+                errors: usize::from(!validity_only),
+                validity: usize::from(validity_only),
                 ..Passes::default()
             },
             depth: 0,
@@ -993,6 +1061,12 @@ impl<'a> SchemaView<'a> {
         let suffix = path.strip_prefix(self.entry().dispatch_key.as_str())?;
         (suffix.is_empty() || suffix.starts_with('/')).then_some(suffix)
     }
+    pub(crate) fn is_valid(self, node: &ResolvedNode<'_>) -> bool {
+        self.registry.validator.is_valid(NodeRef::Dispatch {
+            key: &self.entry().dispatch_key,
+            node,
+        })
+    }
     pub(crate) fn validate(self, node: &ResolvedNode<'_>) -> Result<(), SchemaFailure> {
         let entry = self.entry();
         self.registry
@@ -1029,8 +1103,9 @@ struct SchemaEntry {
     default_origin: Option<SchemaLocation>,
     default_tags: HashMap<usize, usize>,
     dispatch_key: String,
-    work: Option<usize>,
     local_work: usize,
+    property_lookup_work: usize,
+    required_lookup_work: usize,
     not_render_work: usize,
     default_temporals: HashMap<usize, crate::temporal::TemporalMetadata>,
     has_defaults: bool,
@@ -1411,7 +1486,6 @@ impl Schemas {
             let info = stats
                 .remove(&entry.location)
                 .expect("every compiled view was preflighted");
-            entry.work = info.work;
             entry.not_render_work = info.not_render_work;
             entry.diagnostic_location = info.diagnostic_location;
             entry.has_defaults = info.defaults;
@@ -1629,8 +1703,26 @@ fn append_schema_entries(
             default_origin,
             default_tags: HashMap::new(),
             dispatch_key: entries.len().to_string(),
-            work: None,
             local_work: 0,
+            property_lookup_work: value.get("properties").and_then(Value::as_object).map_or(
+                1,
+                |properties| {
+                    properties.keys().fold(1usize, |work, name| {
+                        work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                    })
+                },
+            ),
+            required_lookup_work: value.get("required").and_then(Value::as_array).map_or(
+                1,
+                |required| {
+                    required
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .fold(1usize, |work, name| {
+                            work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                        })
+                },
+            ),
             not_render_work: 0,
             default_temporals: HashMap::new(),
             has_defaults: false,

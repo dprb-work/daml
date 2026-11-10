@@ -208,6 +208,18 @@ Default completion supports structural `properties`, `additionalProperties`
 unambiguous union paths. Branch candidates are checked against the completed
 document's ancestor constraints before ambiguity is reported. Unions without
 reachable defaults use ordinary validation without enumerating unchanged data.
+Completion excludes alternatives whose `const` or `enum` constraints cannot
+intersect the active structural obligations. Required fields can prove this
+before their defaults are inserted. Tags supply their bound schemas, not a
+name-based discriminator. Ordinary resolution can also use supplied scalar
+values; staged resolution uses retained assertions and contracts instead of
+values that callbacks can replace. The original union remains a validation
+obligation, including `oneOf` overlap checks.
+These proofs run only when alternatives can affect completion. Finite-domain
+comparisons and schema-name hashing/lookups share the cumulative work budget.
+Implicit-container discovery uses the same charged name traversal before branch
+proofs run.
+
 Defaults reachable in unsupported applicator positions—negation, conditionals,
 `contains`, `propertyNames`, `dependentSchemas`, pattern-selected properties, or
 unevaluated/content schemas—fail composition instead of being silently ignored.
@@ -467,8 +479,10 @@ materialized nesting is bounded at 128.
 Default resolution limits are 100,000 cumulatively materialized nodes, 8 MiB of
 value/key/tag bytes, and 1,000,000 conservative work units. Alternative candidates
 share those budgets. Validation reserves work before entering the engine,
-distinguishing validity probes, error collection and annotation walks. Recursive
-validation excludes inert descriptions and child-schema payloads from routine
+distinguishing validity probes, error collection and annotation walks. Successful
+checks use a bounded validity probe; failed probes reserve a separate diagnostic
+pass before collecting errors. Both acyclic and recursive validation exclude
+unused definitions, inert descriptions and child-schema payloads from routine
 local work. Error-collection passes also reserve the full authored `not` child
 serialized in a negation diagnostic, including annotations. Validity-only probes
 do not reserve that rendering work. Reservations include exact `uniqueItems`
