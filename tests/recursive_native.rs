@@ -440,3 +440,124 @@ fn partial_default_validation_checks_completed_container_upper_bounds() {
         NativeErrorKind::InvalidDefault
     );
 }
+
+#[test]
+fn child_defaults_keep_independent_parent_unions_existential() {
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        (
+            "U.daml",
+            "!Object { child: !Object { value: !Int } = { value: 1 } } | !Object { child: !Object { value: !String } }",
+        ),
+        (
+            "V.daml",
+            "!Object { child: !Object { value: !Int } } | !Object { child: !Object { value: !String } }",
+        ),
+        ("Root.daml", "!self.U & !self.V"),
+    ]);
+    let supplied = parse("!self.Root {}").unwrap();
+    let schemas = bundle.compile(&supplied, None).unwrap();
+    assert_eq!(
+        schemas.resolve(&supplied).unwrap().to_json(),
+        json!({"child": {"value": 1}})
+    );
+}
+
+#[test]
+fn inherited_child_defaults_may_use_a_supporting_parent_union_arm() {
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        (
+            "Base.daml",
+            "!Object { child: !Object { value: !Int } = { value: 1 } }",
+        ),
+        (
+            "Root.daml",
+            "!self.Base & (!Object { child: !Object { value: !Int { min: 5 } } } | !Object { child: !Object { value: !Int } })",
+        ),
+    ]);
+    let supplied = parse("!self.Root {}").unwrap();
+    let schemas = bundle.compile(&supplied, None).unwrap();
+    assert_eq!(
+        schemas.resolve(&supplied).unwrap().to_json(),
+        json!({"child": {"value": 1}})
+    );
+}
+
+#[test]
+fn child_derivation_cannot_borrow_an_unselected_parent_arms_defaults() {
+    let choice = "(!Object {} = { x: 1 }) | (!Object {} = { y: 2 })";
+    let bundle = bundle(&[
+        ("daml.bundle", "{}"),
+        ("Choice.daml", choice),
+        ("Other.daml", choice),
+        ("Item.daml", "!Tuple [!self.Choice] = [{}]"),
+        (
+            "Parent.daml",
+            "!Object { field: !self.Item } | !Object { field: !Tuple [!self.Other] }",
+        ),
+        (
+            "Root.daml",
+            "!self.Parent & !Object { field: [{ x: 1\ny: 2 }] }",
+        ),
+    ]);
+    let supplied = parse("!self.Root {field:[{x:1\ny:2}]}").unwrap();
+    assert_eq!(
+        bundle.compile(&supplied, None).err().unwrap().kind,
+        NativeErrorKind::InvalidDefault
+    );
+}
+
+#[test]
+fn homogeneous_defaults_keep_constraint_owned_queries_through_unions() {
+    for (base, bounds, source, expected) in [
+        (
+            "!Map { values: !Int = 30 }",
+            [
+                "!Object { timeout: !Int { max: 10 } }",
+                "!Object { timeout: !Int { max: 20 } }",
+                "!Object { timeout: !Int { max: 40 } }",
+            ],
+            "!self.Root {timeout: 5}",
+            json!({"timeout": 5}),
+        ),
+        (
+            "!List { items: !Object { timeout: !Int } = { timeout: 30 } }",
+            [
+                "!Tuple [!Object { timeout: !Int { max: 10 } }]",
+                "!Tuple [!Object { timeout: !Int { max: 20 } }]",
+                "!Tuple [!Object { timeout: !Int { max: 40 } }]",
+            ],
+            "!self.Root [{timeout: 5}]",
+            json!([{"timeout": 5}]),
+        ),
+    ] {
+        let [strict, other_strict, permitted] = bounds;
+        for (definition, valid) in [
+            (format!("(!self.Base | !self.Base) & {strict}"), false),
+            (format!("!self.Base & ({strict} | {other_strict})"), false),
+            (format!("!self.Base & ({strict} | {permitted})"), true),
+        ] {
+            let bundle = bundle(&[
+                ("daml.bundle", "{}"),
+                ("Base.daml", base),
+                ("Root.daml", &definition),
+            ]);
+            let supplied = parse(source).unwrap();
+            if valid {
+                let schemas = bundle.compile(&supplied, None).unwrap();
+                assert_eq!(
+                    schemas.resolve(&supplied).unwrap().to_json(),
+                    expected,
+                    "{definition}"
+                );
+            } else {
+                let error = bundle
+                    .compile(&supplied, None)
+                    .err()
+                    .expect("a supplied override cannot excuse an invalid inherited preset");
+                assert_eq!(error.kind, NativeErrorKind::InvalidDefault, "{definition}");
+            }
+        }
+    }
+}

@@ -67,12 +67,6 @@ type DefaultPath = Vec<DefaultPathStep>;
 type DefaultMonomial = Vec<usize>;
 type DefaultMemoState = Vec<DefaultMonomial>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DefaultVisit {
-    Local,
-    Structural,
-}
-
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct DefaultScope {
     constraints: Rc<DefaultMemoState>,
@@ -82,7 +76,8 @@ struct DefaultScope {
 
 #[derive(Default)]
 struct DefaultMemo {
-    states: HashMap<DefaultScope, DefaultVisit>,
+    states: HashSet<DefaultScope>,
+    empty_fixed: Rc<Vec<(usize, usize)>>,
 }
 
 struct DefaultPosition {
@@ -92,7 +87,7 @@ struct DefaultPosition {
     children: Vec<DefaultChild>,
     referenced: Option<usize>,
     own: bool,
-    same_instance_default: bool,
+    reaches_default: bool,
 }
 
 struct DefaultChild {
@@ -197,6 +192,9 @@ struct Compiler<'a> {
     validation_resources: Vec<Json>,
     default_roots: Vec<SchemaSource>,
     default_positions: Vec<DefaultPosition>,
+    // Filled lazily only after source positions and their edges are frozen.
+    // Exact ordered seeds retain original operation identity, including repeats.
+    default_closures: HashMap<Vec<usize>, DefaultMonomial>,
     schema_origins: HashMap<String, SchemaOrigin>,
     next_regex_origin: u64,
     default_projections: HashMap<(String, Vec<DefaultPath>), String>,
@@ -260,7 +258,11 @@ fn index_default_position(
                     .is_none_or(Vec::is_empty))
     });
     let id = positions.len();
-    sources.insert(reference.clone(), SchemaSource::Position(id));
+    if let Some(source) = sources.get_mut(&reference) {
+        *source = SchemaSource::Position(id);
+    } else {
+        sources.insert(reference.clone(), SchemaSource::Position(id));
+    }
     positions.push(DefaultPosition {
         root: root.0,
         pointer,
@@ -268,7 +270,7 @@ fn index_default_position(
         children: Vec::new(),
         referenced: None,
         own,
-        same_instance_default: schema.get("default").is_some(),
+        reaches_default: schema.get("default").is_some(),
     });
     for child in crate::schema::profile::children(schema) {
         let key_bytes = child.map_key().map_or(0, str::len);
@@ -325,6 +327,7 @@ fn new_compiler(bundle: &Bundle) -> Compiler<'_> {
         validation_resources: Vec::new(),
         default_roots: Vec::new(),
         default_positions: Vec::new(),
+        default_closures: HashMap::new(),
         schema_origins: HashMap::new(),
         next_regex_origin: 0,
         default_projections: HashMap::new(),
@@ -900,18 +903,13 @@ impl Compiler<'_> {
                 Some(span),
             )?;
             let state = Rc::new(vec![root]);
+            let mut seen = DefaultMemo::default();
             let scope = DefaultScope {
                 constraints: Rc::clone(&state),
                 sources: state,
-                fixed: Rc::new(Vec::new()),
+                fixed: Rc::clone(&seen.empty_fixed),
             };
-            self.visit_default_scope(
-                scope,
-                &mut budget,
-                0,
-                &mut DefaultMemo::default(),
-                DefaultVisit::Structural,
-            )?;
+            self.visit_default_scope(scope, &mut budget, 0, &mut seen)?;
             self.default_validation_steps = budget.work;
             self.materialized_nodes = budget.copied_nodes;
             self.materialized_bytes = budget.copied_bytes;
@@ -953,7 +951,9 @@ impl Compiler<'_> {
         for (reference, source) in roots {
             let root = self.default_roots.len();
             let schema = match &source {
-                SchemaSource::Type(key) => self.types[key].get("schema"),
+                SchemaSource::Type(key) => {
+                    self.types.get(key).and_then(|entry| entry.get("schema"))
+                }
                 SchemaSource::Resource(index) => self.resources[*index].get("schema"),
                 SchemaSource::Validation(index) => self.validation_resources[*index].get("schema"),
                 SchemaSource::Normalization(_) | SchemaSource::Position(_) => unreachable!(),
@@ -978,38 +978,30 @@ impl Compiler<'_> {
                 .transpose()?;
             self.default_positions[id].referenced = referenced;
         }
-        self.mark_same_instance_defaults(budget)?;
-        Ok(())
-    }
-
-    fn mark_same_instance_defaults(
-        &mut self,
-        budget: &mut WalkBudget<'_>,
-    ) -> Result<(), NativeError> {
+        // Reachability is a least fixed point on the frozen source graph.
+        // Include every schema-child edge conservatively; literal payloads are
+        // not schema positions. Each position enters the worklist at most once.
         let count = self.default_positions.len();
         admit_copy_cost(
             &mut budget.copied_nodes,
             &mut budget.copied_bytes,
-            count,
-            count * std::mem::size_of::<Vec<usize>>(),
+            count + 2,
+            count * (std::mem::size_of::<Vec<usize>>() + std::mem::size_of::<usize>()),
             budget.file,
             Some(budget.span),
         )?;
-        let mut reverse = vec![Vec::new(); count];
-        let mut pending = Vec::new();
-        for (parent, position) in self.default_positions.iter().enumerate() {
+        let mut reverse = (0..count).map(|_| Vec::new()).collect::<Vec<_>>();
+        let mut pending = Vec::with_capacity(count);
+        for (id, position) in self.default_positions.iter().enumerate() {
             budget.charge(0)?;
-            if position.same_instance_default {
-                charge_default_monomial(1, budget, 0)?;
-                pending.push(parent);
+            if position.reaches_default {
+                pending.push(id);
             }
-            for target in position.referenced.into_iter().chain(
-                position
-                    .children
-                    .iter()
-                    .filter(|child| matches!(child.position.keyword.as_str(), "allOf" | "anyOf"))
-                    .map(|child| child.target),
-            ) {
+            for target in position
+                .referenced
+                .into_iter()
+                .chain(position.children.iter().map(|child| child.target))
+            {
                 budget.charge(0)?;
                 admit_copy_cost(
                     &mut budget.copied_nodes,
@@ -1019,20 +1011,16 @@ impl Compiler<'_> {
                     budget.file,
                     Some(budget.span),
                 )?;
-                reverse[target].push(parent);
+                reverse[target].push(id);
             }
         }
-        // Positive reachability is definitive even inside cycles. Structural
-        // children are deliberately absent: their presets belong to another
-        // instance, owned by the structural walk rather than this local phase.
-        while let Some(target) = pending.pop() {
+        while let Some(id) = pending.pop() {
             budget.charge(0)?;
-            for parent in &reverse[target] {
+            for &parent in &reverse[id] {
                 budget.charge(0)?;
-                if !self.default_positions[*parent].same_instance_default {
-                    charge_default_monomial(1, budget, 0)?;
-                    self.default_positions[*parent].same_instance_default = true;
-                    pending.push(*parent);
+                if !self.default_positions[parent].reaches_default {
+                    self.default_positions[parent].reaches_default = true;
+                    pending.push(parent);
                 }
             }
         }
@@ -1061,7 +1049,7 @@ impl Compiler<'_> {
     fn default_schema(&self, id: usize) -> &Json {
         let position = &self.default_positions[id];
         let schema = match &self.default_roots[position.root] {
-            SchemaSource::Type(key) => self.types[key].get("schema"),
+            SchemaSource::Type(key) => self.types.get(key).and_then(|entry| entry.get("schema")),
             SchemaSource::Resource(index) => self.resources[*index].get("schema"),
             SchemaSource::Validation(index) => self.validation_resources[*index].get("schema"),
             SchemaSource::Normalization(_) | SchemaSource::Position(_) => unreachable!(),
@@ -1073,44 +1061,83 @@ impl Compiler<'_> {
     }
 
     fn close_default_monomial(
-        &self,
+        &mut self,
         monomial: &[usize],
         arm: Option<usize>,
         budget: &mut WalkBudget<'_>,
         depth: usize,
     ) -> Result<DefaultMonomial, NativeError> {
-        let length = monomial.len() + usize::from(arm.is_some());
-        charge_default_monomial(length, budget, depth)?;
-        let mut pending = Vec::with_capacity(length);
-        pending.extend_from_slice(monomial);
-        pending.extend(arm);
-        let mut visited = HashSet::new();
-        let mut closed = Vec::new();
-        while let Some(id) = pending.pop() {
-            budget.charge(depth)?;
-            if visited.contains(&id) {
-                continue;
-            }
-            charge_default_monomial(1, budget, depth)?;
-            visited.insert(id);
-            let position = &self.default_positions[id];
-            if position.own {
-                closed.push(id);
-            }
-            if let Some(target) = position.referenced {
+        budget.charge(depth)?;
+        if let Some(arm) = arm {
+            // The sole arm caller supplies a ref/allOf-closed parent state.
+            // cl(C ∪ {arm}) = C ∪ cl({arm}); reuse the same frozen owner.
+            let closed = self.fresh_default_closure(&[arm], budget, depth)?;
+            merge_default_monomials(monomial, closed, budget, depth)
+        } else {
+            let closed = self.fresh_default_closure(monomial, budget, depth)?;
+            copy_default_monomial(closed, budget, depth)
+        }
+    }
+
+    fn fresh_default_closure(
+        &mut self,
+        monomial: &[usize],
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<&DefaultMonomial, NativeError> {
+        budget.work = budget.work.saturating_add(monomial.len());
+        budget.charge(depth)?;
+        if !self.default_closures.contains_key(monomial) {
+            charge_default_monomial(monomial.len(), budget, depth)?;
+            let mut pending = Vec::with_capacity(monomial.len());
+            pending.extend_from_slice(monomial);
+            let mut visited = HashSet::new();
+            let mut closed = Vec::new();
+            while let Some(id) = pending.pop() {
+                budget.charge(depth)?;
+                if visited.contains(&id) {
+                    continue;
+                }
                 charge_default_monomial(1, budget, depth)?;
-                pending.push(target);
-            }
-            for child in &position.children {
-                if child.position.keyword == "allOf" {
+                visited.insert(id);
+                let position = &self.default_positions[id];
+                if position.own {
+                    closed.push(id);
+                }
+                if let Some(target) = position.referenced {
                     charge_default_monomial(1, budget, depth)?;
-                    pending.push(child.target);
+                    pending.push(target);
+                }
+                for child in &position.children {
+                    if child.position.keyword == "allOf" {
+                        charge_default_monomial(1, budget, depth)?;
+                        pending.push(child.target);
+                    }
                 }
             }
+            charge_default_monomial(closed.len(), budget, depth)?;
+            closed.sort_unstable();
+            // Store only complete successful closures. Neither errors nor their
+            // budget/origin context are reusable; hits pay their current context.
+            budget.work = budget.work.saturating_add(2 * monomial.len());
+            budget.charge(depth)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                monomial.len() + 2,
+                std::mem::size_of::<(Vec<usize>, DefaultMonomial)>()
+                    + std::mem::size_of_val(monomial),
+                budget.file,
+                Some(budget.span),
+            )?;
+            self.default_closures.insert(monomial.to_vec(), closed);
         }
-        charge_default_monomial(closed.len(), budget, depth)?;
-        closed.sort_unstable();
-        Ok(closed)
+        budget.work = budget.work.saturating_add(monomial.len());
+        budget.charge(depth)?;
+        Ok(self
+            .default_closures
+            .get(monomial)
+            .expect("successful fresh closure is retained"))
     }
 
     fn load_tag(
@@ -2706,173 +2733,152 @@ impl Compiler<'_> {
         budget: &mut WalkBudget<'_>,
         depth: usize,
         seen: &mut DefaultMemo,
-        visit: DefaultVisit,
     ) -> Result<(), NativeError> {
-        budget.work = budget.work.saturating_add(
-            scope
-                .constraints
-                .iter()
-                .chain(scope.sources.iter())
-                .map(|term| term.len().saturating_add(1))
-                .sum::<usize>()
-                .saturating_add(2 * scope.fixed.len()),
-        );
-        budget.charge(depth)?;
-        let check_local = match seen.states.entry(scope.clone()) {
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                admit_copy_cost(
-                    &mut budget.copied_nodes,
-                    &mut budget.copied_bytes,
-                    1,
-                    std::mem::size_of::<DefaultScope>() + std::mem::size_of::<DefaultVisit>(),
-                    budget.file,
-                    Some(budget.span),
-                )?;
-                entry.insert(visit);
-                true
-            }
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                if visit == DefaultVisit::Local || *entry.get() == DefaultVisit::Structural {
-                    return Ok(());
-                }
-                entry.insert(DefaultVisit::Structural);
-                false
-            }
-        };
-        if check_local {
-            for source in scope.sources.iter() {
-                budget.work = budget.work.saturating_add(source.len());
-                budget.charge(depth)?;
-                let has_work = source.iter().any(|id| {
-                    let position = &self.default_positions[*id];
-                    position.same_instance_default
-                        && (self.default_schema(*id).get("default").is_some()
-                            || (scope
-                                .fixed
-                                .binary_search_by_key(id, |choice| choice.0)
-                                .is_err()
-                                && position.children.iter().any(|child| {
-                                    child.position.keyword == "anyOf"
-                                        && self.default_positions[child.target]
-                                            .same_instance_default
-                                })))
-                });
-                if !has_work {
-                    continue;
-                }
-                let supported =
-                    supporting_default_constraints(&scope.constraints, source, budget, depth)?;
-                if supported.is_empty() {
-                    return Err(default_invariant(
-                        budget,
-                        "a candidate source has no supporting constraint term",
-                    ));
-                }
-                for id in source {
-                    budget.charge(depth)?;
-                    if self.default_schema(*id).get("default").is_some() {
-                        self.record_default_check(&supported, *id, &scope.fixed, budget, depth)?;
-                    }
-                }
-                for id in source {
-                    if !self.default_positions[*id].same_instance_default
-                        || self.default_schema(*id).get("anyOf").is_none()
-                    {
-                        continue;
-                    }
-                    let insertion = match scope.fixed.binary_search_by_key(id, |choice| choice.0) {
-                        Ok(_) => continue,
-                        Err(insertion) => insertion,
-                    };
-                    for child_index in 0..self.default_positions[*id].children.len() {
-                        budget.charge(depth)?;
-                        let child = &self.default_positions[*id].children[child_index];
-                        if child.position.keyword != "anyOf"
-                            || !self.default_positions[child.target].same_instance_default
-                        {
-                            continue;
-                        }
-                        let target = child.target;
-                        let arm = child.position.index.expect("anyOf children have indices");
-                        let branch = self.close_default_monomial(&[target], None, budget, depth)?;
-                        admit_copy_cost(
-                            &mut budget.copied_nodes,
-                            &mut budget.copied_bytes,
-                            3 + scope.fixed.len(),
-                            (scope.fixed.len() + 1) * 2 * std::mem::size_of::<usize>(),
-                            budget.file,
-                            Some(budget.span),
-                        )?;
-                        let sources = Rc::new(vec![branch]);
-                        let constraints =
-                            Rc::new(default_memo_product(&supported, &sources, budget, depth)?);
-                        let mut fixed = scope.fixed.as_ref().clone();
-                        fixed.insert(insertion, (*id, arm));
-                        self.visit_default_scope(
-                            DefaultScope {
-                                constraints,
-                                sources,
-                                fixed: Rc::new(fixed),
-                            },
-                            budget,
-                            depth + 1,
-                            seen,
-                            DefaultVisit::Local,
-                        )?;
-                    }
-                }
-            }
-        }
-        if visit == DefaultVisit::Local {
+        if !self.default_sources_reach_default(&scope.sources, budget, depth)? {
             return Ok(());
         }
-        if !scope.fixed.is_empty() {
-            return Err(default_invariant(
-                budget,
-                "parent branch assignments reached a child walk",
-            ));
+        let identity_work = scope
+            .constraints
+            .iter()
+            .chain(scope.sources.iter())
+            .map(|term| term.len().saturating_add(1))
+            .sum::<usize>()
+            .saturating_add(2 * scope.fixed.len());
+        budget.work = budget.work.saturating_add(identity_work);
+        budget.charge(depth)?;
+        if seen.states.contains(&scope) {
+            return Ok(());
         }
-        let shared = scope.constraints == scope.sources;
-        for position in self.default_child_queries(&scope.sources, budget, depth)? {
-            let constraints =
-                self.derive_default_state(&scope.constraints, &position, budget, depth)?;
-            let sources = if shared {
-                None
-            } else {
-                self.derive_default_state(&scope.sources, &position, budget, depth)?
-            };
-            let Some(constraints) = constraints else {
-                if sources.is_some() {
-                    return Err(default_invariant(
-                        budget,
-                        "a source child has no effective constraint child",
-                    ));
-                }
-                continue;
-            };
-            if !shared && sources.is_none() {
+        admit_copy_cost(
+            &mut budget.copied_nodes,
+            &mut budget.copied_bytes,
+            1,
+            std::mem::size_of::<DefaultScope>(),
+            budget.file,
+            Some(budget.span),
+        )?;
+        budget.work = budget.work.saturating_add(identity_work);
+        budget.charge(depth)?;
+        seen.states.insert(scope.clone());
+        for source in scope.sources.iter() {
+            budget.work = budget.work.saturating_add(source.len());
+            budget.charge(depth)?;
+            let has_work = source.iter().any(|id| {
+                self.default_schema(*id).get("default").is_some()
+                    || (scope
+                        .fixed
+                        .binary_search_by_key(id, |choice| choice.0)
+                        .is_err()
+                        && self.default_positions[*id]
+                            .children
+                            .iter()
+                            .any(|child| child.position.keyword == "anyOf"))
+            });
+            if !has_work {
                 continue;
             }
+            let supported =
+                supporting_default_constraints(&scope.constraints, source, budget, depth)?;
+            if supported.is_empty() {
+                return Err(default_invariant(
+                    budget,
+                    "a candidate source has no supporting constraint term",
+                ));
+            }
+            for id in source {
+                budget.charge(depth)?;
+                if self.default_schema(*id).get("default").is_some() {
+                    self.record_default_check(&supported, *id, &scope.fixed, budget, depth)?;
+                }
+            }
+            for id in source {
+                let insertion = match scope.fixed.binary_search_by_key(id, |choice| choice.0) {
+                    Ok(_) => continue,
+                    Err(insertion) => insertion,
+                };
+                for child_index in 0..self.default_positions[*id].children.len() {
+                    budget.charge(depth)?;
+                    let child = &self.default_positions[*id].children[child_index];
+                    if child.position.keyword != "anyOf" {
+                        continue;
+                    }
+                    let target = child.target;
+                    let arm = child.position.index.expect("anyOf children have indices");
+                    let branch = self.close_default_monomial(&[target], None, budget, depth)?;
+                    if !self.default_sources_reach_default(
+                        std::slice::from_ref(&branch),
+                        budget,
+                        depth,
+                    )? {
+                        continue;
+                    }
+                    admit_copy_cost(
+                        &mut budget.copied_nodes,
+                        &mut budget.copied_bytes,
+                        3 + scope.fixed.len(),
+                        (scope.fixed.len() + 1) * 2 * std::mem::size_of::<usize>(),
+                        budget.file,
+                        Some(budget.span),
+                    )?;
+                    let sources = Rc::new(vec![branch]);
+                    let constraints =
+                        Rc::new(default_memo_product(&supported, &sources, budget, depth)?);
+                    let mut fixed = scope.fixed.as_ref().clone();
+                    fixed.insert(insertion, (*id, arm));
+                    self.visit_default_scope(
+                        DefaultScope {
+                            constraints,
+                            sources,
+                            fixed: Rc::new(fixed),
+                        },
+                        budget,
+                        depth + 1,
+                        seen,
+                    )?;
+                }
+            }
+        }
+        // Preserve every direct source query. Homogeneous source defaults also
+        // need concrete names/indices introduced by the full constraint graph.
+        for position in self.default_child_queries(
+            &scope.sources,
+            &scope.constraints,
+            &scope.fixed,
+            budget,
+            depth,
+        )? {
+            let Some(sources) =
+                self.derive_own_default_state(&scope.sources, &position, budget, depth)?
+            else {
+                continue;
+            };
+            if !self.default_sources_reach_default(&sources, budget, depth)? {
+                continue;
+            }
+            let constraints = self
+                .derive_default_state(&scope.constraints, &position, &scope.fixed, budget, depth)?
+                .ok_or_else(|| {
+                    default_invariant(budget, "a source child has no effective constraint child")
+                })?;
             admit_copy_cost(
                 &mut budget.copied_nodes,
                 &mut budget.copied_bytes,
-                if shared { 1 } else { 2 },
+                2,
                 0,
                 budget.file,
                 Some(budget.span),
             )?;
             let constraints = Rc::new(constraints);
-            let sources = sources.map_or_else(|| Rc::clone(&constraints), Rc::new);
+            let sources = Rc::new(sources);
             self.visit_default_scope(
                 DefaultScope {
                     constraints,
                     sources,
-                    fixed: Rc::clone(&scope.fixed),
+                    fixed: Rc::clone(&seen.empty_fixed),
                 },
                 budget,
                 depth + 1,
                 seen,
-                DefaultVisit::Structural,
             )?;
         }
         Ok(())
@@ -2880,38 +2886,42 @@ impl Compiler<'_> {
 
     fn default_child_queries(
         &self,
+        sources: &DefaultMemoState,
         state: &DefaultMemoState,
+        root_fixed: &[(usize, usize)],
         budget: &mut WalkBudget<'_>,
         depth: usize,
     ) -> Result<Vec<SchemaPosition>, NativeError> {
-        let count = state.iter().map(Vec::len).sum();
-        charge_default_monomial(count, budget, depth)?;
-        let mut pending = state.iter().flatten().copied().collect::<Vec<_>>();
         let mut visited = HashSet::new();
         let mut queries = HashSet::new();
-        while let Some(id) = pending.pop() {
+        let mut enrich_properties = false;
+        let mut enrich_items = false;
+        // Sources are already ref/allOf-closed; selected source arms own their
+        // own visits. A C-only query can select an S child only via a supported
+        // homogeneous child, whose frozen reachability covers nested presets.
+        for id in sources.iter().flatten().copied() {
             budget.charge(depth)?;
             if visited.contains(&id) {
                 continue;
             }
             charge_default_monomial(1, budget, depth)?;
             visited.insert(id);
-            let position = &self.default_positions[id];
-            if let Some(target) = position.referenced {
-                charge_default_monomial(1, budget, depth)?;
-                pending.push(target);
-            }
-            for child in &position.children {
+            for child in &self.default_positions[id].children {
                 budget.charge(depth)?;
                 if !child.applies || child.unsupported_defaults {
                     continue;
                 }
-                let query = match child.position.keyword.as_str() {
-                    "allOf" | "anyOf" | "oneOf" => {
-                        charge_default_monomial(1, budget, depth)?;
-                        pending.push(child.target);
-                        continue;
+                match child.position.keyword.as_str() {
+                    "additionalProperties" => {
+                        enrich_properties |= self.default_positions[child.target].reaches_default;
                     }
+                    "items" => {
+                        enrich_items |= self.default_positions[child.target].reaches_default;
+                    }
+                    _ => {}
+                }
+                let query = match child.position.keyword.as_str() {
+                    "allOf" | "anyOf" | "oneOf" => continue,
                     "properties" => ("property", child.position.key.as_deref(), None),
                     "additionalProperties" => ("property", None, None),
                     "prefixItems" => ("item", None, child.position.index),
@@ -2931,6 +2941,85 @@ impl Compiler<'_> {
                         Some(budget.span),
                     )?;
                     queries.insert(query);
+                }
+            }
+        }
+        if enrich_properties || enrich_items {
+            // Enrich names only, never presets or parent branch assignments.
+            let count = state.iter().map(Vec::len).sum::<usize>();
+            budget.work = budget.work.saturating_add(count);
+            budget.charge(depth)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                count + 1,
+                count * std::mem::size_of::<usize>(),
+                budget.file,
+                Some(budget.span),
+            )?;
+            let mut pending = Vec::with_capacity(count);
+            pending.extend(state.iter().flatten().copied());
+            budget.work = budget.work.saturating_add(visited.capacity());
+            budget.charge(depth)?;
+            visited.clear();
+            while let Some(id) = pending.pop() {
+                budget.charge(depth)?;
+                if visited.contains(&id) {
+                    continue;
+                }
+                charge_default_monomial(1, budget, depth)?;
+                visited.insert(id);
+                let position = &self.default_positions[id];
+                if let Some(target) = position.referenced {
+                    charge_default_monomial(1, budget, depth)?;
+                    pending.push(target);
+                }
+                let fixed_arm =
+                    if !root_fixed.is_empty() && self.default_schema(id).get("anyOf").is_some() {
+                        budget.work = budget
+                            .work
+                            .saturating_add(root_fixed.len().ilog2() as usize + 1);
+                        budget.charge(depth)?;
+                        root_fixed
+                            .binary_search_by_key(&id, |choice| choice.0)
+                            .ok()
+                            .map(|index| root_fixed[index].1)
+                    } else {
+                        None
+                    };
+                for child in &position.children {
+                    budget.charge(depth)?;
+                    if !child.applies || child.unsupported_defaults {
+                        continue;
+                    }
+                    let query = match child.position.keyword.as_str() {
+                        "allOf" | "anyOf" => {
+                            if child.position.keyword == "anyOf"
+                                && fixed_arm.is_some_and(|arm| child.position.index != Some(arm))
+                            {
+                                continue;
+                            }
+                            charge_default_monomial(1, budget, depth)?;
+                            pending.push(child.target);
+                            continue;
+                        }
+                        "properties" if enrich_properties => {
+                            ("property", child.position.key.as_deref(), None)
+                        }
+                        "prefixItems" if enrich_items => ("item", None, child.position.index),
+                        _ => continue,
+                    };
+                    if !queries.contains(&query) {
+                        admit_copy_cost(
+                            &mut budget.copied_nodes,
+                            &mut budget.copied_bytes,
+                            1,
+                            std::mem::size_of::<SchemaPosition>(),
+                            budget.file,
+                            Some(budget.span),
+                        )?;
+                        queries.insert(query);
+                    }
                 }
             }
         }
@@ -3005,8 +3094,23 @@ impl Compiler<'_> {
         }
     }
 
-    fn derive_default_state(
+    fn default_sources_reach_default(
         &self,
+        sources: &[DefaultMonomial],
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<bool, NativeError> {
+        for id in sources.iter().flatten() {
+            budget.charge(depth)?;
+            if self.default_positions[*id].reaches_default {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn derive_own_default_state(
+        &mut self,
         state: &DefaultMemoState,
         query: &SchemaPosition,
         budget: &mut WalkBudget<'_>,
@@ -3015,9 +3119,63 @@ impl Compiler<'_> {
         let mut result = Vec::new();
         let mut any_child = false;
         for monomial in state {
-            let closed = self.close_default_monomial(monomial, None, budget, depth)?;
-            charge_default_monomial(1, budget, depth)?;
-            let mut pending = vec![(closed, Vec::<(usize, usize)>::new())];
+            let mut children = Vec::new();
+            for id in monomial {
+                budget.charge(depth)?;
+                if let Some(child) = self.selected_default_child(*id, query) {
+                    charge_default_monomial(1, budget, depth)?;
+                    children.push(child);
+                }
+            }
+            if children.is_empty() {
+                charge_default_monomial(0, budget, depth)?;
+                result.push(Vec::new());
+            } else {
+                any_child = true;
+                result.push(self.close_default_monomial(&children, None, budget, depth + 1)?);
+            }
+        }
+        if !any_child {
+            return Ok(None);
+        }
+        canonical_default_monomials(&mut result, budget, depth)?;
+        Ok(Some(result))
+    }
+
+    fn derive_default_state(
+        &mut self,
+        state: &DefaultMemoState,
+        query: &SchemaPosition,
+        root_fixed: &[(usize, usize)],
+        budget: &mut WalkBudget<'_>,
+        depth: usize,
+    ) -> Result<Option<DefaultMemoState>, NativeError> {
+        let mut result = Vec::new();
+        let mut any_child = false;
+        for monomial in state {
+            // Every producer stores exact sorted ref/allOf-closed monomials.
+            let closed = copy_default_monomial(monomial, budget, depth)?;
+            admit_copy_cost(
+                &mut budget.copied_nodes,
+                &mut budget.copied_bytes,
+                1 + root_fixed.len(),
+                2 * root_fixed.len() * std::mem::size_of::<usize>(),
+                budget.file,
+                Some(budget.span),
+            )?;
+            for (id, _) in root_fixed {
+                budget.work = budget
+                    .work
+                    .saturating_add(closed.len().max(1).ilog2() as usize + 1);
+                budget.charge(depth)?;
+                if closed.binary_search(id).is_err() {
+                    return Err(default_invariant(
+                        budget,
+                        "a parent assignment is absent from its constraint term",
+                    ));
+                }
+            }
+            let mut pending = vec![(closed, root_fixed.to_vec())];
             while let Some((current, fixed)) = pending.pop() {
                 budget.charge(depth)?;
                 let union = current
@@ -3034,17 +3192,16 @@ impl Compiler<'_> {
                     let insertion = fixed
                         .binary_search_by_key(&union, |choice| choice.0)
                         .expect_err("an unselected union has no parent assignment");
-                    for child in &self.default_positions[union].children {
+                    for child_index in 0..self.default_positions[union].children.len() {
                         budget.charge(depth)?;
+                        let child = &self.default_positions[union].children[child_index];
                         if child.position.keyword != "anyOf" {
                             continue;
                         }
-                        let branch = self.close_default_monomial(
-                            &current,
-                            Some(child.target),
-                            budget,
-                            depth,
-                        )?;
+                        let target = child.target;
+                        let arm = child.position.index.expect("anyOf arm index");
+                        let branch =
+                            self.close_default_monomial(&current, Some(target), budget, depth)?;
                         admit_copy_cost(
                             &mut budget.copied_nodes,
                             &mut budget.copied_bytes,
@@ -3054,10 +3211,7 @@ impl Compiler<'_> {
                             Some(budget.span),
                         )?;
                         let mut choices = fixed.clone();
-                        choices.insert(
-                            insertion,
-                            (union, child.position.index.expect("anyOf arm index")),
-                        );
+                        choices.insert(insertion, (union, arm));
                         pending.push((branch, choices));
                     }
                     continue;
@@ -3954,7 +4108,12 @@ impl Compiler<'_> {
                 conjuncts.push(self.default_reference(*id, budget)?);
             }
             alternatives.push(match conjuncts.len() {
-                0 => Json::Object(Map::new()),
+                0 => {
+                    return Err(default_invariant(
+                        budget,
+                        "a candidate constraint term is empty",
+                    ));
+                }
                 1 => conjuncts.pop().expect("one default constraint"),
                 _ => Json::Object(Map::from_iter([("allOf".into(), Json::Array(conjuncts))])),
             });
@@ -4085,6 +4244,68 @@ fn schema_has_default(
     Ok(false)
 }
 
+fn copy_default_monomial(
+    monomial: &[usize],
+    budget: &mut WalkBudget<'_>,
+    depth: usize,
+) -> Result<DefaultMonomial, NativeError> {
+    budget.work = budget.work.saturating_add(monomial.len());
+    budget.charge(depth)?;
+    admit_copy_cost(
+        &mut budget.copied_nodes,
+        &mut budget.copied_bytes,
+        monomial.len() + 1,
+        std::mem::size_of_val(monomial),
+        budget.file,
+        Some(budget.span),
+    )?;
+    Ok(monomial.to_vec())
+}
+
+fn merge_default_monomials(
+    left: &[usize],
+    right: &[usize],
+    budget: &mut WalkBudget<'_>,
+    depth: usize,
+) -> Result<DefaultMonomial, NativeError> {
+    if right.is_empty() {
+        return copy_default_monomial(left, budget, depth);
+    }
+    let length = left.len() + right.len();
+    budget.work = budget.work.saturating_add(2 * length);
+    budget.charge(depth)?;
+    admit_copy_cost(
+        &mut budget.copied_nodes,
+        &mut budget.copied_bytes,
+        length + 1,
+        length * std::mem::size_of::<usize>(),
+        budget.file,
+        Some(budget.span),
+    )?;
+    let mut merged = Vec::with_capacity(length);
+    let (mut l, mut r) = (0, 0);
+    while l < left.len() && r < right.len() {
+        match left[l].cmp(&right[r]) {
+            std::cmp::Ordering::Less => {
+                merged.push(left[l]);
+                l += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                merged.push(right[r]);
+                r += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                merged.push(left[l]);
+                l += 1;
+                r += 1;
+            }
+        }
+    }
+    merged.extend_from_slice(&left[l..]);
+    merged.extend_from_slice(&right[r..]);
+    Ok(merged)
+}
+
 fn default_invariant(budget: &WalkBudget<'_>, message: &str) -> NativeError {
     NativeError::new(
         NativeErrorKind::Schema,
@@ -4102,25 +4323,12 @@ fn supporting_default_constraints(
 ) -> Result<DefaultMemoState, NativeError> {
     let mut supported = Vec::new();
     for term in constraints {
+        let width = term.len().max(1).ilog2() as usize + 1;
+        budget.work = budget
+            .work
+            .saturating_add(source.len().saturating_mul(width));
         budget.charge(depth)?;
-        let contains = match term.len().cmp(&source.len()) {
-            std::cmp::Ordering::Less => false,
-            std::cmp::Ordering::Equal => {
-                // Equal-width sorted unique sets can support only themselves.
-                budget.work = budget.work.saturating_add(source.len());
-                budget.charge(depth)?;
-                term.as_slice() == source
-            }
-            std::cmp::Ordering::Greater => {
-                let width = term.len().max(1).ilog2() as usize + 1;
-                budget.work = budget
-                    .work
-                    .saturating_add(source.len().saturating_mul(width));
-                budget.charge(depth)?;
-                source.iter().all(|id| term.binary_search(id).is_ok())
-            }
-        };
-        if contains {
+        if source.iter().all(|id| term.binary_search(id).is_ok()) {
             charge_default_monomial(term.len(), budget, depth)?;
             supported.push(term.clone());
         }
@@ -4137,13 +4345,7 @@ fn default_memo_product(
     let mut product = Vec::new();
     for left in state {
         for right in factor {
-            charge_default_monomial(left.len() + right.len(), budget, depth)?;
-            let mut monomial = Vec::with_capacity(left.len() + right.len());
-            monomial.extend_from_slice(left);
-            monomial.extend_from_slice(right);
-            monomial.sort_unstable();
-            monomial.dedup();
-            product.push(monomial);
+            product.push(merge_default_monomials(left, right, budget, depth)?);
         }
     }
     canonical_default_monomials(&mut product, budget, depth)?;
