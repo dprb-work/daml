@@ -241,7 +241,13 @@ The approved job then:
 3. Makes only that newly staged GitHub draft public. In `github-only` mode, the
    wheels are attached for download and installation, not published to PyPI.
 
-No source build, blanket `skip-existing` or automatic retry occurs in that job.
+No source build, blanket `skip-existing` or automatic write retry occurs in that job.
+After one successful tag-creation response, verification permits six exact-ref
+reads with delays of 0, 1, 2, 4, 8 and 15 seconds. Only an absent ref (HTTP 404)
+is retried; a wrong target or other API error stops immediately. Existing tags
+remain an admission failure. Main is checked again before any draft write.
+Persistent absence reports the already-created tag as a partial effect requiring
+read-only inspection and an authorized recovery decision.
 The tag-first order exercises GitHub tag permissions/rulesets before irreversible
 registry upload; a draft alone does not prove that permission. A failure can leave
 the tag publicly visible even when the release remains a draft. Rust crates, npm
@@ -281,3 +287,31 @@ After a completed `github-and-pypi` release, verify a fresh registry installatio
 outside the checkout. Update user-facing availability and installation guidance
 from observed published state. This guide describes the procedure; it does not
 assert that publication or recovery has completed.
+
+## v0.2.1 recovery record
+
+[v0.2.1](https://github.com/dprb-work/daml/releases/tag/v0.2.1) was published
+GitHub-only from `9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`, using preparation
+[42785680584](https://github.com/dprb-work/daml/actions/runs/42785680584),
+artifact `13750395007`, and manifest SHA-256
+`f1f0c74ed5507f1e06845f6db1fd20742834af15970bf9b2ecb035c23905e7ce`.
+The original protected run
+[42879188270](https://github.com/dprb-work/daml/actions/runs/42879188270),
+approved by `dprbook`, created the correct tag but stopped on an immediate
+verification-read 404. No draft existed at that point.
+
+The owner separately authorized remaining-effects recovery and then explicitly
+authorized a one-time current-main exception after documentation-only PR #51
+advanced main to `dbe083581c2564cf4e2752c8b1c02b970b67b30e`. Recovery required
+that exact main revision, the original source as its ancestor, the unchanged
+tag and qualified candidate, unchanged environment protections, the original
+review record, fresh security admission, and no competing publisher.
+This was an explicit exception, not satisfaction or removal of normal
+current-main admission.
+
+Recovery created and verified draft `440812617`, then published only that
+draft. All 17 public asset sizes and SHA-256 digests matched the approved files.
+The public Linux wheel, checksum and manifest matched the original bytes;
+installation outside the checkout passed nested tagged-default resolution and
+supplied-null rejection. No tag moved, payload was rebuilt or overwritten, or
+registry upload occurred.
