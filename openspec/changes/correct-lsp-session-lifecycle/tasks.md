@@ -28,5 +28,15 @@
 
 - [x] 5.1 Package the corrected VSIX through normal preparation/build paths and use the matching source-built native server; independently verify client wire ordering and server behavior rather than using a tolerant server as proof of prevention.
 - [x] 5.2 Run real installed-host invalid-format/restart/replacement-diagnostics and non-exec-wrapper cleanup scenarios, plus existing semantic/watcher/trust checks; report the platform scope actually exercised.
-- [ ] 5.3 Update affected lifecycle/build/verification documentation and dependency provenance; run the focused checks, OpenSpec validation and applicable repository-native aggregate/CI gates on the final review head.
-- [ ] 5.4 Obtain exact-head independent implementation review and owner result acceptance. Merge and any new release require their own authorization; do not mutate v0.2.1 or infer publication authority from this design.
+- [x] 5.3 Update affected lifecycle/build/verification documentation and dependency provenance; run focused checks, strict OpenSpec validation and the applicable repository-native aggregates on the reviewed implementation.
+- [x] 5.4 Obtain exact-head independent implementation review.
+- [ ] 5.5 Obtain owner result acceptance. Merge and any new release require their own authorization; do not mutate v0.2.1 or infer publication authority from this design.
+
+Verified implementation: `e029d19d0631e4df27bfaa7767144abbbcfb81d3`.
+`./scripts/check`, editor typecheck, strict OpenSpec validation and the complete
+installed-editor aggregate pass locally. The latter includes real SDK/provider
+consumers, both root-controller cases, all six adversarial scenarios and semantic
+authoring on Linux with VS Code 1.105.1. Independent lifecycle, contract and
+security reviews found no remaining source defects. Remote CI and Windows/macOS
+runtime behavior are not claimed. The documented pinned-host output-channel
+factory limitation remains separate from the repaired SDK resource ownership.
