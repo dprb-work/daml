@@ -56,6 +56,32 @@ A consumer must load/register this file through its own integration. Adding it t
 
 Syntect itself belongs to the consuming application or verification tool, not to DAML's shipped APIs/executables. Syntect 5.3.0 uses unmaintained `yaml-rust 0.4.5` and `bincode 1.3.3`. Its isolated DAML verification tool has separately approved exceptions for [RUSTSEC-2024-0320](https://github.com/dprb-work/daml/issues/46#issuecomment-6752539695) and [RUSTSEC-2025-0141](https://github.com/dprb-work/daml/issues/46#issuecomment-6752772936), respectively. DAML's shipping manifests and root `deny.toml` remain unchanged, and no other advisory is waived. The verifier lockfile joins the existing release-security inventory without a scanner exclusion. Consumers must apply their own dependency policy; these approvals are not a blanket waiver for applications that load the grammar.
 
+## OMP integration
+
+OMP 18.18.5 embeds its Syntect syntax set in the native addon; it has no supported global grammar-registration extension API. Its message-renderer hooks do not register languages for code fences, file previews and diffs. See the version-pinned [native highlighter](https://github.com/can1357/oh-my-pi/blob/v18.18.5/crates/pi-natives/src/highlight.rs) and [extension API](https://github.com/can1357/oh-my-pi/blob/v18.18.5/docs/extensions.md).
+
+DAML maintains the portable grammar and these loading instructions. Further OMP-specific loader/plugin or upstream integration work is deferred until OMP v2 can be assessed. This decision does not assume a v2 release date or promise that v2 supports custom grammars.
+
+### Optional source integration for OMP 18.18.5
+
+This route reproduces the verified source integration; it is not a recommendation to maintain an OMP patch after every update.
+
+1. Copy `daml.sublime-syntax` into OMP's `crates/pi-natives/src/syntaxes/DAML.sublime-syntax`. Preserve the DAML copyright, [MIT license](../../LICENSE) and source revision in the vendored source and distributed native notices.
+2. Add `("DAML", include_str!("DAML.sublime-syntax"))` to `EXTRA_SYNTAXES` in `crates/pi-natives/src/syntaxes/builder.rs`. This feeds OMP's existing compiled syntax-set builder; it does not change the theme mapper.
+3. In `packages/tui/src/lang-from-path.ts`, map the `daml` extension to `["daml", "daml"]`. Make the exact `daml.bundle` basename return `daml` in both `getLanguageFromPath` and `detectLanguageId`; do not claim every `.bundle` file.
+4. Prepare the checkout with OMP's required Bun version, pinned Rust toolchain and native build prerequisites. From the OMP repository root, build the addon and then the standalone executable:
+
+   ```sh
+   bun install --frozen-lockfile --ignore-scripts
+   bun run build:native
+   bun packages/coding-agent/scripts/build-binary.ts
+   ```
+
+5. Run `packages/coding-agent/dist/omp` and inspect a `daml` code fence, a `.daml` file preview and `daml.bundle` selection before activation. Types, fields, numbers and comments should receive theme-owned styles; hashes inside quoted payloads must remain string content.
+6. Preserve the existing executable before explicitly activating the candidate. Restart OMP to load the new native renderer; an already-running session retains its old renderer.
+
+Copying the grammar beside an installed OMP executable does not register it. Replacing only the cached native addon is not a reliable installation method: the standalone's embedded payload can restore its own addon. A normal OMP update can replace a local source integration. DAML does not maintain an automatic patch/rebuild procedure for OMP.
+
 ## Verify the supplied artifact
 
 The isolated consumer pins Syntect 5.3.0 with the `regex-fancy` backend and loads this exact file through its standard YAML loader. From the DAML checkout:
