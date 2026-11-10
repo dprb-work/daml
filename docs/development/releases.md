@@ -5,17 +5,17 @@ The preparation workflow builds and exercises those files. A separate workflow
 promotes only the version, source revision, run and manifest digest that the
 owner approves.
 
-The coordinated source version is **0.2.0**. That version is not a claim that
-0.2.0 has been published. Existing 0.1.0 releases remain available and unchanged.
+The coordinated source version is **0.2.1**. It is a release candidate until
+publication completes. Existing 0.2.0 releases remain available and unchanged.
 
 ## What ships together
 
 | Component | Payloads | Destination after approval |
 |---|---|---|
-| Formatter/LSP | Linux x64, macOS ARM64 and Windows x64 native archives | GitHub release `v0.2.0` |
+| Formatter/LSP | Linux x64, macOS ARM64 and Windows x64 native archives | GitHub release `v0.2.1` |
 | Python | Three `daml-config` stable-ABI wheels; import remains `daml` | PyPI and the same GitHub release |
-| Browser SDK | `dprb-work-daml-browser-0.2.0.tgz` | The same GitHub release; not npm |
-| VS Code | `definitively-asserted-daml-0.2.0.vsix` | The same GitHub release; not a marketplace |
+| Browser SDK | `dprb-work-daml-browser-0.2.1.tgz` | The same GitHub release; not npm |
+| VS Code | `definitively-asserted-daml-0.2.1.vsix` | The same GitHub release; not a marketplace |
 
 The candidate contains eight payloads, eight SHA-256 sidecars and `RELEASE.json`.
 It contains no Python sdist or published Cargo crate. The existing
@@ -26,8 +26,8 @@ manifest establish which files the operator intends to publish.
 ## Keep versions coherent
 
 The root Cargo manifest, Python Cargo manifest, browser Cargo/npm manifests and
-VS Code manifest must agree. The browser's landed 0.2.0 is preserved; the other
-shipping components are aligned to it. Private fuzz/verifier package versions
+VS Code manifest must agree. All shipping components are advanced together;
+private fuzz/verifier package versions
 are not release versions.
 
 Run the cheap source check before building:
@@ -160,7 +160,7 @@ Validate the downloaded candidate using the tuple from that run summary:
 
 ```sh
 python3 -B tests/release_candidate_check.py candidate \
-  --version 0.2.0 --source-sha SOURCE_SHA --prepare-run-id RUN_ID \
+  --version 0.2.1 --source-sha SOURCE_SHA --prepare-run-id RUN_ID \
   --manifest-sha256 MANIFEST_SHA256
 ```
 
@@ -185,7 +185,7 @@ After that explicit decision, the authorized automation account dispatches:
 
 ```sh
 gh workflow run publish-release.yml --repo dprb-work/daml --ref main \
-  -f version=0.2.0 -f source_sha=SOURCE_SHA \
+  -f version=0.2.1 -f source_sha=SOURCE_SHA \
   -f prepare_run_id=RUN_ID -f manifest_sha256=MANIFEST_SHA256
 ```
 
@@ -218,7 +218,7 @@ Use the read-only plan route with the original approved tuple:
 
 ```sh
 python3 scripts/release_publish.py plan \
-  --version 0.2.0 --source-sha SOURCE_SHA --prepare-run-id RUN_ID \
+  --version 0.2.1 --source-sha SOURCE_SHA --prepare-run-id RUN_ID \
   --manifest-sha256 MANIFEST_SHA256
 ```
 
