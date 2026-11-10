@@ -45,11 +45,12 @@ await writeFile(workspaceOverride, [
 ].join('\n'), 'utf8');
 await chmod(workspaceOverride, 0o755);
 const proxy = join(here, 'lifecycle-proxy.cjs');
-await writeFile(lifecycleWrapper, `#!/usr/bin/env node
+// VS Code may resolve a shell PATH without Node; use the harness runtime.
+await writeFile(lifecycleWrapper, `#!${process.execPath}
 process.env.DAML_LSP_PROXY_LINGER = '1';
 require(${JSON.stringify(proxy)});
 `, 'utf8');
-await writeFile(replacementWrapper, `#!/usr/bin/env node
+await writeFile(replacementWrapper, `#!${process.execPath}
 process.env.DAML_LSP_PROXY_LINGER = '0';
 require(${JSON.stringify(proxy)});
 `, 'utf8');

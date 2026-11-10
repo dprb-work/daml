@@ -42,10 +42,11 @@ type OwnedSession = {
   startup: Promise<void>;
   phase: SessionPhase;
 };
+type Reconciliation = { pending: boolean; promise: Promise<void> };
 
 let currentSession: OwnedSession | undefined;
 let desired: Configuration | undefined;
-let reconciliation: Promise<void> | undefined;
+let reconciliation: Reconciliation | undefined;
 let disposed = false;
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -449,10 +450,35 @@ function updateDesired(): Promise<void> {
 }
 
 function reconcile(): Promise<void> {
-  if (!reconciliation) {
-    reconciliation = reconcileSessions().finally(() => { reconciliation = undefined; });
+  if (reconciliation) {
+    reconciliation.pending = true;
+    return reconciliation.promise;
   }
-  return reconciliation;
+  // Publish the request owner before its worker can reach any completion path.
+  const request: Reconciliation = {
+    pending: true,
+    promise: Promise.resolve().then(() => drainReconciliation(request))
+  };
+  reconciliation = request;
+  return request.promise;
+}
+
+async function drainReconciliation(request: Reconciliation): Promise<void> {
+  let failure: { error: unknown } | undefined;
+  for (;;) {
+    request.pending = false;
+    try {
+      await reconcileSessions();
+    } catch (error) {
+      failure ??= { error };
+    }
+    if (request.pending) continue;
+    // No await between the final pending check and releasing the shared owner.
+    // A later callback must create a worker, not join an already-completed one.
+    reconciliation = undefined;
+    if (failure) throw failure.error;
+    return;
+  }
 }
 
 async function reconcileSessions(): Promise<void> {

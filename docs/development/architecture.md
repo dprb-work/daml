@@ -28,6 +28,16 @@ Server `serve` separately owns protocol terminal admission and its fixed
 deadline; rejecting a violating client does not prove that client ordering is
 correct. Checks must establish prevention and defensive handling independently.
 
+Follow failure outcomes through their consuming SDK boundary, not just the
+transport. A local refusal must not become a provider's successful `null`
+default. Reconciliation retains shared completion ownership until it has
+drained explicitly requested work; an already-settled inner promise does not
+mean the transition owner is idle. Terminal disposal also releases owned
+diagnostic resources after a connection has independently reached Stopped.
+When a connection error terminates startup, the captured attempt retains that
+original error before cleanup cancels it. A policy decision that continues must
+not poison startup; a late decision cannot act on a retired or replaced attempt.
+
 Structural recursion makes progress through instance children. Same-instance
 cycles fail composition; runtime work admission distinguishes error, validity
 and annotation traversals before calling the pinned engine. Default completion

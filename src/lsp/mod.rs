@@ -3,6 +3,9 @@
 //! Documents remain syntax-only until a caller explicitly selects their context.
 //! Session versions and context generations own diagnostics and watch metadata.
 
+#[cfg(test)]
+mod lifecycle_tests;
+
 mod positions;
 mod semantic;
 mod uri;
@@ -230,6 +233,10 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
         Response::new_ok(shutdown_id, serde_json::Value::Null).into(),
         deadline,
     )?;
+    await_exit(&connection, deadline)
+}
+
+fn await_exit(connection: &Connection, deadline: Instant) -> Result<(), ServerError> {
     loop {
         check_shutdown_deadline(deadline)?;
         let message = connection
@@ -240,7 +247,7 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
         check_shutdown_deadline(deadline)?;
         match message {
             Message::Request(request) => send_terminal(
-                &connection,
+                connection,
                 Response::new_err(
                     request.id,
                     ErrorCode::InvalidRequest as i32,

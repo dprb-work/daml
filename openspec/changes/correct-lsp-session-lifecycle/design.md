@@ -30,6 +30,8 @@ Retain the retiring record until its result is known. A stop rejection remains a
 
 Only lifecycle transitions occupy this queue. Context commands acquire a session identity, then complete outside it. Preserve per-session context sequencing and generation checks in `DependencySession`; do not replace serialization with blanket concurrent context selection. Retirement invalidates that session's queued and unresolved context operations, watchers and callbacks. An operation never migrates to a new session.
 
+The reconciliation request itself owns a pending signal and its completion promise. Requests arriving during a transition join that owner and mark another pass. The final pending check and release of shared ownership occur in the same worker step, without a chained `finally` microtask gap. Preserve the first failure while draining explicit requests; an error does not create an automatic retry.
+
 Keep the existing bounded crash-restart policy, but route its effects through this owner. The public `createDefaultErrorHandler` provides the stock decision and counter state. Delegate to that retained handler while returning `DoNotRestart` to the library; after the supported `handleConnectionClosed` override finishes stock cleanup, submit its recorded restart decision to reconciliation. Preserve the handler across crash replacements in one configuration lineage, resetting only for an explicit new configuration as today. Delegate ordinary error decisions too. Intentional retirement does not become a crash retry, and logs must not claim a restart that the owner refused.
 
 ### 2. Fence the actual outgoing writer, once per connection
@@ -40,6 +42,8 @@ This is the one final admission owner. General middleware cannot cover direct fu
 
 The gate checks synchronously before forwarding a write. Already-admitted writes retain the stock FIFO order. Closing ordinary admission before submitting shutdown prevents an already-suspended provider from crossing the boundary when it resumes. After the cutoff, only the lifecycle's shutdown and acknowledged-shutdown `exit` traffic are allowed. Late requests, notifications and delayed replies settle locally; they never become synthetic remote success or get replayed on the replacement.
 
+Carry that outcome through the registered SDK provider too. The pinned `handleFailedRequest` otherwise converts inactive and disposed-request errors into a successful `null` default. The session adapter preserves explicit inactivity, translating closed/disposed connection outcomes with their original cause; unrelated errors retain SDK handling.
+
 Bootstrap is also owned. Permit the required initialization exchange and enable ordinary messages at successful `initialized` submission only if the session remains current. The gate must open before feature initialization emits document synchronization, not merely after `start()` resolves. A late bootstrap continuation cannot reopen a retired connection.
 
 Do not wait for all remote request responses before shutdown. That would turn one missing response into an indefinite retirement barrier. Previously submitted requests may settle while the old reader is active; final connection disposal rejects the rest.
@@ -49,6 +53,8 @@ Do not wait for all remote request responses before shutdown. That would turn on
 A writer-only fence is inadmissible on the current graph: its rejection exposes the confirmed unhandled-rejection defect. Correct the pinned JSON-RPC owner to register requests before asynchronous writing and remove them on write failure, reject exactly once, clean cancellation listeners, and avoid ignored executor failures. Give deliberate retirement a local inactive/cancelled classification, not a generic unexplained transport failure.
 
 The language-client stop owner must dispose its captured connection on failure and timeout as well as successful shutdown. Clearing `_connection` in a `finally` block does not settle pending callers. A bounded cancellation of startup must likewise close its captured connection, settle startup, and retain the existing Node process owner's cleanup; sending shutdown before initialization is not a legal substitute.
+
+Terminal disposal also finalizes leftover SDK-owned diagnostic channels when connection-close handling has already set Stopped and cleared connection state. Caller-owned channels remain caller-owned. Deferred raw-process diagnostics use their captured attempt's ownership; retired callbacks keep pipes drained but cannot acquire a new channel or publish into a replacement.
 
 Extend the existing `stop`/`dispose` path to handle `Starting`; do not add another manager or pretend stock `stop` already supports it. One captured startup-attempt identity owns its cancellation latch, connection/transports and start/stop settlement. Retiring that attempt cancels startup, closes acquired resources and never sends shutdown or exit to an uninitialized server. Every asynchronous acquisition/initialization continuation checks that same identity before publishing a connection, running feature initialization or setting Running. Retired continuations dispose late resources instead of overwriting a newer attempt.
 
@@ -98,6 +104,8 @@ Channel deadlines do not interrupt an arbitrary blocked OS stdout write. Keep pr
 Freeze checks before production changes. Deterministic barriers must suspend sends at the relevant awaits; timing sleeps and a passing sequential restart are not concurrency evidence. Capture the outgoing stream to fail any post-shutdown ordinary message, even when a compliant server tolerates it.
 
 Check request tracking while writes are pending, rejection without `unhandledRejection`, disposal with unanswered requests, a context response withheld across retirement, obsolete startup, rapid configuration changes, deactivation, failed stop, late watcher/trace/cancellation/reply traffic, and non-exec wrappers. Preserve context generation ordering and trust refusal. Separately exercise protocol violations, absolute deadline expiry under traffic, open-stdin clean exit and broken transport failure. Finish with the installed VSIX/native binary scenario that verifies replacement diagnostics after invalid formatting.
+
+Observe actual registered provider rejection, not only the writer/RPC result. Release a genuine dependency-producing reply across retirement and drain its continuations before checking real watcher ownership. Exercise the configuration completion window with real batched callbacks/snapshots. Private terminal-phase checks use the existing channel implementation as an exact-version dev dependency to force output backpressure and already-ready expired operations, without a public test API or OS-write-preemption claim.
 
 The original wire captures establish the old race and the standalone rejection probe rejects a writer-only design. Implementation evidence belongs to the task completion and exact-revision review; design acceptance alone establishes neither working behavior nor release readiness.
 

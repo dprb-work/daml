@@ -30,6 +30,9 @@ The runner uses pinned VS Code 1.105.1 and isolated extension/user-data
 directories. The aggregate checks RPC promise settlement, real library
 startup/disposal, final writer admission, installed lifecycle and adversarial
 transitions, and semantic authoring.
+Generated JavaScript server wrappers use the runner's actual Node executable.
+They do not rely on the editor's shell-resolved PATH retaining a Node version
+manager's executable directory.
 
 The trusted lifecycle case checks Unicode diagnostics, clearing, formatting,
 invalid-input non-destructiveness and non-exec-wrapper cleanup. It records
@@ -65,6 +68,22 @@ Electron extension host, including pre-spawn cancellation and cleanup failures.
 `npm run test:client-writer` compiles the production writer owner and checks
 bootstrap, retirement, FIFO, local refusal and pending/failed initialization
 delivery without a fake editor API.
+
+`npm run test:client-consumers` follows refusals through real registered semantic
+and formatting providers, including already-submitted work. Cancellation or
+inactivity must reject rather than become the SDK's successful `null` default.
+It also observes actual owned channels and late process diagnostics.
+
+`npm run test:vscode:root-consumers` checks the installed controller. Genuine
+configuration events and snapshots are delivered as a controlled batch, and a
+watcher-producing context reply is released while retirement is held. Its API
+observer forwards real VS Code methods and resources; a reader beacon followed
+by an event-loop barrier drains stale continuations before watcher assertions.
+
+Rust terminal-budget tests separately use the already-locked channel library as
+a test-only dependency. Undrained rendezvous output must time out, and ready
+messages cannot override an expired deadline. Those checks do not claim
+interruption of arbitrary OS writes.
 
 `npm run test:vscode:adversarial` uses the same absolute native and VSIX paths.
 It checks the actual 30-second startup deadline, repeated startup replacement,

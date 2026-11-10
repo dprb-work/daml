@@ -1,6 +1,7 @@
 import {
-  CancellationToken, CloseAction, CloseHandlerResult, ErrorHandler, LanguageClient,
-  LanguageClientOptions, MessageTransports, ServerOptions
+  CancellationToken, CloseAction, CloseHandlerResult, ConnectionError, ConnectionErrors,
+  ErrorCodes, ErrorHandler, LanguageClient, LanguageClientOptions, MessageSignature,
+  MessageTransports, ResponseError, ServerOptions
 } from 'vscode-languageclient/node';
 import { SessionMessageWriter } from './session-writer';
 
@@ -63,6 +64,22 @@ export class SessionLanguageClient extends LanguageClient {
   override dispose(timeout?: number): Promise<void> {
     this.retire();
     return super.dispose(timeout);
+  }
+
+  override handleFailedRequest<T>(type: MessageSignature, token: CancellationToken | undefined,
+      error: unknown, defaultValue: T, showNotification?: boolean): T {
+    // These local connection outcomes are not successful empty language results.
+    // In particular, the SDK otherwise consumes both as a provider's null value.
+    if (error instanceof ResponseError && error.code === ErrorCodes.ConnectionInactive) throw error;
+    if ((error instanceof ResponseError && error.code === ErrorCodes.PendingResponseRejected)
+        || (error instanceof ConnectionError
+          && (error.code === ConnectionErrors.Closed || error.code === ConnectionErrors.Disposed))) {
+      const inactive = new ResponseError(ErrorCodes.ConnectionInactive,
+        'The DAML language request was cancelled because its connection closed.');
+      inactive.cause = error;
+      throw inactive;
+    }
+    return super.handleFailedRequest(type, token, error, defaultValue, showNotification);
   }
 
   protected override async createMessageTransports(encoding: string, cancellationToken?: CancellationToken): Promise<MessageTransports> {

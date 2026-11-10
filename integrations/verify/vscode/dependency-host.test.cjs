@@ -29,7 +29,7 @@ async function bounded(promise, label) {
 // Only the supported transport seam is supplied. Startup, initialization,
 // request tracking, shutdown and disposal are the actual 9.0.1 implementation,
 // running with real VS Code and real JSONRPC, not a fake editor API.
-function fixture({ acquisition, initialize, shutdown, disposeFailure } = {}) {
+function fixture({ acquisition, initialize, shutdown, disposeFailure, useDefaultErrorHandler = false } = {}) {
   const clientToServer = new PassThrough();
   const serverToClient = new PassThrough();
   const messages = [];
@@ -52,7 +52,7 @@ function fixture({ acquisition, initialize, shutdown, disposeFailure } = {}) {
     constructor() {
       super('daml-lifecycle-check', 'DAML lifecycle dependency check', {
         documentSelector: [],
-        errorHandler: { error: () => ({ action: ErrorAction.Continue }), closed: () => ({ action: CloseAction.DoNotRestart }) },
+        errorHandler: useDefaultErrorHandler ? undefined : { error: () => ({ action: ErrorAction.Continue }), closed: () => ({ action: CloseAction.DoNotRestart }) },
       });
     }
     async createMessageTransports() {
@@ -82,6 +82,9 @@ function fixture({ acquisition, initialize, shutdown, disposeFailure } = {}) {
   return {
     client, messages, initializing: initializing.promise, transportDisposed: transportDisposed.promise,
     unanswered: unanswered.promise, acquiring: acquiring.promise,
+    // The real stream listener forwards this through reader.onError and the
+    // JSONRPC connection; no client lifecycle handler is invoked by the fixture.
+    emitReaderError(error) { serverToClient.emit('error', error); },
     async close() {
       await client.dispose(50).catch(() => {});
       server.dispose();
@@ -149,6 +152,54 @@ async function cancelInitialization() {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(states.includes(State.Running), false, 'late initialize completion cannot publish Running');
     assert.deepEqual(f.messages.map(message => message.method), ['initialize'], 'uninitialized retirement cannot send shutdown, exit or initialized');
+  } finally {
+    lateResult.resolve({ capabilities: {} });
+    subscription.dispose();
+    await f.close();
+  }
+}
+
+async function startupReaderFailure(shutdownOnError) {
+  const lateResult = deferred();
+  const cause = new Error('Deliberate underlying startup transport failure');
+  const failure = Object.assign(new Error('Deliberate reader error during initialization', { cause }), { code: 'EPIPE' });
+  const f = fixture({
+    initialize: () => lateResult.promise,
+    useDefaultErrorHandler: shutdownOnError,
+  });
+  const states = [];
+  const subscription = f.client.onDidChangeState(event => states.push(event.newState));
+  try {
+    const start = observed(f.client.start());
+    await bounded(f.initializing, 'initialize request before reader error');
+    assert.equal(f.client.state, State.Starting);
+    f.emitReaderError(failure);
+    if (shutdownOnError) {
+      // Reader errors have no writer retry count. The actual default handler
+      // selects Shutdown; cancellation must not replace the originating error.
+      const result = await bounded(start, 'startup rejected by reader error');
+      assert.equal(result.status, 'rejected');
+      assert.equal(result.reason, failure, 'startup must reject with the original transport error, not generic cancellation');
+      assert.equal(result.reason.code, 'EPIPE');
+      assert.equal(result.reason.cause, cause);
+      await bounded(f.transportDisposed, 'reader-error startup connection disposal');
+      lateResult.resolve({ capabilities: {} });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(states.includes(State.Running), false, 'late initialization cannot activate a failed transport');
+      assert.deepEqual(f.messages.map(message => message.method), ['initialize'],
+        'reader-error retirement before initialization cannot send shutdown, exit or initialized');
+    } else {
+      // Drain the real asynchronous policy decision before releasing initialize.
+      // Continue must not save a latent failure that poisons successful startup.
+      await new Promise(resolve => setImmediate(resolve));
+      lateResult.resolve({ capabilities: {} });
+      assert.equal((await bounded(start, 'startup after continued reader error')).status, 'fulfilled');
+      assert.equal(f.client.state, State.Running);
+      assert.deepEqual(f.messages.map(message => message.method), ['initialize', 'initialized']);
+      await bounded(f.client.stop(1000), 'normal shutdown after continued reader error');
+      await bounded(f.transportDisposed, 'continued reader-error connection cleanup');
+      assert.deepEqual(f.messages.map(message => message.method), ['initialize', 'initialized', 'shutdown', 'exit']);
+    }
   } finally {
     lateResult.resolve({ capabilities: {} });
     subscription.dispose();
@@ -270,7 +321,7 @@ async function run() {
   process.on('unhandledRejection', onUnhandled);
   try {
     const selected = process.env.DAML_CLIENT_DEPENDENCY_CASE;
-    assert.ok(selected === undefined || ['node-cwd', 'dispose-failure'].includes(selected), 'Unknown dependency host case selection');
+    assert.ok(selected === undefined || ['node-cwd', 'dispose-failure', 'startup-error'].includes(selected), 'Unknown dependency host case selection');
     const failures = [];
     for (const [name, check, group] of [
       ['failed shutdown disposes pending connection', () => failedStopDisposesConnection(false)],
@@ -280,9 +331,12 @@ async function run() {
       ['Node Starting cancellation before spawn during cwd lookup', cancelNodeWorkingDirectoryLookup],
       ['writer dispose failure after successful shutdown', () => shutdownWithDisposeFailure(false), 'dispose-failure'],
       ['writer dispose failure preserves original shutdown error', () => shutdownWithDisposeFailure(true), 'dispose-failure'],
+      ['Starting reader error preserves original failure under default Shutdown policy', () => startupReaderFailure(true), 'startup-error'],
+      ['Starting reader error with Continue allows successful initialization', () => startupReaderFailure(false), 'startup-error'],
     ]) {
       if (selected === 'node-cwd' && check !== cancelNodeWorkingDirectoryLookup) continue;
       if (selected === 'dispose-failure' && group !== 'dispose-failure') continue;
+      if (selected === 'startup-error' && group !== 'startup-error') continue;
       try {
         await check();
         console.log(`PASS dependency lifecycle: ${name}`);

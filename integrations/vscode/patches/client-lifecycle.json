@@ -105,7 +105,7 @@
       "package": "vscode-languageclient",
       "file": "lib/common/client.js",
       "originalSha256": "9d49ea9912f652bbdf749ddcd7e15526981c81355b3ff3c7bfb4277c405308d2",
-      "correctedSha256": "4881df84b87ef38e7fcee428b338aaca5d6dd87b642f68a2a8334b17113ff432",
+      "correctedSha256": "8b2df62b12b25fa139071dc3295bf83fbf2706f344d08749df7c20b8a556e977",
       "edits": [
         {
           "line": 642,
@@ -403,7 +403,12 @@
           ],
           "after": [
             "        // State alone does not establish that the captured resources were released.\n",
-            "        if ((this.$state === ClientState.Stopped || this.$state === ClientState.Initial) && this._connection === undefined && this._startAttempt === undefined) {\n"
+            "        if ((this.$state === ClientState.Stopped || this.$state === ClientState.Initial) && this._connection === undefined && this._startAttempt === undefined) {\n",
+            "            // Unexpected close retires the connection before the final stop/dispose.\n",
+            "            // Its owned output (also the default trace destination) still needs release.\n",
+            "            if (mode === 'stop') {\n",
+            "                this.cleanUpChannel();\n",
+            "            }\n"
           ]
         },
         {
@@ -660,6 +665,31 @@
           ]
         },
         {
+          "line": 1193,
+          "before": [],
+          "after": [
+            "        const attempt = this._startAttempt;\n"
+          ]
+        },
+        {
+          "line": 1194,
+          "before": [],
+          "after": [
+            "        if (this._startAttempt !== attempt || attempt?.source.token.isCancellationRequested) {\n",
+            "            return;\n",
+            "        }\n"
+          ]
+        },
+        {
+          "line": 1195,
+          "before": [],
+          "after": [
+            "            if (this.$state === ClientState.Starting && attempt !== undefined) {\n",
+            "                attempt.error ??= error;\n",
+            "            }\n"
+          ]
+        },
+        {
           "line": 1380,
           "before": [],
           "after": [
@@ -687,7 +717,7 @@
       "package": "vscode-languageclient",
       "file": "lib/node/main.js",
       "originalSha256": "b394e86ef9e96fe115bf24023bb20f7278f413832c55730c5783c2bc8eef1a65",
-      "correctedSha256": "d132f328ed46a40fa19cdfb9277145236ad4ab9388b719b25f348ee3300f796d",
+      "correctedSha256": "c6d485fc0587a39ef05117a883c3db2da6834df234bbb78fab68937786969022",
       "edits": [
         {
           "line": 150,
@@ -752,6 +782,12 @@
             "        let ownedProcess;\n",
             "        let ownedDetached = false;\n",
             "        let processReleased = false;\n",
+            "        const appendOutput = (data) => {\n",
+            "            // Keep draining old pipes, but never publish through a retired attempt.\n",
+            "            if (!token.isCancellationRequested && !processReleased) {\n",
+            "                this.outputChannel.append(Is.string(data) ? data : data.toString(encoding));\n",
+            "            }\n",
+            "        };\n",
             "        const releaseProcess = () => {\n",
             "            if (ownedProcess === undefined || processReleased) {\n",
             "                return;\n",
@@ -853,9 +889,12 @@
         },
         {
           "line": 243,
-          "before": [],
+          "before": [
+            "                    cp.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
+          ],
           "after": [
-            "                    ownProcess(cp, detached);\n"
+            "                    ownProcess(cp, detached);\n",
+            "                    cp.stderr.on('data', appendOutput);\n"
           ]
         },
         {
@@ -888,10 +927,21 @@
         {
           "line": 303,
           "before": [
-            "                        this._serverProcess = serverProcess;\n"
+            "                        this._serverProcess = serverProcess;\n",
+            "                        serverProcess.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                        ownProcess(serverProcess, !!json.options?.detached);\n"
+            "                        ownProcess(serverProcess, !!json.options?.detached);\n",
+            "                        serverProcess.stderr.on('data', appendOutput);\n"
+          ]
+        },
+        {
+          "line": 306,
+          "before": [
+            "                            serverProcess.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
+          ],
+          "after": [
+            "                            serverProcess.stdout.on('data', appendOutput);\n"
           ]
         },
         {
@@ -904,10 +954,14 @@
         {
           "line": 319,
           "before": [
-            "                            this._serverProcess = process;\n"
+            "                            this._serverProcess = process;\n",
+            "                            process.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                            process.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                            ownProcess(process, !!json.options?.detached);\n"
+            "                            ownProcess(process, !!json.options?.detached);\n",
+            "                            process.stderr.on('data', appendOutput);\n",
+            "                            process.stdout.on('data', appendOutput);\n"
           ]
         },
         {
@@ -920,10 +974,14 @@
         {
           "line": 333,
           "before": [
-            "                            this._serverProcess = process;\n"
+            "                            this._serverProcess = process;\n",
+            "                            process.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                            process.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                            ownProcess(process, !!json.options?.detached);\n"
+            "                            ownProcess(process, !!json.options?.detached);\n",
+            "                            process.stderr.on('data', appendOutput);\n",
+            "                            process.stdout.on('data', appendOutput);\n"
           ]
         },
         {
@@ -936,18 +994,22 @@
         {
           "line": 368,
           "before": [
-            "                            this._serverProcess = sp;\n"
+            "                            this._serverProcess = sp;\n",
+            "                            sp.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                            ownProcess(sp, !!json.options?.detached);\n"
+            "                            ownProcess(sp, !!json.options?.detached);\n",
+            "                            sp.stderr.on('data', appendOutput);\n"
           ]
         },
         {
-          "line": 372,
+          "line": 371,
           "before": [
+            "                                sp.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
             "                                resolve({ reader: new node_1.IPCMessageReader(this._serverProcess), writer: new node_1.IPCMessageWriter(this._serverProcess) });\n"
           ],
           "after": [
+            "                                sp.stdout.on('data', appendOutput);\n",
             "                                resolve({ reader: new node_1.IPCMessageReader(sp), writer: new node_1.IPCMessageWriter(sp) });\n"
           ]
         },
@@ -961,10 +1023,14 @@
         {
           "line": 382,
           "before": [
-            "                                this._serverProcess = sp;\n"
+            "                                this._serverProcess = sp;\n",
+            "                                sp.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                                sp.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                                ownProcess(sp, !!json.options?.detached);\n"
+            "                                ownProcess(sp, !!json.options?.detached);\n",
+            "                                sp.stderr.on('data', appendOutput);\n",
+            "                                sp.stdout.on('data', appendOutput);\n"
           ]
         },
         {
@@ -986,10 +1052,14 @@
         {
           "line": 394,
           "before": [
-            "                                this._serverProcess = sp;\n"
+            "                                this._serverProcess = sp;\n",
+            "                                sp.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                                sp.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
           ],
           "after": [
-            "                                ownProcess(sp, !!json.options?.detached);\n"
+            "                                ownProcess(sp, !!json.options?.detached);\n",
+            "                                sp.stderr.on('data', appendOutput);\n",
+            "                                sp.stdout.on('data', appendOutput);\n"
           ]
         },
         {
@@ -1009,11 +1079,13 @@
           ]
         },
         {
-          "line": 431,
+          "line": 430,
           "before": [
+            "                    serverProcess.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
             "                    this._serverProcess = serverProcess;\n"
           ],
           "after": [
+            "                    serverProcess.stderr.on('data', appendOutput);\n",
             "                    ownProcess(serverProcess, !!json.options?.detached);\n"
           ]
         },
@@ -1034,6 +1106,17 @@
           ]
         },
         {
+          "line": 443,
+          "before": [
+            "                        serverProcess.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                        serverProcess.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
+          ],
+          "after": [
+            "                        serverProcess.stderr.on('data', appendOutput);\n",
+            "                        serverProcess.stdout.on('data', appendOutput);\n"
+          ]
+        },
+        {
           "line": 452,
           "before": [],
           "after": [
@@ -1050,14 +1133,36 @@
           ]
         },
         {
+          "line": 458,
+          "before": [
+            "                        serverProcess.stderr.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n",
+            "                        serverProcess.stdout.on('data', data => this.outputChannel.append(Is.string(data) ? data : data.toString(encoding)));\n"
+          ],
+          "after": [
+            "                        serverProcess.stderr.on('data', appendOutput);\n",
+            "                        serverProcess.stdout.on('data', appendOutput);\n"
+          ]
+        },
+        {
           "line": 468,
           "before": [
             "            if (this._serverProcess !== undefined) {\n",
-            "                this._serverProcess.on('exit', (code, signal) => {\n"
+            "                this._serverProcess.on('exit', (code, signal) => {\n",
+            "                    if (code !== null) {\n"
           ],
           "after": [
             "            if (ownedProcess !== undefined) {\n",
-            "                ownedProcess.on('exit', (code, signal) => {\n"
+            "                ownedProcess.on('exit', (code, signal) => {\n",
+            "                    if (!token.isCancellationRequested && !processReleased && code !== null) {\n"
+          ]
+        },
+        {
+          "line": 473,
+          "before": [
+            "                    if (signal !== null) {\n"
+          ],
+          "after": [
+            "                    if (!token.isCancellationRequested && !processReleased && signal !== null) {\n"
           ]
         },
         {

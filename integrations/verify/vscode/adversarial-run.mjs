@@ -49,7 +49,8 @@ try {
     await mkdir(join(user, 'User'), { recursive: true });
     await writeFile(status, '');
     await writeFile(control, '0');
-    const launch = withhold => `#!/usr/bin/env node\nprocess.env.DAML_LSP_WITHHOLD_INITIALIZE = ${JSON.stringify(withhold ? '1' : '0')};\nrequire(${JSON.stringify(join(here, 'adversarial-proxy.cjs'))});\n`;
+    // VS Code may resolve a shell PATH without Node; use the harness runtime.
+    const launch = withhold => `#!${process.execPath}\nprocess.env.DAML_LSP_WITHHOLD_INITIALIZE = ${JSON.stringify(withhold ? '1' : '0')};\nrequire(${JSON.stringify(join(here, 'adversarial-proxy.cjs'))});\n`;
     await writeFile(wrapper, launch(scenario.startsWith('startup-')));
     await writeFile(alternate, launch(scenario === 'startup-coalescing'));
     await writeFile(finalWrapper, launch(false));
