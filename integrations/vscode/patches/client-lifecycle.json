@@ -1,0 +1,1118 @@
+{
+  "schemaVersion": 1,
+  "upstream": "https://github.com/microsoft/vscode-languageserver-node",
+  "license": "MIT; Copyright (c) Microsoft Corporation. All rights reserved. Original package License.txt notices remain authoritative.",
+  "purpose": "Locally authored lifecycle corrections against the exact installed npm source bytes; node_modules outputs are derived, not maintained.",
+  "packages": {
+    "vscode-jsonrpc": "8.2.0",
+    "vscode-languageclient": "9.0.1"
+  },
+  "files": [
+    {
+      "package": "vscode-jsonrpc",
+      "file": "lib/common/connection.js",
+      "originalSha256": "b21227f1c33f30114dd20c38116db829db0799d39f06bba062a3fa68d0e25a61",
+      "correctedSha256": "c58845ddda9b7ba94de5a24cdecb4ca1440c81f0ed174ff51fbfb896c87c2dea",
+      "edits": [
+        {
+          "line": 1069,
+          "before": [
+            "            return new Promise(async (resolve, reject) => {\n",
+            "                const resolveWithCleanup = (r) => {\n",
+            "                    resolve(r);\n",
+            "                    cancellationStrategy.sender.cleanup(id);\n",
+            "                    disposable?.dispose();\n"
+          ],
+          "after": [
+            "            return new Promise((resolve, reject) => {\n",
+            "                let settled = false;\n",
+            "                const settle = (callback, value) => {\n",
+            "                    if (settled) {\n",
+            "                        return;\n",
+            "                    }\n",
+            "                    settled = true;\n",
+            "                    responsePromises.delete(id);\n",
+            "                    // Settle first so cleanup cannot strand the caller if a strategy throws.\n",
+            "                    callback(value);\n",
+            "                    try {\n",
+            "                        cancellationStrategy.sender.cleanup(id);\n",
+            "                    }\n",
+            "                    finally {\n",
+            "                        disposable?.dispose();\n",
+            "                    }\n"
+          ]
+        },
+        {
+          "line": 1075,
+          "before": [
+            "                const rejectWithCleanup = (r) => {\n",
+            "                    reject(r);\n",
+            "                    cancellationStrategy.sender.cleanup(id);\n",
+            "                    disposable?.dispose();\n"
+          ],
+          "after": [
+            "                const responsePromise = {\n",
+            "                    method: method, timerStart: Date.now(),\n",
+            "                    resolve: value => settle(resolve, value),\n",
+            "                    reject: error => settle(reject, error)\n"
+          ]
+        },
+        {
+          "line": 1080,
+          "before": [
+            "                const responsePromise = { method: method, timerStart: Date.now(), resolve: resolveWithCleanup, reject: rejectWithCleanup };\n"
+          ],
+          "after": [
+            "                responsePromises.set(id, responsePromise);\n",
+            "                const writeFailed = (error) => {\n",
+            "                    if (settled) {\n",
+            "                        return;\n",
+            "                    }\n",
+            "                    logger.error('Sending request failed.');\n",
+            "                    const failure = error instanceof messages_1.ResponseError && error.code === messages_1.ErrorCodes.ConnectionInactive\n",
+            "                        ? error\n",
+            "                        : new messages_1.ResponseError(messages_1.ErrorCodes.MessageWriteError, error?.message || 'Unknown reason', error);\n",
+            "                    responsePromise.reject(failure);\n",
+            "                };\n"
+          ]
+        },
+        {
+          "line": 1082,
+          "before": [
+            "                    await messageWriter.write(requestMessage);\n",
+            "                    responsePromises.set(id, responsePromise);\n"
+          ],
+          "after": [
+            "                    // Registration precedes even synchronous writer callbacks and disposal.\n",
+            "                    Promise.resolve(messageWriter.write(requestMessage)).then(undefined, writeFailed);\n"
+          ]
+        },
+        {
+          "line": 1086,
+          "before": [
+            "                    logger.error(`Sending request failed.`);\n",
+            "                    // Writing the message failed. So we need to reject the promise.\n",
+            "                    responsePromise.reject(new messages_1.ResponseError(messages_1.ErrorCodes.MessageWriteError, error.message ? error.message : 'Unknown reason'));\n",
+            "                    throw error;\n"
+          ],
+          "after": [
+            "                    writeFailed(error);\n"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "vscode-languageclient",
+      "file": "lib/common/client.js",
+      "originalSha256": "9d49ea9912f652bbdf749ddcd7e15526981c81355b3ff3c7bfb4277c405308d2",
+      "correctedSha256": "4881df84b87ef38e7fcee428b338aaca5d6dd87b642f68a2a8334b17113ff432",
+      "edits": [
+        {
+          "line": 642,
+          "before": [
+            "    async start() {\n"
+          ],
+          "after": [
+            "    start() {\n"
+          ]
+        },
+        {
+          "line": 656,
+          "before": [],
+          "after": [
+            "        const attempt = {\n",
+            "            source: new vscode_languageserver_protocol_1.CancellationTokenSource(),\n",
+            "            reject, connection: undefined, error: undefined\n",
+            "        };\n",
+            "        this._startAttempt = attempt;\n"
+          ]
+        },
+        {
+          "line": 680,
+          "before": [],
+          "after": [
+            "        void (async () => {\n"
+          ]
+        },
+        {
+          "line": 681,
+          "before": [
+            "            const connection = await this.createConnection();\n"
+          ],
+          "after": [
+            "            const connection = await this.createConnection(attempt);\n",
+            "            this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 772,
+          "before": [
+            "            await this.initialize(connection);\n"
+          ],
+          "after": [
+            "            await this.initialize(connection, attempt);\n",
+            "            this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 776,
+          "before": [
+            "            this.$state = ClientState.StartFailed;\n",
+            "            this.error(`${this._name} client: couldn't create connection to server.`, error, 'force');\n",
+            "            reject(error);\n"
+          ],
+          "after": [
+            "            // An obsolete continuation cannot change the next attempt's state or cause.\n",
+            "            if (this._startAttempt === attempt && !attempt.source.token.isCancellationRequested) {\n",
+            "                attempt.error = error;\n",
+            "                reject(error);\n",
+            "                this.error(`${this._name} client: couldn't create connection to server.`, error, 'force');\n",
+            "                // Use the existing stop owner, including Node's process cleanup.\n",
+            "                this.stop().catch(cleanupError => this.error('Startup cleanup failed.', cleanupError, false));\n",
+            "            }\n"
+          ]
+        },
+        {
+          "line": 780,
+          "before": [
+            "        return this._onStart;\n"
+          ],
+          "after": [
+            "        })();\n",
+            "        return promise;\n"
+          ]
+        },
+        {
+          "line": 791,
+          "before": [
+            "    async initialize(connection) {\n"
+          ],
+          "after": [
+            "    checkStartAttempt(attempt) {\n",
+            "        if (this._startAttempt !== attempt || attempt.source.token.isCancellationRequested) {\n",
+            "            throw attempt.error ?? new vscode_languageserver_protocol_1.ResponseError(vscode_languageserver_protocol_1.ErrorCodes.ConnectionInactive, 'Client startup was cancelled.');\n",
+            "        }\n",
+            "    }\n",
+            "    async initialize(connection, attempt) {\n",
+            "        this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 819,
+          "before": [
+            "                const result = await this.doInitialize(connection, initParams);\n"
+          ],
+          "after": [
+            "                const result = await this.doInitialize(connection, initParams, attempt);\n",
+            "                this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 829,
+          "before": [
+            "            return this.doInitialize(connection, initParams);\n"
+          ],
+          "after": [
+            "            return this.doInitialize(connection, initParams, attempt);\n"
+          ]
+        },
+        {
+          "line": 832,
+          "before": [
+            "    async doInitialize(connection, initParams) {\n",
+            "        try {\n",
+            "            const result = await connection.initialize(initParams);\n",
+            "            if (result.capabilities.positionEncoding !== undefined && result.capabilities.positionEncoding !== vscode_languageserver_protocol_1.PositionEncodingKind.UTF16) {\n",
+            "                throw new Error(`Unsupported position encoding (${result.capabilities.positionEncoding}) received from server ${this.name}`);\n",
+            "            }\n",
+            "            this._initializeResult = result;\n",
+            "            this.$state = ClientState.Running;\n",
+            "            let textDocumentSyncOptions = undefined;\n",
+            "            if (Is.number(result.capabilities.textDocumentSync)) {\n",
+            "                if (result.capabilities.textDocumentSync === vscode_languageserver_protocol_1.TextDocumentSyncKind.None) {\n",
+            "                    textDocumentSyncOptions = {\n",
+            "                        openClose: false,\n",
+            "                        change: vscode_languageserver_protocol_1.TextDocumentSyncKind.None,\n",
+            "                        save: undefined\n",
+            "                    };\n",
+            "                }\n",
+            "                else {\n",
+            "                    textDocumentSyncOptions = {\n",
+            "                        openClose: true,\n",
+            "                        change: result.capabilities.textDocumentSync,\n",
+            "                        save: {\n",
+            "                            includeText: false\n",
+            "                        }\n",
+            "                    };\n",
+            "                }\n",
+            "            }\n",
+            "            else if (result.capabilities.textDocumentSync !== undefined && result.capabilities.textDocumentSync !== null) {\n",
+            "                textDocumentSyncOptions = result.capabilities.textDocumentSync;\n",
+            "            }\n",
+            "            this._capabilities = Object.assign({}, result.capabilities, { resolvedTextDocumentSync: textDocumentSyncOptions });\n",
+            "            connection.onNotification(vscode_languageserver_protocol_1.PublishDiagnosticsNotification.type, params => this.handleDiagnostics(params));\n",
+            "            connection.onRequest(vscode_languageserver_protocol_1.RegistrationRequest.type, params => this.handleRegistrationRequest(params));\n",
+            "            // See https://github.com/Microsoft/vscode-languageserver-node/issues/199\n",
+            "            connection.onRequest('client/registerFeature', params => this.handleRegistrationRequest(params));\n",
+            "            connection.onRequest(vscode_languageserver_protocol_1.UnregistrationRequest.type, params => this.handleUnregistrationRequest(params));\n",
+            "            // See https://github.com/Microsoft/vscode-languageserver-node/issues/199\n",
+            "            connection.onRequest('client/unregisterFeature', params => this.handleUnregistrationRequest(params));\n",
+            "            connection.onRequest(vscode_languageserver_protocol_1.ApplyWorkspaceEditRequest.type, params => this.handleApplyWorkspaceEdit(params));\n",
+            "            // Add pending notification, request and progress handlers.\n",
+            "            for (const [method, handler] of this._pendingNotificationHandlers) {\n",
+            "                this._notificationDisposables.set(method, connection.onNotification(method, handler));\n",
+            "            }\n",
+            "            this._pendingNotificationHandlers.clear();\n",
+            "            for (const [method, handler] of this._pendingRequestHandlers) {\n",
+            "                this._requestDisposables.set(method, connection.onRequest(method, handler));\n",
+            "            }\n",
+            "            this._pendingRequestHandlers.clear();\n",
+            "            for (const [token, data] of this._pendingProgressHandlers) {\n",
+            "                this._progressDisposables.set(token, connection.onProgress(data.type, token, data.handler));\n",
+            "            }\n",
+            "            this._pendingProgressHandlers.clear();\n",
+            "            // if (this._clientOptions.suspend.mode !== SuspendMode.off) {\n",
+            "            // \tthis._idleInterval =  RAL().timer.setInterval(() => this.checkSuspend(), this._clientOptions.suspend.interval);\n",
+            "            // }\n",
+            "            await connection.sendNotification(vscode_languageserver_protocol_1.InitializedNotification.type, {});\n",
+            "            this.hookFileEvents(connection);\n",
+            "            this.hookConfigurationChanged(connection);\n",
+            "            this.initializeFeatures(connection);\n",
+            "            return result;\n"
+          ],
+          "after": [
+            "    async doInitialize(connection, initParams, attempt) {\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        const result = await connection.initialize(initParams);\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        if (result.capabilities.positionEncoding !== undefined && result.capabilities.positionEncoding !== vscode_languageserver_protocol_1.PositionEncodingKind.UTF16) {\n",
+            "            throw new Error(`Unsupported position encoding (${result.capabilities.positionEncoding}) received from server ${this.name}`);\n"
+          ]
+        },
+        {
+          "line": 893,
+          "before": [
+            "        catch (error) {\n",
+            "            if (this._clientOptions.initializationFailedHandler) {\n",
+            "                if (this._clientOptions.initializationFailedHandler(error)) {\n",
+            "                    void this.initialize(connection);\n",
+            "                }\n",
+            "                else {\n",
+            "                    void this.stop();\n",
+            "                }\n",
+            "            }\n",
+            "            else if (error instanceof vscode_languageserver_protocol_1.ResponseError && error.data && error.data.retry) {\n",
+            "                void vscode_1.window.showErrorMessage(error.message, { title: 'Retry', id: 'retry' }).then(item => {\n",
+            "                    if (item && item.id === 'retry') {\n",
+            "                        void this.initialize(connection);\n",
+            "                    }\n",
+            "                    else {\n",
+            "                        void this.stop();\n",
+            "                    }\n",
+            "                });\n"
+          ],
+          "after": [
+            "        this._initializeResult = result;\n",
+            "        let textDocumentSyncOptions = undefined;\n",
+            "        if (Is.number(result.capabilities.textDocumentSync)) {\n",
+            "            if (result.capabilities.textDocumentSync === vscode_languageserver_protocol_1.TextDocumentSyncKind.None) {\n",
+            "                textDocumentSyncOptions = {\n",
+            "                    openClose: false,\n",
+            "                    change: vscode_languageserver_protocol_1.TextDocumentSyncKind.None,\n",
+            "                    save: undefined\n",
+            "                };\n"
+          ]
+        },
+        {
+          "line": 913,
+          "before": [
+            "                if (error && error.message) {\n",
+            "                    void vscode_1.window.showErrorMessage(error.message);\n",
+            "                }\n",
+            "                this.error('Server initialization failed.', error);\n",
+            "                void this.stop();\n"
+          ],
+          "after": [
+            "                textDocumentSyncOptions = {\n",
+            "                    openClose: true,\n",
+            "                    change: result.capabilities.textDocumentSync,\n",
+            "                    save: {\n",
+            "                        includeText: false\n",
+            "                    }\n",
+            "                };\n"
+          ]
+        },
+        {
+          "line": 919,
+          "before": [
+            "            throw error;\n"
+          ],
+          "after": []
+        },
+        {
+          "line": 921,
+          "before": [],
+          "after": [
+            "        else if (result.capabilities.textDocumentSync !== undefined && result.capabilities.textDocumentSync !== null) {\n",
+            "            textDocumentSyncOptions = result.capabilities.textDocumentSync;\n",
+            "        }\n",
+            "        this._capabilities = Object.assign({}, result.capabilities, { resolvedTextDocumentSync: textDocumentSyncOptions });\n",
+            "        connection.onNotification(vscode_languageserver_protocol_1.PublishDiagnosticsNotification.type, params => this.handleDiagnostics(params));\n",
+            "        connection.onRequest(vscode_languageserver_protocol_1.RegistrationRequest.type, params => this.handleRegistrationRequest(params));\n",
+            "        // See https://github.com/Microsoft/vscode-languageserver-node/issues/199\n",
+            "        connection.onRequest('client/registerFeature', params => this.handleRegistrationRequest(params));\n",
+            "        connection.onRequest(vscode_languageserver_protocol_1.UnregistrationRequest.type, params => this.handleUnregistrationRequest(params));\n",
+            "        // See https://github.com/Microsoft/vscode-languageserver-node/issues/199\n",
+            "        connection.onRequest('client/unregisterFeature', params => this.handleUnregistrationRequest(params));\n",
+            "        connection.onRequest(vscode_languageserver_protocol_1.ApplyWorkspaceEditRequest.type, params => this.handleApplyWorkspaceEdit(params));\n",
+            "        // Add pending notification, request and progress handlers.\n",
+            "        for (const [method, handler] of this._pendingNotificationHandlers) {\n",
+            "            this._notificationDisposables.set(method, connection.onNotification(method, handler));\n",
+            "        }\n",
+            "        this._pendingNotificationHandlers.clear();\n",
+            "        for (const [method, handler] of this._pendingRequestHandlers) {\n",
+            "            this._requestDisposables.set(method, connection.onRequest(method, handler));\n",
+            "        }\n",
+            "        this._pendingRequestHandlers.clear();\n",
+            "        for (const [token, data] of this._pendingProgressHandlers) {\n",
+            "            this._progressDisposables.set(token, connection.onProgress(data.type, token, data.handler));\n",
+            "        }\n",
+            "        this._pendingProgressHandlers.clear();\n",
+            "        // if (this._clientOptions.suspend.mode !== SuspendMode.off) {\n",
+            "        // \tthis._idleInterval =  RAL().timer.setInterval(() => this.checkSuspend(), this._clientOptions.suspend.interval);\n",
+            "        // }\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        await connection.sendNotification(vscode_languageserver_protocol_1.InitializedNotification.type, {});\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        this.$state = ClientState.Running;\n",
+            "        // State listeners may synchronously retire this attempt.\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        this.hookFileEvents(connection);\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        this.hookConfigurationChanged(connection);\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        this.initializeFeatures(connection);\n",
+            "        return result;\n"
+          ]
+        },
+        {
+          "line": 947,
+          "before": [
+            "        // If the client is stopped or in its initial state return.\n",
+            "        if (this.$state === ClientState.Stopped || this.$state === ClientState.Initial) {\n"
+          ],
+          "after": [
+            "        // State alone does not establish that the captured resources were released.\n",
+            "        if ((this.$state === ClientState.Stopped || this.$state === ClientState.Initial) && this._connection === undefined && this._startAttempt === undefined) {\n"
+          ]
+        },
+        {
+          "line": 960,
+          "before": [
+            "        const connection = this.activeConnection();\n",
+            "        // We can't stop a client that is not running (e.g. has no connection). Especially not\n",
+            "        // on that us starting since it can't be correctly synchronized.\n",
+            "        if (connection === undefined || this.$state !== ClientState.Running) {\n"
+          ],
+          "after": [
+            "        const attempt = this._startAttempt;\n",
+            "        if (this.$state === ClientState.Starting || this.$state === ClientState.StartFailed ||\n",
+            "            this.$state === ClientState.Stopped || this.$state === ClientState.Initial) {\n",
+            "            this.$state = ClientState.Stopping;\n",
+            "            if (attempt !== undefined) {\n",
+            "                attempt.error ??= new vscode_languageserver_protocol_1.ResponseError(vscode_languageserver_protocol_1.ErrorCodes.ConnectionInactive, 'Client startup was cancelled.');\n",
+            "                attempt.reject(attempt.error);\n",
+            "                attempt.source.cancel();\n",
+            "            }\n",
+            "            const connection = attempt?.connection ?? this._connection;\n",
+            "            // No shutdown/exit is legal before initialization has completed.\n",
+            "            return this._onStop = Promise.resolve().then(() => {\n",
+            "                try {\n",
+            "                    connection?.dispose();\n",
+            "                }\n",
+            "                finally {\n",
+            "                    this.cleanUp(mode);\n",
+            "                }\n",
+            "            }).finally(() => {\n",
+            "                if (this._startAttempt === attempt) {\n",
+            "                    this._startAttempt = undefined;\n",
+            "                    attempt?.source.dispose();\n",
+            "                }\n",
+            "                if (this._connection === connection) {\n",
+            "                    this._connection = undefined;\n",
+            "                }\n",
+            "                this.$state = ClientState.Stopped;\n",
+            "                this._onStart = undefined;\n",
+            "                this._onStop = undefined;\n",
+            "                this._initializeResult = undefined;\n",
+            "                this._ignoredRegistrations.clear();\n",
+            "                mode === 'stop' && this.cleanUpChannel();\n",
+            "            });\n",
+            "        }\n",
+            "        const connection = this._connection;\n",
+            "        if (connection === undefined) {\n"
+          ]
+        },
+        {
+          "line": 965,
+          "before": [],
+          "after": [
+            "        }\n",
+            "        if (attempt !== undefined) {\n",
+            "            attempt.error ??= new vscode_languageserver_protocol_1.ResponseError(vscode_languageserver_protocol_1.ErrorCodes.ConnectionInactive, 'Client startup was cancelled.');\n",
+            "            attempt.reject(attempt.error);\n",
+            "            attempt.source.cancel();\n"
+          ]
+        },
+        {
+          "line": 968,
+          "before": [
+            "        this.cleanUp(mode);\n",
+            "        const tp = new Promise(c => { (0, vscode_languageserver_protocol_1.RAL)().timer.setTimeout(c, timeout); });\n"
+          ],
+          "after": [
+            "        let timer;\n",
+            "        let retiring = true;\n",
+            "        let stopFailed = false;\n",
+            "        const tp = new Promise(c => { timer = (0, vscode_languageserver_protocol_1.RAL)().timer.setTimeout(() => { retiring = false; c(); }, timeout); });\n"
+          ]
+        },
+        {
+          "line": 971,
+          "before": [],
+          "after": [
+            "            this.cleanUp(mode);\n"
+          ]
+        },
+        {
+          "line": 972,
+          "before": [],
+          "after": [
+            "            if (!retiring) {\n",
+            "                return;\n",
+            "            }\n"
+          ]
+        },
+        {
+          "line": 979,
+          "before": [
+            "                connection.dispose();\n"
+          ],
+          "after": []
+        },
+        {
+          "line": 985,
+          "before": [
+            "        }, (error) => {\n"
+          ],
+          "after": [
+            "        }).catch((error) => {\n",
+            "            stopFailed = true;\n"
+          ]
+        },
+        {
+          "line": 989,
+          "before": [
+            "            this.$state = ClientState.Stopped;\n",
+            "            mode === 'stop' && this.cleanUpChannel();\n",
+            "            this._onStart = undefined;\n",
+            "            this._onStop = undefined;\n",
+            "            this._connection = undefined;\n",
+            "            this._ignoredRegistrations.clear();\n"
+          ],
+          "after": [
+            "            retiring = false;\n",
+            "            timer.dispose();\n",
+            "            let finalizationFailed = false;\n",
+            "            let finalizationError;\n",
+            "            // Always settle callers on the captured connection, even on failure/timeout.\n",
+            "            try {\n",
+            "                connection.dispose();\n",
+            "            }\n",
+            "            catch (error) {\n",
+            "                finalizationFailed = true;\n",
+            "                finalizationError = error;\n",
+            "            }\n",
+            "            try {\n",
+            "                if (this._startAttempt === attempt) {\n",
+            "                    this._startAttempt = undefined;\n",
+            "                    attempt?.source.dispose();\n",
+            "                }\n",
+            "                mode === 'stop' && this.cleanUpChannel();\n",
+            "            }\n",
+            "            catch (error) {\n",
+            "                if (!finalizationFailed) {\n",
+            "                    finalizationFailed = true;\n",
+            "                    finalizationError = error;\n",
+            "                }\n",
+            "            }\n",
+            "            finally {\n",
+            "                this._onStart = undefined;\n",
+            "                this._onStop = undefined;\n",
+            "                this._connection = undefined;\n",
+            "                this._ignoredRegistrations.clear();\n",
+            "                this.$state = ClientState.Stopped;\n",
+            "            }\n",
+            "            if (finalizationFailed) {\n",
+            "                if (!stopFailed) {\n",
+            "                    throw finalizationError;\n",
+            "                }\n",
+            "                // A secondary cleanup failure cannot replace the original stop failure.\n",
+            "                this.error('Finalizing the stopped connection failed.', finalizationError, false);\n",
+            "            }\n"
+          ]
+        },
+        {
+          "line": 1137,
+          "before": [
+            "    async createConnection() {\n"
+          ],
+          "after": [
+            "    async createConnection(attempt) {\n"
+          ]
+        },
+        {
+          "line": 1139,
+          "before": [],
+          "after": [
+            "            if (this._startAttempt !== attempt || attempt.source.token.isCancellationRequested) {\n",
+            "                return;\n",
+            "            }\n"
+          ]
+        },
+        {
+          "line": 1142,
+          "before": [],
+          "after": [
+            "            if (this._startAttempt !== attempt || attempt.source.token.isCancellationRequested) {\n",
+            "                return;\n",
+            "            }\n"
+          ]
+        },
+        {
+          "line": 1144,
+          "before": [
+            "        const transports = await this.createMessageTransports(this._clientOptions.stdioEncoding || 'utf8');\n",
+            "        this._connection = createConnection(transports.reader, transports.writer, errorHandler, closeHandler, this._clientOptions.connectionOptions);\n",
+            "        return this._connection;\n"
+          ],
+          "after": [
+            "        const transports = await this.createMessageTransports(this._clientOptions.stdioEncoding || 'utf8', attempt.source.token);\n",
+            "        if (this._startAttempt !== attempt || attempt.source.token.isCancellationRequested) {\n",
+            "            try {\n",
+            "                transports.writer.dispose();\n",
+            "            }\n",
+            "            finally {\n",
+            "                transports.reader.dispose();\n",
+            "            }\n",
+            "            this.checkStartAttempt(attempt);\n",
+            "        }\n",
+            "        const connection = createConnection(transports.reader, transports.writer, errorHandler, closeHandler, this._clientOptions.connectionOptions);\n",
+            "        attempt.connection = connection;\n",
+            "        this.checkStartAttempt(attempt);\n",
+            "        this._connection = connection;\n",
+            "        return connection;\n"
+          ]
+        },
+        {
+          "line": 1149,
+          "before": [
+            "        // Check whether this is a normal shutdown in progress or the client stopped normally.\n",
+            "        if (this.$state === ClientState.Stopped) {\n",
+            "            return;\n",
+            "        }\n"
+          ],
+          "after": [
+            "        const connection = this._connection;\n",
+            "        const attempt = this._startAttempt;\n"
+          ]
+        },
+        {
+          "line": 1160,
+          "before": [],
+          "after": [
+            "        }\n",
+            "        // Stop owns its captured connection and terminal outcome.\n",
+            "        if (this.$state === ClientState.Stopped || this.$state === ClientState.Stopping) {\n",
+            "            return;\n",
+            "        }\n",
+            "        if (attempt !== undefined) {\n",
+            "            attempt.error ??= new vscode_languageserver_protocol_1.ResponseError(vscode_languageserver_protocol_1.ErrorCodes.PendingResponseRejected, 'Pending response rejected since connection got disposed');\n",
+            "            attempt.reject(attempt.error);\n",
+            "            attempt.source.cancel();\n"
+          ]
+        },
+        {
+          "line": 1170,
+          "before": [],
+          "after": [
+            "        if (this._connection !== connection || this._startAttempt !== attempt || this.$state === ClientState.Stopping || this.$state === ClientState.Stopped) {\n",
+            "            return;\n",
+            "        }\n"
+          ]
+        },
+        {
+          "line": 1171,
+          "before": [],
+          "after": [
+            "        this._startAttempt = undefined;\n",
+            "        attempt?.source.dispose();\n"
+          ]
+        },
+        {
+          "line": 1380,
+          "before": [],
+          "after": [
+            "        const attempt = this._startAttempt;\n",
+            "        this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 1382,
+          "before": [],
+          "after": [
+            "            this.checkStartAttempt(attempt);\n"
+          ]
+        },
+        {
+          "line": 1387,
+          "before": [],
+          "after": [
+            "            this.checkStartAttempt(attempt);\n"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "vscode-languageclient",
+      "file": "lib/node/main.js",
+      "originalSha256": "b394e86ef9e96fe115bf24023bb20f7278f413832c55730c5783c2bc8eef1a65",
+      "correctedSha256": "d132f328ed46a40fa19cdfb9277145236ad4ab9388b719b25f348ee3300f796d",
+      "edits": [
+        {
+          "line": 150,
+          "before": [],
+          "after": [
+            "        const process = this._serverProcess;\n",
+            "        const detached = this._isDetached;\n"
+          ]
+        },
+        {
+          "line": 151,
+          "before": [
+            "            if (this._serverProcess) {\n",
+            "                const toCheck = this._serverProcess;\n",
+            "                this._serverProcess = undefined;\n",
+            "                if (this._isDetached === undefined || !this._isDetached) {\n",
+            "                    this.checkProcessDied(toCheck);\n"
+          ],
+          "after": [
+            "            if (process !== undefined) {\n",
+            "                if (this._serverProcess === process) {\n",
+            "                    this._serverProcess = undefined;\n",
+            "                    this._isDetached = undefined;\n"
+          ]
+        },
+        {
+          "line": 157,
+          "before": [
+            "                this._isDetached = undefined;\n"
+          ],
+          "after": [
+            "                if (!detached) {\n",
+            "                    this.checkProcessDied(process);\n",
+            "                }\n"
+          ]
+        },
+        {
+          "line": 179,
+          "before": [],
+          "after": [
+            "        const process = this._serverProcess;\n",
+            "        const detached = this._isDetached;\n"
+          ]
+        },
+        {
+          "line": 180,
+          "before": [],
+          "after": [
+            "        this._isDetached = undefined;\n",
+            "        if (process !== undefined && !detached) {\n",
+            "            this.checkProcessDied(process);\n",
+            "        }\n"
+          ]
+        },
+        {
+          "line": 188,
+          "before": [
+            "    createMessageTransports(encoding) {\n"
+          ],
+          "after": [
+            "    createMessageTransports(encoding, token = node_1.CancellationToken.None) {\n",
+            "        let ownedProcess;\n",
+            "        let ownedDetached = false;\n",
+            "        let processReleased = false;\n",
+            "        const releaseProcess = () => {\n",
+            "            if (ownedProcess === undefined || processReleased) {\n",
+            "                return;\n",
+            "            }\n",
+            "            processReleased = true;\n",
+            "            if (this._serverProcess === ownedProcess) {\n",
+            "                this._serverProcess = undefined;\n",
+            "                this._isDetached = undefined;\n",
+            "            }\n",
+            "            if (!ownedDetached) {\n",
+            "                this.checkProcessDied(ownedProcess);\n",
+            "            }\n",
+            "        };\n",
+            "        const checkCancelled = () => {\n",
+            "            if (token.isCancellationRequested) {\n",
+            "                releaseProcess();\n",
+            "                throw new node_1.ResponseError(node_1.ErrorCodes.ConnectionInactive, 'Client startup was cancelled.');\n",
+            "            }\n",
+            "        };\n",
+            "        const ownProcess = (process, detached = false) => {\n",
+            "            ownedProcess = process;\n",
+            "            ownedDetached = detached;\n",
+            "            checkCancelled();\n",
+            "            this._serverProcess = process;\n",
+            "            this._isDetached = detached;\n",
+            "        };\n",
+            "        const cancellation = token.onCancellationRequested(releaseProcess);\n",
+            "        const finishAcquisition = (promise) => Promise.resolve(promise).then(transports => {\n",
+            "            if (token.isCancellationRequested) {\n",
+            "                try {\n",
+            "                    transports.writer.dispose();\n",
+            "                }\n",
+            "                finally {\n",
+            "                    transports.reader.dispose();\n",
+            "                }\n",
+            "                checkCancelled();\n",
+            "            }\n",
+            "            return transports;\n",
+            "        }, error => {\n",
+            "            releaseProcess();\n",
+            "            throw error;\n",
+            "        }).finally(() => cancellation.dispose());\n"
+          ]
+        },
+        {
+          "line": 224,
+          "before": [
+            "            return server().then((result) => {\n"
+          ],
+          "after": [
+            "            if (token.isCancellationRequested) {\n",
+            "                cancellation.dispose();\n",
+            "                return Promise.reject(new node_1.ResponseError(node_1.ErrorCodes.ConnectionInactive, 'Client startup was cancelled.'));\n",
+            "            }\n",
+            "            return finishAcquisition(Promise.resolve().then(() => {\n",
+            "                checkCancelled();\n",
+            "                return server();\n",
+            "            }).then((result) => {\n"
+          ]
+        },
+        {
+          "line": 226,
+          "before": [
+            "                    this._isDetached = !!result.detached;\n"
+          ],
+          "after": []
+        },
+        {
+          "line": 230,
+          "before": [
+            "                    this._isDetached = !!result.detached;\n"
+          ],
+          "after": []
+        },
+        {
+          "line": 235,
+          "before": [],
+          "after": [
+            "                    let detached;\n"
+          ]
+        },
+        {
+          "line": 237,
+          "before": [
+            "                        this._isDetached = result.detached;\n"
+          ],
+          "after": [
+            "                        detached = result.detached;\n"
+          ]
+        },
+        {
+          "line": 241,
+          "before": [
+            "                        this._isDetached = false;\n"
+          ],
+          "after": [
+            "                        detached = false;\n"
+          ]
+        },
+        {
+          "line": 243,
+          "before": [],
+          "after": [
+            "                    ownProcess(cp, detached);\n"
+          ]
+        },
+        {
+          "line": 246,
+          "before": [
+            "            });\n"
+          ],
+          "after": [
+            "            }));\n"
+          ]
+        },
+        {
+          "line": 263,
+          "before": [
+            "        return this._getServerWorkingDir(json.options).then(serverWorkingDir => {\n"
+          ],
+          "after": [
+            "        return finishAcquisition(this._getServerWorkingDir(json.options).then(serverWorkingDir => {\n",
+            "            // Working-directory resolution is asynchronous; cancellation wins before spawn.\n",
+            "            checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 299,
+          "before": [],
+          "after": [
+            "                        checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 303,
+          "before": [
+            "                        this._serverProcess = serverProcess;\n"
+          ],
+          "after": [
+            "                        ownProcess(serverProcess, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 315,
+          "before": [],
+          "after": [
+            "                            checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 319,
+          "before": [
+            "                            this._serverProcess = process;\n"
+          ],
+          "after": [
+            "                            ownProcess(process, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 329,
+          "before": [],
+          "after": [
+            "                            checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 333,
+          "before": [
+            "                            this._serverProcess = process;\n"
+          ],
+          "after": [
+            "                            ownProcess(process, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 366,
+          "before": [],
+          "after": [
+            "                            checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 368,
+          "before": [
+            "                            this._serverProcess = sp;\n"
+          ],
+          "after": [
+            "                            ownProcess(sp, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 372,
+          "before": [
+            "                                resolve({ reader: new node_1.IPCMessageReader(this._serverProcess), writer: new node_1.IPCMessageWriter(this._serverProcess) });\n"
+          ],
+          "after": [
+            "                                resolve({ reader: new node_1.IPCMessageReader(sp), writer: new node_1.IPCMessageWriter(sp) });\n"
+          ]
+        },
+        {
+          "line": 380,
+          "before": [],
+          "after": [
+            "                                checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 382,
+          "before": [
+            "                                this._serverProcess = sp;\n"
+          ],
+          "after": [
+            "                                ownProcess(sp, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 388,
+          "before": [
+            "                            }, reject);\n"
+          ],
+          "after": [
+            "                            }).catch(reject);\n"
+          ]
+        },
+        {
+          "line": 392,
+          "before": [],
+          "after": [
+            "                                checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 394,
+          "before": [
+            "                                this._serverProcess = sp;\n"
+          ],
+          "after": [
+            "                                ownProcess(sp, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 400,
+          "before": [
+            "                            }, reject);\n"
+          ],
+          "after": [
+            "                            }).catch(reject);\n"
+          ]
+        },
+        {
+          "line": 426,
+          "before": [],
+          "after": [
+            "                    checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 431,
+          "before": [
+            "                    this._serverProcess = serverProcess;\n"
+          ],
+          "after": [
+            "                    ownProcess(serverProcess, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 437,
+          "before": [],
+          "after": [
+            "                        checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 441,
+          "before": [
+            "                        this._serverProcess = serverProcess;\n"
+          ],
+          "after": [
+            "                        ownProcess(serverProcess, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 452,
+          "before": [],
+          "after": [
+            "                        checkCancelled();\n"
+          ]
+        },
+        {
+          "line": 456,
+          "before": [
+            "                        this._serverProcess = serverProcess;\n"
+          ],
+          "after": [
+            "                        ownProcess(serverProcess, !!json.options?.detached);\n"
+          ]
+        },
+        {
+          "line": 468,
+          "before": [
+            "            if (this._serverProcess !== undefined) {\n",
+            "                this._serverProcess.on('exit', (code, signal) => {\n"
+          ],
+          "after": [
+            "            if (ownedProcess !== undefined) {\n",
+            "                ownedProcess.on('exit', (code, signal) => {\n"
+          ]
+        },
+        {
+          "line": 478,
+          "before": [
+            "        });\n"
+          ],
+          "after": [
+            "        }));\n"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "vscode-languageclient",
+      "file": "lib/common/client.d.ts",
+      "originalSha256": "e075f80c58c0bd28fcde71fab65fa9ab819632af4c91ca9f7ee2265c9877cc3b",
+      "correctedSha256": "c0fab43722a3a95aacf0c0cd848160bfda38d5ea15ef4fc4d5393bd66f7537e6",
+      "edits": [
+        {
+          "line": 390,
+          "before": [
+            "    protected abstract createMessageTransports(encoding: string): Promise<MessageTransports>;\n"
+          ],
+          "after": [
+            "    protected abstract createMessageTransports(encoding: string, token?: CancellationToken): Promise<MessageTransports>;\n"
+          ]
+        }
+      ]
+    },
+    {
+      "package": "vscode-languageclient",
+      "file": "lib/node/main.d.ts",
+      "originalSha256": "a7ea0aa51cc02eb74815c4d016748e9c3026223bfefb1b963de07492171bcc45",
+      "correctedSha256": "3b8c6e698bc49ceaacb3dc34523309f8c0003bb0aa57b97808a8c28bbf494e0a",
+      "edits": [
+        {
+          "line": 7,
+          "before": [
+            "import { InitializeParams } from 'vscode-languageserver-protocol/node';\n"
+          ],
+          "after": [
+            "import { InitializeParams, CancellationToken } from 'vscode-languageserver-protocol/node';\n"
+          ]
+        },
+        {
+          "line": 88,
+          "before": [
+            "    protected createMessageTransports(encoding: string): Promise<MessageTransports>;\n"
+          ],
+          "after": [
+            "    protected createMessageTransports(encoding: string, token?: CancellationToken): Promise<MessageTransports>;\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -170,6 +170,368 @@ fn format_request(server: &mut LanguageServer, id: i32, uri: &str) -> Response {
     )
 }
 
+fn with_initialized_connection(
+    check: impl FnOnce(lsp_server::Connection, Receiver<Result<(), daml::lsp::ServerError>>),
+) {
+    let (server, client) = lsp_server::Connection::memory();
+    let (done, completion) = mpsc::sync_channel(1);
+    thread::scope(|threads| {
+        threads.spawn(move || {
+            let _ = done.send(daml::lsp::serve(server));
+        });
+        client
+            .sender
+            .send(
+                Request::new(
+                    1.into(),
+                    "initialize".to_owned(),
+                    json!({"processId": null, "capabilities": {}}),
+                )
+                .into(),
+            )
+            .unwrap();
+        match client.receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap() {
+            Message::Response(response) => {
+                assert_eq!(response.id, RequestId::from(1));
+                response.response_result.unwrap();
+            }
+            message => panic!("unexpected initialization message: {message:?}"),
+        }
+        client
+            .sender
+            .send(Notification::new("initialized".to_owned(), json!({})).into())
+            .unwrap();
+        check(client, completion);
+    });
+}
+
+#[test]
+fn requests_after_shutdown_are_invalid_without_method_parsing_and_exit_stays_clean() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    let uri = "untitled:terminal-requests";
+    open(&mut server, uri, 1, "{ok:1}");
+    diagnostics(&server, uri, 1, 0);
+    assert_eq!(
+        server
+            .request(2, "shutdown", Value::Null)
+            .response_result
+            .unwrap(),
+        Value::Null
+    );
+
+    // Distinct dispatch boundaries: valid language/context work, malformed
+    // method parameters, an unknown method, and repeated lifecycle requests.
+    for (id, method, params) in [
+        (
+            3,
+            "textDocument/semanticTokens/full",
+            json!({"textDocument": {"uri": uri}}),
+        ),
+        (
+            4,
+            "textDocument/formatting",
+            json!({"not": "formatting parameters"}),
+        ),
+        (
+            5,
+            "workspace/executeCommand",
+            json!({"command": "daml.setContext", "arguments": [{"uri": uri, "kind": "syntax"}]}),
+        ),
+        (6, "workspace/unknown", Value::Null),
+        (7, "shutdown", json!(["not null"])),
+        (8, "initialize", json!({"capabilities": "invalid"})),
+    ] {
+        let response = server.request(id, method, params);
+        assert_eq!(response.id, RequestId::from(id));
+        assert_eq!(
+            response.response_result.unwrap_err().code,
+            -32600,
+            "{method} must be rejected before its ordinary dispatch or parameter parser"
+        );
+    }
+
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+    assert!(
+        server.stdin.is_some(),
+        "exit must not require client stdin EOF"
+    );
+    server.reader.take().unwrap().join().unwrap();
+    assert!(
+        server.incoming.try_iter().next().is_none(),
+        "terminal requests must not produce additional publications"
+    );
+}
+
+#[test]
+fn post_shutdown_notifications_and_unsolicited_responses_emit_no_publications() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    let uri = "untitled:terminal-notifications";
+    open(&mut server, uri, 1, "{ok:1}");
+    diagnostics(&server, uri, 1, 0);
+    server
+        .request(
+            2,
+            "workspace/executeCommand",
+            json!({"command": "daml.setContext", "arguments": [{"uri": uri, "kind": "syntax"}]}),
+        )
+        .response_result
+        .unwrap();
+    diagnostics(&server, uri, 1, 0);
+    match server.receive() {
+        Message::Notification(notification) => {
+            assert_eq!(notification.method, "daml/dependencies");
+            assert_eq!(notification.params["uri"], uri);
+            assert_eq!(notification.params["files"], json!([]));
+        }
+        message => panic!("expected initial dependency publication, got {message:?}"),
+    }
+    assert_eq!(
+        server
+            .request(3, "shutdown", Value::Null)
+            .response_result
+            .unwrap(),
+        Value::Null
+    );
+
+    server.notify(
+        "textDocument/didChange",
+        json!({"textDocument": {"uri": uri, "version": 2}, "contentChanges": [{"text": "?"}]}),
+    );
+    server.notify(
+        "textDocument/didClose",
+        json!({"textDocument": {"uri": uri}}),
+    );
+    open(&mut server, "untitled:terminal-reopen", 1, "?");
+    server.notify(
+        "workspace/didChangeWatchedFiles",
+        json!({"changes": [{"uri": "file:///terminal-watched.daml", "type": 2}]}),
+    );
+    server.notify("$/cancelRequest", json!({"id": 2}));
+    server.notify("initialized", json!({}));
+    server.send(Response::new_ok(99.into(), json!({"unsolicited": true})).into());
+
+    // This serial barrier makes any diagnostics, dependencies or spurious
+    // notification replies observable before the correlated terminal error.
+    assert_eq!(
+        server
+            .request(4, "textDocument/formatting", json!({}))
+            .response_result
+            .unwrap_err()
+            .code,
+        -32600
+    );
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+    server.reader.take().unwrap().join().unwrap();
+    assert!(
+        server.incoming.try_iter().next().is_none(),
+        "ignored terminal messages must not publish after the barrier"
+    );
+}
+
+#[test]
+fn work_submitted_before_shutdown_finishes_before_the_null_acknowledgment() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    let uri = "untitled:work-before-shutdown";
+    open(&mut server, uri, 1, "{ok:1}");
+    diagnostics(&server, uri, 1, 0);
+    server.send(
+        Request::new(
+            2.into(),
+            "textDocument/formatting".to_owned(),
+            json!({"textDocument": {"uri": uri}, "options": {"tabSize": 2, "insertSpaces": true}}),
+        )
+        .into(),
+    );
+    server.send(Request::new(3.into(), "shutdown".to_owned(), Value::Null).into());
+    match server.receive() {
+        Message::Response(response) => {
+            assert_eq!(response.id, RequestId::from(2));
+            assert_eq!(
+                response.response_result.unwrap()[0]["newText"],
+                "{ ok: 1 }\n"
+            );
+        }
+        message => panic!("pre-shutdown formatting must complete first: {message:?}"),
+    }
+    match server.receive() {
+        Message::Response(response) => {
+            assert_eq!(response.id, RequestId::from(3));
+            assert_eq!(response.response_result.unwrap(), Value::Null);
+        }
+        message => panic!("expected shutdown acknowledgment: {message:?}"),
+    }
+    server.notify("exit", json!({}));
+    assert!(wait_for_exit(&mut server.child).success());
+}
+
+#[test]
+fn premature_exit_fails_without_waiting_for_client_stdin_eof() {
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    server.notify("exit", json!({"private": "terminal-payload-sentinel"}));
+    assert!(!wait_for_exit(&mut server.child).success());
+    assert!(server.stdin.is_some());
+    with_initialized_connection(|client, completion| {
+        client
+            .sender
+            .send(
+                Notification::new(
+                    "exit".to_owned(),
+                    json!({"private": "terminal-payload-sentinel"}),
+                )
+                .into(),
+            )
+            .unwrap();
+        let error = completion
+            .recv_timeout(RECEIVE_TIMEOUT)
+            .unwrap()
+            .expect_err("exit before shutdown must fail");
+        assert!(!error.to_string().contains("terminal-payload-sentinel"));
+    });
+}
+
+#[test]
+fn malformed_transport_fails_without_waiting_for_client_stdin_eof() {
+    use std::io::Write;
+
+    let mut server = LanguageServer::start();
+    initialize(&mut server, None, "utf-16");
+    // A complete, invalid JSON frame leaves stdin open, unlike an EOF fixture.
+    let stdin = server.stdin.as_mut().unwrap();
+    stdin.write_all(b"Content-Length: 1\r\n\r\n{").unwrap();
+    stdin.flush().unwrap();
+    assert!(!wait_for_exit(&mut server.child).success());
+    assert!(server.stdin.is_some());
+}
+
+#[test]
+fn failed_shutdown_acknowledgment_is_not_hidden_by_a_queued_exit() {
+    with_initialized_connection(|client, completion| {
+        let lsp_server::Connection { sender, receiver } = client;
+        // Keep input connected and queue a legal exit, but make the shutdown
+        // acknowledgment impossible. Merely observing exit is not success.
+        drop(receiver);
+        sender
+            .send(Request::new(2.into(), "shutdown".to_owned(), Value::Null).into())
+            .unwrap();
+        let _ = sender.send(Notification::new("exit".to_owned(), json!({})).into());
+        let error = completion
+            .recv_timeout(RECEIVE_TIMEOUT)
+            .expect("failed acknowledgment must terminate promptly")
+            .expect_err("failed shutdown response must remain a transport failure");
+        assert!(std::error::Error::source(&error).is_some());
+    });
+}
+
+#[test]
+fn disconnected_terminal_input_is_failure_not_clean_shutdown() {
+    with_initialized_connection(|client, completion| {
+        client
+            .sender
+            .send(Request::new(2.into(), "shutdown".to_owned(), Value::Null).into())
+            .unwrap();
+        match client.receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap() {
+            Message::Response(response) => {
+                assert_eq!(response.id, RequestId::from(2));
+                assert_eq!(response.response_result.unwrap(), Value::Null);
+            }
+            message => panic!("expected shutdown acknowledgment: {message:?}"),
+        }
+        drop(client);
+        let error = completion
+            .recv_timeout(RECEIVE_TIMEOUT)
+            .expect("disconnected terminal input must not hang")
+            .expect_err("EOF cannot substitute for exit");
+        assert!(std::error::Error::source(&error).is_some());
+    });
+}
+
+#[test]
+fn terminal_traffic_cannot_reset_or_evade_the_absolute_thirty_second_deadline() {
+    with_initialized_connection(|client, completion| {
+        let shutdown_sent = Instant::now();
+        client
+            .sender
+            .send(Request::new(2.into(), "shutdown".to_owned(), Value::Null).into())
+            .unwrap();
+        match client.receiver.recv_timeout(RECEIVE_TIMEOUT).unwrap() {
+            Message::Response(response) => {
+                assert_eq!(response.id, RequestId::from(2));
+                assert_eq!(response.response_result.unwrap(), Value::Null);
+            }
+            message => panic!("expected shutdown acknowledgment: {message:?}"),
+        }
+
+        // The protocol policy is exactly 30 seconds, not a per-message timeout.
+        // Five more seconds belong only to the test-runner scheduling watchdog:
+        // they distinguish an absolute deadline from a reset/evadable timeout,
+        // without asserting sub-millisecond CI scheduling or adding a clock API.
+        // Traffic never stops to give a reset timeout a quiet expiration window.
+        // This thread is the producer, and waits for each response before sending
+        // again: at most one fixed-size request/response can be outstanding.
+        let budget = Duration::from_secs(30);
+        let watchdog = shutdown_sent + budget + Duration::from_secs(5);
+        let mut id = 3;
+        let result = loop {
+            match completion.try_recv() {
+                Ok(result) => break result,
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => panic!("server result was lost"),
+            }
+            let remaining = watchdog
+                .checked_duration_since(Instant::now())
+                .expect("continuous traffic extended shutdown past the absolute deadline watchdog");
+            if client
+                .sender
+                .send(
+                    Request::new(id.into(), "workspace/deadlineProbe".to_owned(), Value::Null)
+                        .into(),
+                )
+                .is_err()
+            {
+                break completion.recv_timeout(remaining).unwrap();
+            }
+            match client.receiver.recv_timeout(remaining) {
+                Ok(Message::Response(response)) => {
+                    assert_eq!(response.id, RequestId::from(id));
+                    assert_eq!(response.response_result.unwrap_err().code, -32600);
+                }
+                Ok(message) => panic!("unexpected terminal publication: {message:?}"),
+                Err(_) => {
+                    break completion
+                        .recv_timeout(watchdog.saturating_duration_since(Instant::now()))
+                        .expect("shutdown must fail while traffic is still offered");
+                }
+            }
+            id += 1;
+            match completion.recv_timeout(
+                Duration::from_millis(100).min(watchdog.saturating_duration_since(Instant::now())),
+            ) {
+                Ok(result) => break result,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => panic!("server result was lost"),
+            }
+        };
+        result.expect_err("missing exit must never be a clean shutdown");
+        assert!(
+            shutdown_sent.elapsed() >= budget,
+            "intervening traffic must not cause premature protocol failure"
+        );
+        assert!(
+            id > 3,
+            "traffic must continue beyond the first terminal message"
+        );
+        // On assertion failure the client drops before the scoped server thread
+        // is joined, so the watchdog cannot leave an input producer or server
+        // thread blocked waiting for this test's still-open connection.
+    });
+}
+
 #[test]
 fn stdio_lifecycle_diagnostics_formatting_and_document_isolation() {
     let mut server = LanguageServer::start();

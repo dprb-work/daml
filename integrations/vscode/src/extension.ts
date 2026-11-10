@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LanguageClient, LanguageClientOptions, ServerOptions, State } from 'vscode-languageclient/node';
+import { CloseAction, ErrorHandler, LanguageClient, State } from 'vscode-languageclient/node';
+import { SessionLanguageClient } from './session-client';
 
 const LANGUAGE_ID = 'definitively-asserted-daml';
 const SERVER_SETTING = 'serverPath';
@@ -22,10 +23,29 @@ type PendingContext = {
 };
 type SharedWatcher = { watcher: vscode.FileSystemWatcher; documents: Set<string> };
 
-let client: LanguageClient | undefined;
-let clientStateSubscription: vscode.Disposable | undefined;
-let session: DependencySession | undefined;
-let lifecycle = Promise.resolve();
+type Configuration = { executable: string; errorHandler?: ErrorHandler };
+type RetirementReason =
+  | { kind: 'configuration' | 'deactivation' }
+  | { kind: 'crash'; restart: boolean }
+  | { kind: 'failure'; error: unknown };
+type RetirementOutcome = { ok: true } | { ok: false; error: unknown };
+type SessionPhase =
+  | { kind: 'starting'; deadline: NodeJS.Timeout }
+  | { kind: 'active' }
+  | { kind: 'retiring'; reason: RetirementReason; outcome: Promise<RetirementOutcome> }
+  | { kind: 'failed'; error: unknown; cleanupKnown: true }
+  | { kind: 'failed'; error: unknown; cleanupKnown: false; cleanupError: unknown };
+type OwnedSession = {
+  configuration: Configuration;
+  transport: SessionLanguageClient;
+  dependencies?: DependencySession;
+  startup: Promise<void>;
+  phase: SessionPhase;
+};
+
+let currentSession: OwnedSession | undefined;
+let desired: Configuration | undefined;
+let reconciliation: Promise<void> | undefined;
 let disposed = false;
 
 function record(value: unknown, label: string): Record<string, unknown> {
@@ -176,8 +196,10 @@ class DependencySession implements vscode.Disposable {
   private readonly notification: vscode.Disposable;
   private lastGeneration = 0;
   private retired = false;
+  private contextOrder = Promise.resolve();
+  private readonly contextCalls = new Set<(error: Error) => void>();
 
-  constructor(private readonly transport: LanguageClient) {
+  constructor(private readonly transport: LanguageClient, private readonly isCurrent: () => boolean) {
     this.notification = transport.onNotification('daml/dependencies', (value: unknown) => {
       if (!this.current()) return;
       try {
@@ -190,11 +212,26 @@ class DependencySession implements vscode.Disposable {
   }
 
   private current(): boolean {
-    return !this.retired && !disposed && vscode.workspace.isTrusted
-      && session === this && client === this.transport && this.transport.state === State.Running;
+    return !this.retired && this.isCurrent() && this.transport.state === State.Running;
   }
 
-  async setContext(document: vscode.TextDocument, wire: DocumentContext): Promise<{ generation: number }> {
+  setContext(document: vscode.TextDocument, wire: DocumentContext): Promise<{ generation: number }> {
+    if (!this.current()) return Promise.reject(new Error('The DAML language server session is inactive.'));
+    const operation = this.contextOrder.then(() => this.applyContext(document, wire));
+    this.contextOrder = operation.then(() => undefined, () => undefined);
+    return new Promise((resolve, reject) => {
+      this.contextCalls.add(reject);
+      operation.then(value => {
+        this.contextCalls.delete(reject);
+        resolve(value);
+      }, error => {
+        this.contextCalls.delete(reject);
+        reject(error);
+      });
+    });
+  }
+
+  private async applyContext(document: vscode.TextDocument, wire: DocumentContext): Promise<{ generation: number }> {
     if (!this.current() || !liveDocument(document)) throw new Error('The DAML document or language server is no longer active.');
     const key = document.uri.toString();
     const pending: PendingContext = { document };
@@ -342,6 +379,9 @@ class DependencySession implements vscode.Disposable {
 
   dispose(): void {
     this.retired = true;
+    const error = new Error('The DAML language server session retired before context selection completed.');
+    for (const reject of this.contextCalls) reject(error);
+    this.contextCalls.clear();
     this.notification.dispose();
     this.pending.clear();
     this.selections.clear();
@@ -360,74 +400,180 @@ function serverPath(): string {
   return configured || 'daml-lsp';
 }
 
-function enqueue<T>(action: () => Promise<T>): Promise<T> {
-  const result = lifecycle.then(action, action);
-  lifecycle = result.then(() => undefined, () => undefined);
-  return result;
+function ownsAdmission(owner: OwnedSession): boolean {
+  return currentSession === owner && desired === owner.configuration && !disposed
+    && vscode.workspace.isTrusted && (owner.phase.kind === 'starting' || owner.phase.kind === 'active');
 }
 
-function clearSession(): void {
-  session?.dispose();
-  session = undefined;
-}
-
-async function stopClient(): Promise<void> {
-  const previous = client;
-  client = undefined;
-  clearSession();
-  clientStateSubscription?.dispose();
-  clientStateSubscription = undefined;
-  if (previous) await previous.dispose();
-}
-
-async function startClient(): Promise<void> {
-  if (disposed || !vscode.workspace.isTrusted || client) return;
-  const executable = serverPath();
-  const serverOptions: ServerOptions = {
-    command: executable, args: [], options: { shell: false }
-  };
-  const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: 'file', language: LANGUAGE_ID }, { scheme: 'untitled', language: LANGUAGE_ID }]
-  };
-  const next = new LanguageClient('definitively-asserted-daml', 'Definitively Asserted DAML', serverOptions, clientOptions);
-  client = next;
-  clientStateSubscription = next.onDidChangeState(event => {
-    if (client !== next) return;
-    clearSession();
-    if (!disposed && vscode.workspace.isTrusted && event.newState === State.Running) {
-      session = new DependencySession(next);
-    }
-  });
+function retireSession(owner: OwnedSession, reason: RetirementReason, stopping?: Promise<void>): void {
+  if (owner.phase.kind === 'retiring' || owner.phase.kind === 'failed') return;
+  const deadline = owner.phase.kind === 'starting' ? owner.phase.deadline : undefined;
+  // Publish ownership before any fallible cleanup or re-entrant stop callback.
+  let finish!: (outcome: RetirementOutcome) => void;
+  const outcome = new Promise<RetirementOutcome>(resolve => { finish = resolve; });
+  owner.phase = { kind: 'retiring', reason, outcome };
+  clearTimeout(deadline);
+  const failures: unknown[] = [];
   try {
-    await next.start();
+    owner.transport.retire();
+    owner.dependencies?.dispose();
+    owner.dependencies = undefined;
   } catch (error) {
-    if (client === next) {
-      client = undefined;
-      clearSession();
-      clientStateSubscription?.dispose();
-      clientStateSubscription = undefined;
+    // Keep the dependency owner reachable if any of its disposal failed.
+    failures.push(error);
+  }
+  const complete = (transportOutcome: RetirementOutcome): void => {
+    if (!transportOutcome.ok) failures.push(transportOutcome.error);
+    finish(failures.length === 0 ? { ok: true } : {
+      ok: false,
+      error: failures.length === 1 ? failures[0] : new AggregateError(failures, 'DAML session cleanup failed.')
+    });
+  };
+  try {
+    (stopping ?? owner.transport.dispose()).then(
+      () => complete({ ok: true }), error => complete({ ok: false, error })
+    );
+  } catch (error) {
+    complete({ ok: false, error });
+  }
+}
+
+function updateDesired(): Promise<void> {
+  if (disposed) return reconcile();
+  const executable = serverPath();
+  if (desired?.executable !== executable) desired = { executable };
+  if (currentSession && currentSession.configuration !== desired) {
+    retireSession(currentSession, { kind: 'configuration' });
+  }
+  return reconcile();
+}
+
+function reconcile(): Promise<void> {
+  if (!reconciliation) {
+    reconciliation = reconcileSessions().finally(() => { reconciliation = undefined; });
+  }
+  return reconciliation;
+}
+
+async function reconcileSessions(): Promise<void> {
+  let startupFailure: { error: unknown } | undefined;
+  for (;;) {
+    const owner = currentSession;
+    if (owner) {
+      if (owner.phase.kind === 'starting') {
+        try {
+          await owner.startup;
+        } catch (error) {
+          if (owner.phase.kind === 'starting') {
+            retireSession(owner, { kind: 'failure', error });
+            const detail = error instanceof Error ? error.message : String(error);
+            const executable = owner.configuration.executable;
+            const message = /enoent|not found|cannot find/i.test(detail)
+              ? `Cannot start DAML language server: executable “${executable}” was not found. Install daml-lsp from https://github.com/dprb-work/daml/releases, or set definitivelyAssertedDaml.serverPath to its absolute path in user settings.`
+              : `Cannot start DAML language server (${executable}): ${detail}`;
+            void vscode.window.showErrorMessage(message);
+          }
+        }
+        if (owner.phase.kind === 'starting') {
+          if (!ownsAdmission(owner)) {
+            retireSession(owner, { kind: disposed ? 'deactivation' : 'configuration' });
+          } else {
+            clearTimeout(owner.phase.deadline);
+            owner.phase = { kind: 'active' };
+            owner.dependencies = new DependencySession(owner.transport, () => ownsAdmission(owner));
+          }
+        }
+        continue;
+      }
+      if (owner.phase.kind === 'retiring') {
+        const { reason, outcome } = owner.phase;
+        const result = await outcome;
+        if (!result.ok) {
+          const error = reason.kind === 'failure' ? reason.error : result.error;
+          owner.phase = { kind: 'failed', error, cleanupKnown: false, cleanupError: result.error };
+          if (reason.kind === 'failure') reportFailure(result.error);
+          throw error;
+        }
+        if (reason.kind === 'failure') {
+          owner.phase = { kind: 'failed', error: reason.error, cleanupKnown: true };
+          startupFailure ??= { error: reason.error };
+          continue;
+        }
+        if (reason.kind === 'crash' && !reason.restart) {
+          owner.phase = { kind: 'failed', error: new Error('The DAML language server stopped; automatic restart is not permitted.'), cleanupKnown: true };
+          continue;
+        }
+        currentSession = undefined;
+        continue;
+      }
+      if (owner.phase.kind === 'failed') {
+        if (!owner.phase.cleanupKnown) throw owner.phase.error;
+        if (disposed || desired !== owner.configuration) {
+          currentSession = undefined;
+          continue;
+        }
+        if (startupFailure) throw startupFailure.error;
+        return;
+      }
+      if (!ownsAdmission(owner)) {
+        retireSession(owner, { kind: disposed ? 'deactivation' : 'configuration' });
+        continue;
+      }
+      if (startupFailure) throw startupFailure.error;
+      return;
     }
-    const detail = error instanceof Error ? error.message : String(error);
-    const missing = /enoent|not found|cannot find/i.test(detail);
-    const message = missing
-      ? `Cannot start DAML language server: executable “${executable}” was not found. Install daml-lsp from https://github.com/dprb-work/daml/releases, or set definitivelyAssertedDaml.serverPath to its absolute path in user settings.`
-      : `Cannot start DAML language server (${executable}): ${detail}`;
-    void vscode.window.showErrorMessage(message);
-    throw error;
+    if (disposed || !vscode.workspace.isTrusted || !desired) {
+      if (startupFailure) throw startupFailure.error;
+      return;
+    }
+    const configuration = desired;
+    let nextOwner: OwnedSession;
+    const transport = new SessionLanguageClient(
+      'definitively-asserted-daml', 'Definitively Asserted DAML',
+      { command: configuration.executable, args: [], options: { shell: false } },
+      { documentSelector: [{ scheme: 'file', language: LANGUAGE_ID }, { scheme: 'untitled', language: LANGUAGE_ID }] },
+      {
+        isCurrent: () => ownsAdmission(nextOwner),
+        errorHandler: configuration.errorHandler,
+        onClosed: decision => {
+          if (currentSession !== nextOwner || nextOwner.phase.kind === 'failed' || nextOwner.phase.kind === 'retiring') return;
+          retireSession(nextOwner, { kind: 'crash', restart: decision.action === CloseAction.Restart });
+          void reconcile().catch(reportFailure);
+        },
+        onStop: stopping => {
+          if (currentSession !== nextOwner || nextOwner.phase.kind !== 'active') return;
+          retireSession(nextOwner, { kind: 'crash', restart: false }, stopping);
+          void reconcile().catch(reportFailure);
+        }
+      }
+    );
+    configuration.errorHandler = transport.restartPolicy;
+    const deadline = setTimeout(() => {
+      if (currentSession === nextOwner && nextOwner.phase.kind === 'starting') {
+        retireSession(nextOwner, { kind: 'failure', error: new Error('DAML language server startup timed out after the 30-second deadline.') });
+      }
+    }, 30_000);
+    nextOwner = {
+      configuration, transport, phase: { kind: 'starting', deadline },
+      startup: Promise.resolve().then(() => transport.start())
+    };
+    currentSession = nextOwner;
   }
 }
 
 async function selectContext(kind: ContextKind, args: unknown): Promise<{ generation: number } | undefined> {
   try {
     if (disposed || !vscode.workspace.isTrusted) throw new Error('DAML context selection requires a trusted workspace.');
+    // Capture identity before widgets or startup waits. Never replay on a replacement.
+    const owner = currentSession;
+    if (!owner || !ownsAdmission(owner)) throw new Error('The DAML language server is not active.');
     const target = args === undefined ? await chooseContext(kind) : contextArguments(kind, args);
     if (!target) return undefined; // Public selection widget was cancelled.
-    return await enqueue(async () => {
-      if (disposed || !vscode.workspace.isTrusted) throw new Error('DAML context selection requires a trusted workspace.');
-      await startClient();
-      if (!session) throw new Error('The DAML language server is not running.');
-      return session.setContext(target.document, target.wire);
-    });
+    await owner.startup;
+    if (!ownsAdmission(owner) || owner.phase.kind !== 'active' || !owner.dependencies) {
+      throw new Error('The DAML language server session changed before context selection.');
+    }
+    return await owner.dependencies.setContext(target.document, target.wire);
   } catch (error) {
     reportFailure(error);
     throw error;
@@ -435,7 +581,7 @@ async function selectContext(kind: ContextKind, args: unknown): Promise<{ genera
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  disposed = false;
+  if (disposed) throw new Error('The DAML extension has been deactivated.');
   for (const [command, kind] of [
     ['useConfiguration', 'configuration'], ['useDefinition', 'definition'], ['useSyntax', 'syntax']
   ] as const) {
@@ -443,28 +589,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       `definitivelyAssertedDaml.${command}`, (args: unknown) => selectContext(kind, args)
     ));
   }
-  context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => session?.close(document)));
+  context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(document => currentSession?.dependencies?.close(document)));
   context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
-    void enqueue(startClient).catch(reportFailure);
+    void updateDesired().catch(reportFailure);
   }));
   context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(event => {
     if (event.affectsConfiguration(`definitivelyAssertedDaml.${SERVER_SETTING}`) && vscode.workspace.isTrusted) {
-      void enqueue(async () => {
-        await stopClient();
-        await startClient();
-      }).catch(reportFailure);
+      void updateDesired().catch(reportFailure);
     }
   }));
-  context.subscriptions.push({ dispose: () => {
-    disposed = true;
-    clearSession();
-    void enqueue(stopClient).catch(reportFailure);
-  } });
-  if (vscode.workspace.isTrusted) await enqueue(startClient);
+  context.subscriptions.push({ dispose: () => { void deactivate().catch(reportFailure); } });
+  if (vscode.workspace.isTrusted) await updateDesired();
 }
 
 export async function deactivate(): Promise<void> {
   disposed = true;
-  clearSession();
-  await enqueue(stopClient);
+  if (currentSession) retireSession(currentSession, { kind: 'deactivation' });
+  await reconcile();
 }

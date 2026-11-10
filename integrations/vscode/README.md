@@ -19,9 +19,9 @@ Run this at the repository root, then set the machine's user setting below to th
 From this directory, with Node.js and npm available:
 
 ```sh
-npm ci
+npm ci --ignore-scripts
 npm run package
-code --install-extension definitively-asserted-daml-0.2.0.vsix
+code --install-extension definitively-asserted-daml-0.2.1.vsix
 ```
 
 For another VS Code-compatible editor, use its **Install from VSIX** command and select the generated file. The declared VS Code engine baseline is `^1.85.0`. This project does not publish the extension to a marketplace.
@@ -31,6 +31,19 @@ For another VS Code-compatible editor, use its **Install from VSIX** command and
 The extension uses `daml-lsp` from `PATH` by default. If it is elsewhere, set `definitivelyAssertedDaml.serverPath` to its absolute path in **user settings**. Workspace settings cannot substitute an executable. The extension launches the executable directly with no shell and no arguments.
 
 The server does not start while the workspace is untrusted. Trusting the workspace starts the client; VS Code does not support revoking trust as a workspace transition. Changing the executable setting in trusted state restarts the client. A missing executable produces an error naming the configured command and pointing to release installation options.
+
+Startup has a 30-second deadline covering executable acquisition and
+initialization. Configuration replacement or deactivation can cancel an
+unfinished startup without waiting for the server to respond. Context requests
+do not block those lifecycle transitions.
+
+Retirement closes outgoing work before shutdown. Pending editor callbacks and
+dependency events cannot send work to the old connection or migrate it to a
+replacement. Crash replacements retain the standard client's bounded restart
+policy, but every restart passes through the same session owner. A failed or
+unknown retirement is reported rather than treated as an idle client. If
+cleanup is unknown, reload the editor instead of expecting another command to
+start a replacement.
 
 ## Select authoring context
 
@@ -49,7 +62,7 @@ Automation may invoke `definitivelyAssertedDaml.useConfiguration` with `{uri, bu
 ## Package maintenance
 
 `npm run package` derives the VSIX name from the manifest version and writes
-`definitively-asserted-daml-0.2.0.vsix` plus its checksum. It stages the canonical
+`definitively-asserted-daml-0.2.1.vsix` plus its checksum. It stages the canonical
 root `LICENSE` and `SOURCES.md`, records source/dirty-state provenance in
 `BUILD.json`, and generates dependency notices from the esbuild runtime graph.
 These files are generated, ignored inputs—not maintained legal copies.
@@ -63,6 +76,20 @@ Dependencies are pinned in `package.json` and `package-lock.json`. Use
 1.85 API baseline. Packaging does not publish to a marketplace.
 
 The build stages the pinned language client's upstream `terminateProcess.sh` beside the bundled JavaScript, with executable permission. Keep that runtime asset when changing bundlers: the standard client uses it to terminate lingering server process trees on Linux/macOS after shutdown.
+
+`npm run prepare:client` applies the reviewed, exact-version lifecycle
+corrections in `patches/client-lifecycle.json`. Build and typecheck call it
+explicitly after script-disabled installation; no `postinstall` or runtime
+patching is used. Source drift fails before correction writes. Restore the
+locked graph with `npm ci --ignore-scripts` instead of editing `node_modules`.
+The [source inventory](../../SOURCES.md#editor-integration-dependencies) records
+ownership, licenses and removal conditions.
+
+The corrections make initialization failure terminal for that attempt; DAML
+does not configure the upstream initialization-retry callback or retain its
+unowned retry-dialog continuations. A deliberate new configuration can start a
+new attempt after known cleanup. This is separate from the retained bounded
+crash-restart policy.
 
 The grammar is editor presentation only. It follows the [native authoring contract](https://github.com/dprb-work/daml/blob/main/docs/native-authoring.md) and [syntax contract](https://github.com/dprb-work/daml/blob/main/docs/syntax.md); it is not a parser or semantic validator. Language behavior comes from the server.
 

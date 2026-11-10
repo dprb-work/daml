@@ -12,12 +12,12 @@ From the DAML repository root:
 ```sh
 cargo build --locked --features lsp --bin daml-lsp
 cd integrations/vscode
-npm ci
+npm ci --ignore-scripts
 npm run package
 cd ../verify
-npm ci
+npm ci --ignore-scripts
 DAML_LSP_PATH=/absolute/path/to/checkout/target/debug/daml-lsp \
-  DAML_VSIX_PATH=/absolute/path/to/definitively-asserted-daml-0.2.0.vsix \
+  DAML_VSIX_PATH=/absolute/path/to/definitively-asserted-daml-0.2.1.vsix \
   npm run test:vscode
 ```
 
@@ -26,22 +26,27 @@ test command with `DAML_VSCODE_NO_SANDBOX=1`. This existing runner option disabl
 Electron's process sandbox for the disposable test profile, not VS Code workspace
 trust. Do not use it for a normal editor session.
 
-The runner downloads pinned VS Code 1.105.1, installs the generated VSIX in
-isolated extension and user-data directories. The aggregate runs lifecycle and
-semantic suites in real Xvfb-backed Electron extension hosts. The trusted lifecycle case checks the language ID, Unicode
-diagnostics and clearing, formatting and no-op behavior, invalid-input
-non-destructiveness, and process cleanup after a client restart. It also checks
-that a hostile workspace `serverPath` sentinel remains unused. The untrusted
-case checks `workspace.isTrusted` before and after opening a DAML document and
-that its user-scoped sentinel remains unused. No mock LSP is used.
+The runner uses pinned VS Code 1.105.1 and isolated extension/user-data
+directories. The aggregate checks RPC promise settlement, real library
+startup/disposal, final writer admission, installed lifecycle and adversarial
+transitions, and semantic authoring.
+
+The trusted lifecycle case checks Unicode diagnostics, clearing, formatting,
+invalid-input non-destructiveness and non-exec-wrapper cleanup. It records
+outgoing protocol ordering independently of server tolerance and withholds a
+real context response across replacement. The untrusted case keeps its server
+sentinel unused; a hostile workspace executable setting remains unused in both.
+The installed cases use a real native server, not a mock LSP.
 
 Both the installed-host and visual runners require that exact absolute VSIX
 path. They do not choose a latest file or import a product manifest to infer
 which archive the caller intended to test.
 
-If the Electron check fails, the runner prints wrapper and test-driver events
-plus recorded process IDs before cleaning its scratch directory. The diagnostic
-does not capture or alter language-server stdio.
+On failure, the harness prints fixture protocol and lifecycle events before
+cleaning its scratch directory. Instrumented proxies capture frames and
+deliberately withhold selected responses to establish the tested interleavings.
+This capture is verification-only; the shipped client does not trace document
+payloads as part of its lifecycle control.
 
 The semantic suite checks explicit configuration/definition/syntax commands,
 incomplete field/name completion, checked hover/default provenance, real source
@@ -50,6 +55,43 @@ watch refresh after actual dependency-buffer closure. It uses repository-owned
 fixtures and an isolated profile, not mocked providers. Run just this suite with
 `npm run test:vscode:semantic`, or lifecycle only with `npm run test:vscode:lifecycle`,
 using the same absolute `DAML_LSP_PATH`.
+
+### Lifecycle boundary checks
+
+From `integrations/verify`, `npm run test:client-lifecycle` exercises the actual
+installed JSON-RPC request owner with controlled asynchronous writes.
+`npm run test:client-dependencies` runs the actual client library in a real
+Electron extension host, including pre-spawn cancellation and cleanup failures.
+`npm run test:client-writer` compiles the production writer owner and checks
+bootstrap, retirement, FIFO, local refusal and pending/failed initialization
+delivery without a fake editor API.
+
+`npm run test:vscode:adversarial` uses the same absolute native and VSIX paths.
+It checks the actual 30-second startup deadline, repeated startup replacement,
+deactivation, retained failed retirement and crash-policy history. Set
+`DAML_VSCODE_ADVERSARIAL_SCENARIO` to `startup-timeout`, `startup-replacement`,
+`startup-deactivation`, `startup-coalescing`, `retirement-failure` or
+`crash-lineage` to select one case. A missing initialization reply cannot block
+retirement, and replacement construction cannot reset the stock crash budget.
+The failed-retirement fixture redirects shutdown to an unsupported native
+method, so a genuine correlated protocol error—not a fabricated success—must
+leave cleanup failure owned and prevent replacement.
+
+These checks distinguish accepted message submission from remote response
+completion. A passing restart against a tolerant server is insufficient if
+ordinary client traffic crosses shutdown.
+
+### Pinned host diagnostic limitation
+
+The failed-retirement case can expose a VS Code 1.105.1 output-channel factory
+warning about adding resources to an already-disposed store. An isolated probe
+reproduced the same warning using only `createOutputChannel`, `appendLine` and
+`dispose`, without loading DAML. The host's
+[asynchronous channel registration](https://github.com/microsoft/vscode/blob/1.105.1/src/vs/workbench/api/common/extHostOutput.ts)
+adds resources after the public channel can already have been disposed.
+This is a host limitation, not proof of a new LSP transition failure or zero
+host resource leaks. Do not suppress it or add scheduling delays to hide it;
+changing the pinned host requires a separate compatibility decision.
 
 ### Watcher readiness and tracing
 
@@ -92,6 +134,6 @@ suite for integration sources, language-server protocol sources, and shared
 build dependencies; draft pull requests skip it. `.github/workflows/editors.yml`
 remains a manual entrypoint. The heavy workflow installs both npm lockfiles with
 scripts disabled, audits dependencies, typechecks and packages the extension,
-builds `daml-lsp` with the locked Rust dependency graph, then runs both installed
-VSIX host suites in Xvfb-backed Electron and retains the VSIX artifact for 14 days. See the
+builds `daml-lsp` with the locked Rust dependency graph, then runs the aggregate
+dependency/writer/installed-host selection and retains the VSIX artifact for 14 days. See the
 [CI path map](../../docs/development/ci.md) for all selected boundaries.

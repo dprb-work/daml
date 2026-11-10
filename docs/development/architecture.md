@@ -20,6 +20,13 @@ DAML's implementation is organized around explicit owners. Extend the existing o
 - `bindings/browser/src` owns JavaScript shape/UTF-16 admission, lossless transport, JavaScript errors, and owned snapshot lifecycle, not language semantics. Input and resolved traversals remain distinct to avoid an intermediate Rust tree and preserve their different provenance requirements.
 - `scripts/cargo-notices.py` owns the Cargo notice-tool pin, license-policy translation, template invocation, and temporary-config lifecycle for native and browser packaging. Each packager owns its build, archive, and provenance format.
 - The optional `src/lsp` adapter owns in-memory URI/version state and protocol coordinate conversion. It reuses the checked parser and formatter; protocol dependencies and the stdio binary are activated only by the `lsp` feature. Explicit semantic contexts own local bundle analysis. Semantic-token classification uses only the current source and its data/native grammar role, without filesystem discovery or theme/color policy.
+- `integrations/vscode/src/extension.ts` owns desired configuration and session transitions. Business responses do not occupy lifecycle serialization. `session-writer.ts` alone owns final outgoing admission; `session-client.ts` preserves library process support and routes restart effects through the session owner. Exact-version dependency corrections own promise settlement and captured startup/stop resources, not a second admission gate.
+
+Retirement closes admission before fallible cleanup and retains ownership until
+the outcome is known. It is not represented by clearing a client reference.
+Server `serve` separately owns protocol terminal admission and its fixed
+deadline; rejecting a violating client does not prove that client ordering is
+correct. Checks must establish prevention and defensive handling independently.
 
 Structural recursion makes progress through instance children. Same-instance
 cycles fail composition; runtime work admission distinguishes error, validity

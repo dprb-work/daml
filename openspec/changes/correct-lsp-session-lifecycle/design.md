@@ -1,6 +1,6 @@
 ## Context
 
-See [proposal.md](proposal.md) for scope and its pending owner decision. Baseline: `a9686511027623c1c1284cd99a8e4ca881809c80`. The relevant lifecycle code is unchanged from the investigated v0.2.1 path.
+See [proposal.md](proposal.md) for accepted scope and the owner's implementation authorization. Baseline: `a9686511027623c1c1284cd99a8e4ca881809c80`. That baseline's relevant lifecycle code matched the investigated v0.2.1 path.
 
 The original CI reached restart, reported a shutdown-handshake failure, and timed out awaiting replacement diagnostics. A narrow real-host wire probe using the original v0.2.1 Linux executable and VSIX identified a late semantic-token request after shutdown acknowledgment. The original CI did not capture its intervening message; do not claim that its exact message is known.
 
@@ -99,12 +99,21 @@ Freeze checks before production changes. Deterministic barriers must suspend sen
 
 Check request tracking while writes are pending, rejection without `unhandledRejection`, disposal with unanswered requests, a context response withheld across retirement, obsolete startup, rapid configuration changes, deactivation, failed stop, late watcher/trace/cancellation/reply traffic, and non-exec wrappers. Preserve context generation ordering and trust refusal. Separately exercise protocol violations, absolute deadline expiry under traffic, open-stdin clean exit and broken transport failure. Finish with the installed VSIX/native binary scenario that verifies replacement diagnostics after invalid formatting.
 
-No redesigned runtime has been built. The wire captures prove the existing race and the standalone rejection probe rejects a writer-only design; they do not prove this proposal implemented.
+The original wire captures establish the old race and the standalone rejection probe rejects a writer-only design. Implementation evidence belongs to the task completion and exact-revision review; design acceptance alone establishes neither working behavior nor release readiness.
 
 ## Risks / Trade-offs
 
 The final transport seam is supported, but patched dependency lifecycle internals become an explicit maintenance responsibility. Bootstrap cancellation and terminal error classification need focused runtime proof before the client change can be accepted. A new upstream release removes a patch only after the same behavioral checks pass, not by version number alone. Public minimum-editor support and process behavior must not change incidentally.
 
-## Decision still required
+The new failed-retirement fixture exposed an output-channel factory warning in
+pinned VS Code 1.105.1. A separate public-API-only probe reproduced the same four
+disposed-store warnings without loading DAML: immediate channel append/dispose
+races the host's asynchronous registration. The host source
+[`extHostOutput.ts`](https://github.com/microsoft/vscode/blob/1.105.1/src/vs/workbench/api/common/extHostOutput.ts)
+establishes that separate owner. This does not establish zero host resource
+leaks. Host upgrade/repair is outside this change; no warning suppression,
+test delay or private host patch is used as a substitute.
 
-The owner must accept the integrated scope, including versioned dependency corrections and the proposed 30-second startup deadline. Crash-restart decisions retain the stock policy, but all restart effects move under session ownership. The startup-retirement capability extends existing dependency lifecycle owners rather than introducing a new process manager. No production code or release action is authorized by this draft.
+## Accepted scope
+
+The owner accepted the integrated scope, versioned dependency corrections and 30-second startup deadline as recorded in [proposal.md](proposal.md). Crash-restart decisions retain the stock policy, but all restart effects move under session ownership. Startup retirement extends existing dependency lifecycle owners rather than introducing a new process manager. Result acceptance, merge and release remain separate decisions.

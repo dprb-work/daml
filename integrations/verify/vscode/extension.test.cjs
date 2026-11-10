@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
+const path = require('node:path');
 const vscode = require('vscode');
 
 const extensionId = 'dprb-work.definitively-asserted-daml';
@@ -62,6 +63,29 @@ async function processId(path) {
 }
 async function recordLifecycleStage(stage) {
   await fs.appendFile(process.env.DAML_LSP_STAGE_FILE, `${JSON.stringify({ event: 'test-stage', stage })}\n`);
+}
+
+async function waitForWireEvent(eventName, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lines = (await fs.readFile(process.env.DAML_LSP_STATUS_FILE, 'utf8')).split('\n');
+    // A concurrent append can expose an incomplete final line; complete records
+    // alone are observation barriers, never a sleep chosen to create the race.
+    const events = lines.slice(0, -1).filter(Boolean).map(line => JSON.parse(line));
+    const event = events.find(item => item.event === eventName);
+    if (event) return event;
+    if (Date.now() >= deadline) throw new Error(`No wire event: ${eventName}`);
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
+async function bounded(promise, label, timeoutMs = 10_000) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} did not settle`)), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
 
@@ -130,13 +154,20 @@ async function run() {
   const serverPid = await processId(process.env.DAML_LSP_CHILD_PID_FILE);
   assert.ok(processIsAlive(wrapperPid), 'the user-configured wrapper must remain alive after the real language server starts');
   const oldServerExit = Promise.all([waitForProcessExit(wrapperPid), waitForProcessExit(serverPid)]);
+  // The real server handles this request, but the observer withholds its result.
+  // Replacement must not hold the lifecycle queue awaiting this business reply.
+  const context = vscode.commands.executeCommand('definitivelyAssertedDaml.useSyntax', { uri: invalid.uri.toString() })
+    .then(value => ({ status: 'fulfilled', value }), reason => ({ status: 'rejected', reason }));
+  await waitForWireEvent('context-response-withheld');
   await recordLifecycleStage('restart');
   await vscode.workspace.getConfiguration('definitivelyAssertedDaml').update(
     'serverPath',
-    process.env.DAML_LSP_PATH,
+    process.env.DAML_LSP_REPLACEMENT_PATH,
     vscode.ConfigurationTarget.Global,
   );
   await oldServerExit;
+  const retiredContext = await bounded(context, 'context operation from retired session');
+  assert.equal(retiredContext.status, 'rejected', 'a missing old-session response must settle locally, not become success');
 
   const restartedFile = vscode.Uri.joinPath(workspace.uri, 'restarted.daml');
   await fs.writeFile(restartedFile.fsPath, invalidSource, 'utf8');
@@ -144,8 +175,26 @@ async function run() {
   await vscode.window.showTextDocument(restartedDocument);
   const restartedDiagnostics = await waitForDiagnostics(restartedFile, items => items.length > 0);
   assert.equal(restartedDiagnostics.length, 1, 'the configured released server must start after the wrapper is terminated');
+  const currentContext = await bounded(vscode.commands.executeCommand(
+    'definitivelyAssertedDaml.useSyntax', { uri: restartedDocument.uri.toString() },
+  ), 'replacement context command');
+  assert.ok(Number.isInteger(currentContext.generation) && currentContext.generation > 0,
+    'old context retirement must not invalidate the replacement session');
 
   await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  await recordLifecycleStage('deactivation');
+  // Invoke the extension's public deactivation export, not private session state.
+  const installed = require(path.join(extension.extensionPath, extension.packageJSON.main));
+  await bounded(installed.deactivate(), 'installed extension deactivation');
+  await vscode.workspace.getConfiguration('definitivelyAssertedDaml').update(
+    'serverPath', process.env.DAML_LSP_WRAPPER_PATH, vscode.ConfigurationTarget.Global,
+  );
+  await assert.rejects(vscode.commands.executeCommand(
+    'definitivelyAssertedDaml.useSyntax', { uri: restartedDocument.uri.toString() },
+  ), 'a command after deactivation cannot activate a new session');
+  // Drain an already-delivered configuration callback through the same public
+  // lifecycle boundary; the outer runner checks that it spawned no third peer.
+  await bounded(installed.deactivate(), 'deactivation after queued configuration');
 }
 
 async function runWithLaunchDiagnostics() {

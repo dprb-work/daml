@@ -5,7 +5,11 @@
   "description": "Isolated real-host verification for installable DAML integrations.",
   "scripts": {
     "test:grammar": "node vscode/grammar.test.cjs",
-    "test:vscode": "npm run test:vscode:lifecycle && npm run test:vscode:semantic",
+    "test:client-lifecycle": "node --test vscode/dependency-lifecycle.test.cjs",
+    "test:client-dependencies": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/dependency-run.mjs",
+    "test:client-writer": "node vscode/writer-run.mjs",
+    "test:vscode:adversarial": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/adversarial-run.mjs",
+    "test:vscode": "npm run test:client-lifecycle && npm run test:client-dependencies && npm run test:client-writer && npm run test:vscode:lifecycle && npm run test:vscode:adversarial && npm run test:vscode:semantic",
     "test:vscode:lifecycle": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/run.mjs",
     "test:vscode:semantic": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/semantic-run.mjs",
     "test:vscode:visual": "xvfb-run --auto-servernum --server-args='-screen 0 1440x1000x24' node vscode/visual.mjs"

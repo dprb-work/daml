@@ -142,10 +142,15 @@ integration.
 ## Editor integration dependencies
 
 `integrations/vscode/package-lock.json` pins the separate editor-client graph.
-The VSIX bundles `vscode-languageclient` 9.0.1 (MIT) and its used runtime
-dependencies, not a copied or modified protocol implementation. Packaging
-generates `THIRD-PARTY-NOTICES.txt` from license/notice files belonging to packages
-identified by the esbuild bundle metadata and stages the canonical DAML license.
+The VSIX bundles `vscode-languageclient` 9.0.1 and `vscode-jsonrpc` 8.2.0
+(both MIT), with their used runtime dependencies. Deliberate local lifecycle
+corrections are owned by
+[`integrations/vscode/patches/client-lifecycle.json`](integrations/vscode/patches/client-lifecycle.json).
+The manifest records exact original/corrected source hashes and correction
+payloads against the locked Microsoft packages. It does not change their licenses
+or replace their original `License.txt` notices. Packaging generates
+`THIRD-PARTY-NOTICES.txt` from license/notice files belonging to packages identified
+by the esbuild bundle metadata and stages the canonical DAML license.
 The version-derived VSIX producer also carries this inventory and `BUILD.json`
 source provenance. Its checksum accompanies the original VSIX; release collection
 does not unpack and rebuild it.
@@ -154,6 +159,18 @@ The build also copies that exact language-client package's
 retaining its Microsoft copyright/MIT notice and the standard client's Unix
 process-cleanup behavior. The dependency lock owns updates; no maintained fork
 of that helper is checked in.
+
+[`prepare-client.mjs`](integrations/vscode/scripts/prepare-client.mjs) is the
+single correction owner after `npm ci --ignore-scripts`; build and typecheck
+invoke it explicitly. It accepts only the pinned versions and exact original or
+corrected bytes. Unknown local edits or dependency drift stop preparation.
+Derived `node_modules` files are not independent maintained copies. The
+corrections cover request settlement, startup cancellation and terminal resource
+ownership in the [upstream client/protocol implementation](https://github.com/microsoft/vscode-languageserver-node).
+They leave the existing process launcher and termination helper in place.
+Retire a correction only when a compatible released dependency passes the same
+lifecycle checks, rather than relying on its version number or an upstream-main
+source change. Upgrading the editor support baseline is a separate decision.
 
 `integrations/verify/package-lock.json` pins independent development-only
 `@vscode/test-electron` 3.1.0 and TextMate 9.3.2/Oniguruma 2.0.1 verification

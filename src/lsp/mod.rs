@@ -29,6 +29,7 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
+    time::{Duration, Instant},
 };
 
 type Cause = Box<dyn Error + Send + Sync>;
@@ -80,6 +81,11 @@ impl Error for ServerError {
 /// in transport order by one owner; diagnostics carry accepted document versions.
 /// Formatting responses describe the latest processed revision. Clients must
 /// discard edits if their buffer changes after requesting formatting.
+///
+/// Accepting shutdown drops session state and permanently closes ordinary
+/// dispatch. Until exit, every request receives InvalidRequest and other messages
+/// are ignored. Terminal channel receives and sends share one 30-second deadline;
+/// this does not interrupt a transport thread blocked in an OS stdout write.
 ///
 /// # Errors
 ///
@@ -197,21 +203,16 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
         semantic_uris: HashSet::new(),
         next_generation: 0,
     };
-    loop {
+    let (shutdown_id, deadline) = loop {
         let message = connection
             .receiver
             .recv()
             .map_err(|error| ServerError::caused("LSP input ended before shutdown", error))?;
         match message {
-            Message::Request(request) => {
-                if connection
-                    .handle_shutdown(&request)
-                    .map_err(|error| ServerError::caused("LSP shutdown handshake failed", error))?
-                {
-                    return Ok(());
-                }
-                session.request(&connection, request)?;
+            Message::Request(request) if request.method == "shutdown" => {
+                break (request.id, Instant::now() + Duration::from_secs(30));
             }
+            Message::Request(request) => session.request(&connection, request)?,
             Message::Notification(notification) if notification.method == "exit" => {
                 return Err(ServerError::protocol("LSP exit received before shutdown"));
             }
@@ -219,6 +220,37 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
                 session.notification(&connection, notification)?
             }
             Message::Response(_) => {} // This server issues no requests to the client.
+        }
+    };
+    // Synchronous work before shutdown has finished; no session owner survives
+    // into the terminal phase to dispatch late messages or publish language work.
+    drop(session);
+    send_terminal(
+        &connection,
+        Response::new_ok(shutdown_id, serde_json::Value::Null).into(),
+        deadline,
+    )?;
+    loop {
+        check_shutdown_deadline(deadline)?;
+        let message = connection
+            .receiver
+            .recv_deadline(deadline)
+            .map_err(|error| ServerError::caused("LSP shutdown handshake failed", error))?;
+        // Ready traffic can succeed even with an expired channel deadline.
+        check_shutdown_deadline(deadline)?;
+        match message {
+            Message::Request(request) => send_terminal(
+                &connection,
+                Response::new_err(
+                    request.id,
+                    ErrorCode::InvalidRequest as i32,
+                    "LSP session has shut down".to_owned(),
+                )
+                .into(),
+                deadline,
+            )?,
+            Message::Notification(notification) if notification.method == "exit" => return Ok(()),
+            Message::Notification(_) | Message::Response(_) => {}
         }
     }
 }
@@ -228,6 +260,26 @@ fn send(connection: &Connection, message: Message) -> Result<(), ServerError> {
         .sender
         .send(message)
         .map_err(|error| ServerError::caused("LSP response could not be sent", error))
+}
+
+fn check_shutdown_deadline(deadline: Instant) -> Result<(), ServerError> {
+    if Instant::now() >= deadline {
+        return Err(ServerError::protocol("LSP shutdown handshake timed out"));
+    }
+    Ok(())
+}
+
+fn send_terminal(
+    connection: &Connection,
+    message: Message,
+    deadline: Instant,
+) -> Result<(), ServerError> {
+    check_shutdown_deadline(deadline)?;
+    connection
+        .sender
+        .send_deadline(message, deadline)
+        .map_err(|error| ServerError::caused("LSP shutdown response could not be sent", error))?;
+    check_shutdown_deadline(deadline)
 }
 
 struct OpenDocument {

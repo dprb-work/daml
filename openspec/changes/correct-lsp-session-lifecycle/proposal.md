@@ -29,4 +29,6 @@ The current release is immutable. This proposal neither changes v0.2.1 assets no
 
 ## Scope decision
 
-Pending. The user requested a redesign after rejecting a server-only repair: “this also is indicative of wrong controlflow. back to the drawing board”. This authorizes analysis and this proposal, not acceptance of its implementation commitments or publication.
+Accepted by the accountable user: “yes. implement. again, this shoudl make us rethink our approach here”. This accepts the integrated design, scoped dependency corrections and proposed 30-second startup deadline. It authorizes implementation and verification, not release or mutation of v0.2.1.
+
+The approach change for this implementation is concrete: establish transition ownership, admission cutoff, settlement and failure outcomes before production edits; freeze independent behavioral checks; verify client prevention separately from server tolerance. A successful assembled restart alone is not evidence of correct control flow. This updates the current delivery method, not global agent policy.

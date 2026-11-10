@@ -12,3 +12,4 @@
 /bindings/python/python/daml/*.so
 /bindings/python/python/daml/*.pyd
 /bindings/python/python/daml/_distribution/
+/.agent/

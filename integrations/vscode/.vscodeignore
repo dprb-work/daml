@@ -1,5 +1,6 @@
 src/**
 scripts/**
+patches/**
 node_modules/**
 package-lock.json
 .gitignore
