@@ -18,13 +18,18 @@ consumer needs the assertions. Completion can add defaults, so exporting the
 resolved result is different from exporting only the values originally supplied.
 See [resolution and provenance](schemas.md) and [Python numbers](python.md#exact-numbers).
 
-The Rust and browser semantic writers produce canonical DAML source from editable
-values. They do not preserve comments, original whitespace, scalar style, or
+The Rust, Python, and browser semantic writers produce canonical DAML source
+from editable values. They do not preserve comments, original whitespace, scalar style, or
 original field order. Exact number values are retained, but original numeric
 spelling is not a semantic round-trip guarantee. See [formatting versus semantic
 writing](formatting.md).
 
-For targeted edits to authored DAML, use [`daml edit`](cli.md#edit-authored-source) or the Rust source-editing API. These splice supplied values into one parsed snapshot and preserve bytes outside their declared regions. They are not whole-document semantic writing or a JSON/YAML converter. Replacing or removing a subtree owns its internal comments; adjacent comments remain.
+For targeted edits to authored DAML, use [`daml edit`](cli.md#edit-authored-source),
+the [Python editing methods](python.md#preserve-source-while-editing), or the Rust
+source-editing API. These splice supplied values into one parsed snapshot and
+preserve bytes outside their declared regions. They are not whole-document
+semantic writing or a JSON/YAML converter. Replacing or removing a subtree owns
+its internal comments; adjacent comments remain.
 
 ## Configuration conversion needs a loss policy
 

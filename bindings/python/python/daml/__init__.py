@@ -41,6 +41,9 @@ from .daml import (
     SemanticError as SemanticError,
 )
 from .daml import (
+    SourceEditError as SourceEditError,
+)
+from .daml import (
     Time as Time,
 )
 from .daml import (

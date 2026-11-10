@@ -8,6 +8,7 @@ use pyo3::{
     types::{PyBool, PyBytes, PyDict, PyInt, PyList, PyString},
 };
 mod semantic;
+mod source_edit;
 mod stage;
 mod temporal;
 
@@ -16,6 +17,7 @@ create_exception!(daml, NativeError, PyValueError);
 create_exception!(daml, SchemaError, PyValueError);
 create_exception!(daml, ResolveError, PyValueError);
 create_exception!(daml, SemanticError, PyValueError);
+create_exception!(daml, SourceEditError, PyValueError);
 
 fn kind_name<T: std::fmt::Debug>(kind: T) -> String {
     format!("{kind:?}")
@@ -107,6 +109,27 @@ fn schema_exception(py: Python<'_>, error: &core::SchemaError) -> PyErr {
 
 fn semantic_exception(py: Python<'_>, error: &core::SemanticError) -> PyErr {
     semantic::invalid(py, &kind_name(error.kind), &error.message, &error.pointer)
+}
+
+fn source_edit_exception(py: Python<'_>, error: &core::SourceEditError) -> PyErr {
+    use core::SourceEditError as E;
+
+    let (kind, path, operations) = match error {
+        E::InvalidPointer(path) => ("InvalidPointer", Some(path.as_str()), None),
+        E::PathNotFound(path) => ("PathNotFound", Some(path.as_str()), None),
+        E::InvalidTarget(path) => ("InvalidTarget", Some(path.as_str()), None),
+        E::Conflict { first, second } => ("Conflict", None, Some((*first, *second))),
+        E::LimitExceeded => ("LimitExceeded", None, None),
+        E::StaleSource => ("StaleSource", None, None),
+        E::Parse(_) => ("Parse", None, None),
+        E::Semantic(_) => ("Semantic", None, None),
+        E::Resolve(_) => ("Resolve", None, None),
+    };
+    let result = PyErr::from_type(py.get_type::<SourceEditError>(), error.to_string());
+    set_exception_attr!(py, result, "kind", kind);
+    set_exception_attr!(py, result, "path", path);
+    set_exception_attr!(py, result, "operations", operations);
+    attach_source(py, result, error.source())
 }
 
 fn resolve_exception(py: Python<'_>, error: &core::ResolveError) -> PyErr {
@@ -283,6 +306,12 @@ impl PyDocument {
         py.detach(|| core::format(&self.inner, core::FormatOptions { line_width }))
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
+
+    /// Return a new source-preserving document without mutating this snapshot.
+    #[pyo3(signature = (edits, line_width = 80))]
+    fn edit(&self, py: Python<'_>, edits: &Bound<'_, PyAny>, line_width: usize) -> PyResult<Self> {
+        source_edit::edit(py, &self.inner, edits, None, line_width).map(|inner| Self { inner })
+    }
 }
 
 #[pyclass(frozen, name = "SchemaModule", module = "daml")]
@@ -443,6 +472,26 @@ impl PySchemas {
                 meaning: None,
             })
             .map_err(|error| resolve_exception(py, &error))
+    }
+
+    /// Validate the edited source without resolving or changing the original.
+    #[pyo3(signature = (document, edits, expected = None, line_width = 80))]
+    fn edit(
+        &self,
+        py: Python<'_>,
+        document: PyRef<'_, PyDocument>,
+        edits: &Bound<'_, PyAny>,
+        expected: Option<&Bound<'_, PyAny>>,
+        line_width: usize,
+    ) -> PyResult<PyDocument> {
+        source_edit::edit(
+            py,
+            &document.inner,
+            edits,
+            Some((&self.inner, expected)),
+            line_width,
+        )
+        .map(|inner| PyDocument { inner })
     }
 
     #[pyo3(signature = (value, expected = None))]
@@ -630,6 +679,7 @@ fn daml(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("SchemaError", module.py().get_type::<SchemaError>())?;
     module.add("ResolveError", module.py().get_type::<ResolveError>())?;
     module.add("SemanticError", module.py().get_type::<SemanticError>())?;
+    module.add("SourceEditError", module.py().get_type::<SourceEditError>())?;
     module.add_function(wrap_pyfunction!(parse, module)?)?;
     module.add_function(wrap_pyfunction!(format_definition, module)?)?;
     module.add_function(wrap_pyfunction!(write, module)?)?;

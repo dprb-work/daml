@@ -156,6 +156,17 @@ class _ReplaceEdit(TypedDict):
     path: str
     value: _SemanticNode
 
+class _InsertEdit(TypedDict):
+    op: Literal["insert"]
+    path: str
+    value: _SemanticNode
+
+class _RemoveEdit(TypedDict):
+    op: Literal["remove"]
+    path: str
+
+_SourceEdit = _ReplaceEdit | _InsertEdit | _RemoveEdit
+
 # "from" is a wire key, not a Python identifier.
 _CopyEdit = TypedDict("_CopyEdit", {"op": Literal["copy"], "path": str, "from": str})
 
@@ -211,6 +222,13 @@ class SemanticError(ValueError):
     kind: str
     pointer: str
 
+class SourceEditError(ValueError):
+    """Source-core failure, with typed parser/semantic/resolver __cause__."""
+
+    kind: str
+    path: str | None
+    operations: tuple[int, int] | None
+
 class Document:
     """Parsed source and syntax-only tag assertions."""
 
@@ -230,6 +248,16 @@ class Document:
 
     def format(self, line_width: int = 80) -> str:
         """Format this syntax tree without resolving it."""
+        ...
+
+    def edit(
+        self, edits: list[_SourceEdit] | tuple[_SourceEdit, ...], line_width: int = 80
+    ) -> Document:
+        """Apply snapshot-relative edits, returning new source without mutation.
+
+        Source-core failures raise SourceEditError; malformed semantic transport
+        and cumulative binding budget failures raise SemanticError.
+        """
         ...
 
 class SchemaModule:
@@ -284,6 +312,21 @@ class Schemas:
         self, document: Document, expected: str | None = None
     ) -> ResolvedDocument:
         """Complete defaults and validate assertions and optional root."""
+        ...
+
+    def edit(
+        self,
+        document: Document,
+        edits: list[_SourceEdit] | tuple[_SourceEdit, ...],
+        expected: str | None = None,
+        line_width: int = 80,
+    ) -> Document:
+        """Edit and validate authored source without serializing default values.
+
+        The original is not initially resolved, allowing invalid input repairs.
+        Source-core failures raise SourceEditError; malformed semantic transport
+        and cumulative binding budget failures raise SemanticError.
+        """
         ...
 
     def resolve_semantic(
