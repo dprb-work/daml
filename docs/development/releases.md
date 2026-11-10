@@ -3,17 +3,22 @@
 A release is a qualified set of files, not a build performed during upload.
 The preparation workflow builds and exercises those files. A separate workflow
 promotes only the version, source revision, run and manifest digest that the
-owner approves.
+owner approves, to the separately approved publication target.
 
 The coordinated source version is **0.2.1**. It is a release candidate until
 publication completes. Existing 0.2.0 releases remain available and unchanged.
+
+The owner selected **GitHub-only publication for v0.2.1**. PyPI publication and
+account setup are deferred. The three qualified wheels still ship as GitHub
+release attachments for manual download and installation; this does not make
+`daml-config` available from PyPI.
 
 ## What ships together
 
 | Component | Payloads | Destination after approval |
 |---|---|---|
 | Formatter/LSP | Linux x64, macOS ARM64 and Windows x64 native archives | GitHub release `v0.2.1` |
-| Python | Three `daml-config` stable-ABI wheels; import remains `daml` | PyPI and the same GitHub release |
+| Python | Three `daml-config` stable-ABI wheels; import remains `daml` | The same GitHub release; also PyPI only in `github-and-pypi` mode |
 | Browser SDK | `dprb-work-daml-browser-0.2.1.tgz` | The same GitHub release; not npm |
 | VS Code | `definitively-asserted-daml-0.2.1.vsix` | The same GitHub release; not a marketplace |
 
@@ -22,6 +27,25 @@ It contains no Python sdist or published Cargo crate. The existing
 [distribution guide](distribution.md) describes platform requirements and legal
 payloads. Checksums detect corruption; the repository, qualified run and approved
 manifest establish which files the operator intends to publish.
+
+## Choose the publication target explicitly
+
+Every publication tuple command (`plan`, `preflight`, `stage-github`, `promote`)
+requires `--publication-target`. The workflow requires the matching
+`publication_target` input. There is no implicit target or fallback.
+
+- `github-only` creates the tag and GitHub release with all qualified files.
+  It makes no PyPI requests, prepares no registry wheel directory and performs
+  no registry upload. Release notes identify the attached wheels as downloads
+  for installation, not as a PyPI publication.
+- `github-and-pypi` also uploads the three unchanged wheels through the official
+  PyPA action. It requires the PyPI version to be absent before staging and
+  observes the exact public wheel hashes before publishing the GitHub draft.
+
+Both modes require the same qualified candidate, source/run/manifest binding,
+current-main checks and protected human approval. The target describes publication
+effects; it does not change `RELEASE.json` schema 2 or any producer output.
+Changing the target requires an explicit owner decision, not an automatic retry.
 
 ## Keep versions coherent
 
@@ -64,12 +88,16 @@ administrator who deliberately changes them. No claim is made about an
 administrator-bypass setting not exposed by the documented REST configuration.
 Do not weaken the required review to make a publication run proceed.
 
-## Configure PyPI Trusted Publishing
+## PyPI prerequisites for `github-and-pypi` only
 
-Before the first upload, the approved PyPI account owner must configure a
-pending publisher for the new project, or a normal publisher if it already
-exists. This pipeline does not activate that external authority during source
-preparation. Use the [official Trusted Publishing guidance](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
+Skip this section for `github-only`; no PyPI account, publisher configuration or
+authentication setup is needed for that mode.
+
+Before an explicitly authorized `github-and-pypi` upload, the approved PyPI
+account owner must configure a pending publisher for the new project, or a normal
+publisher if it already exists. Source preparation and GitHub-only publication
+do not activate that external authority. Use the
+[official Trusted Publishing guidance](https://docs.pypi.org/trusted-publishers/using-a-publisher/).
 
 | Setting | Required value |
 |---|---|
@@ -172,9 +200,11 @@ candidate. Do not silently rebuild files or refresh evidence in the publisher.
 
 ## Authorize publication
 
-The owner must approve the exact version/source/run/manifest tuple and the
-GitHub tag/release and PyPI effects. Successful preparation, a merged pull request
-or a green check alone does not supply that authorization.
+The owner must approve the exact version/source/run/manifest tuple **and** the
+publication target. For `github-only`, approval authorizes the GitHub tag, draft
+and public release, not PyPI effects. `github-and-pypi` additionally authorizes
+the registry upload. Successful preparation, a merged pull request or a green
+check alone does not supply that authorization.
 
 Publication requires that the qualified source still be the current `main`
 tip and the dispatch SHA. If main advances during preparation or approval,
@@ -186,22 +216,30 @@ After that explicit decision, the authorized automation account dispatches:
 ```sh
 gh workflow run publish-release.yml --repo dprb-work/daml --ref main \
   -f version=0.2.1 -f source_sha=SOURCE_SHA \
-  -f prepare_run_id=RUN_ID -f manifest_sha256=MANIFEST_SHA256
+  -f prepare_run_id=RUN_ID -f manifest_sha256=MANIFEST_SHA256 \
+  -f publication_target=github-only
 ```
+
+The example uses the owner-selected v0.2.1 target. Use `github-and-pypi` only
+after a separate explicit decision authorizes that target and its prerequisites.
+The run name and approval summary identify the selected target alongside the
+immutable candidate tuple. Write commands require that their explicit target
+match the workflow's `RELEASE_TARGET`; a mismatch fails before external writes.
 
 The read-only preflight checks the canonical successful main preparation,
 protected environment and exact candidate bytes. The protected job downloads
 and checks the same immutable artifact again after human approval. `dprbook`
-approves through GitHub's environment review; the triggering account cannot
-self-approve.
+approves through GitHub's environment review in **both modes**; the triggering
+account cannot self-approve. GitHub-only mode does not bypass this review.
 
 The approved job then:
 
 1. Creates and verifies the public Git tag at the approved source, then stages
    a GitHub draft with all approved files, without overwrite.
-2. Uploads only the three unchanged wheels through the official PyPA action.
-3. Observes the public PyPI version's exact wheel hashes.
-4. Makes only that newly staged GitHub draft public.
+2. In `github-and-pypi` mode only, uploads the three unchanged wheels through the
+   official PyPA action and observes the public PyPI version's exact wheel hashes.
+3. Makes only that newly staged GitHub draft public. In `github-only` mode, the
+   wheels are attached for download and installation, not published to PyPI.
 
 No source build, blanket `skip-existing` or automatic retry occurs in that job.
 The tag-first order exercises GitHub tag permissions/rulesets before irreversible
@@ -211,25 +249,35 @@ and editor marketplaces remain untouched.
 
 ## Inspect partial effects before recovery
 
-GitHub and PyPI do not share a transaction. A failed attempt may leave a tag,
-draft, assets, or some/all PyPI files. A failed run does not mean nothing happened.
+GitHub and PyPI do not share a transaction. A failed `github-only` attempt may
+leave a tag, draft or assets. A failed `github-and-pypi` attempt may also leave
+some or all PyPI files. A failed run does not mean nothing happened.
 
-Use the read-only plan route with the original approved tuple:
+Use the read-only plan route with the original approved tuple and target:
 
 ```sh
 python3 scripts/release_publish.py plan \
   --version 0.2.1 --source-sha SOURCE_SHA --prepare-run-id RUN_ID \
-  --manifest-sha256 MANIFEST_SHA256
+  --manifest-sha256 MANIFEST_SHA256 --publication-target github-only
 ```
 
-Inspect the original run, public registry metadata, GitHub tag/draft and exact
-hashes. If main has moved, retain that fact in the recovery decision; do not
+Inspect the original run, GitHub tag/draft and exact hashes. For
+`github-and-pypi`, also inspect public registry metadata; a `github-only` plan
+does not query PyPI. Keep the original target when inspecting a partial attempt.
+If main has moved, retain that fact in the recovery decision; do not
 bypass the normal current-main admission. Obtain fresh owner authorization for
 only the remaining effects. Do not rerun blindly, delete published state,
 replace a version, force-upload assets or regenerate different bytes under the
 same version.
 
-After a completed release, verify a fresh registry installation outside the
-checkout and update the user-facing availability/installation guidance from
-observed published state. Publication and recovery were not executed as part
-of preparing this delivery pipeline.
+After a completed `github-only` release, verify installation from the attached
+wheel outside the checkout. Download the wheel for the supported platform,
+check its SHA-256 sidecar and install that file with
+`python -m pip install /path/to/daml_config-0.2.1-cp312-abi3-manylinux_2_35_x86_64.whl`
+for the Linux x64 attachment; use the matching wheel on macOS ARM64 or Windows
+x64. Do not claim a registry installation is available.
+
+After a completed `github-and-pypi` release, verify a fresh registry installation
+outside the checkout. Update user-facing availability and installation guidance
+from observed published state. This guide describes the procedure; it does not
+assert that publication or recovery has completed.

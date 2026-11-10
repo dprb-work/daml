@@ -7,6 +7,7 @@ Real release bytes are checked separately by tests/release_candidate_check.py.
 
 import argparse
 import copy
+import io
 import importlib.util
 import hashlib
 import json
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stderr
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -136,6 +138,7 @@ SOURCE_SHA = "0123456789abcdef0123456789abcdef01234567"
 RUN_ID = 123456789
 WORKFLOW_ID = 7654321
 PREPARE_PATH = ".github/workflows/prepare-release.yml"
+PUBLICATION_TARGETS = ("github-only", "github-and-pypi")
 
 
 def prepare_origin() -> tuple[dict, dict]:
@@ -277,6 +280,7 @@ class PublicationPolicyTests(unittest.TestCase):
     def admit_preparation(self, responses: dict, artifact_id=None):
         args = argparse.Namespace(
             source_sha=SOURCE_SHA, prepare_run_id=RUN_ID, artifact_id=artifact_id,
+            publication_target="github-and-pypi",
         )
         # Only external GET responses are replaced, never the policy under test.
         with patch.object(self.publisher, "github", side_effect=responses.__getitem__):
@@ -298,7 +302,9 @@ class PublicationPolicyTests(unittest.TestCase):
             "GITHUB_SHA": SOURCE_SHA,
             "GITHUB_REPOSITORY": "dprb-work/daml",
         }
-        args = argparse.Namespace(source_sha=SOURCE_SHA)
+        args = argparse.Namespace(
+            source_sha=SOURCE_SHA, publication_target="github-and-pypi",
+        )
         with patch.dict(os.environ, context), patch.object(self.publisher, "github", side_effect=responses.__getitem__):
             self.publisher.require_current_main(args)
         changed_main = copy.deepcopy(responses)
@@ -367,6 +373,7 @@ class PublicationPolicyTests(unittest.TestCase):
             (directory / "RELEASE.json").write_bytes(contents)
             args = argparse.Namespace(
                 bundle=directory, version="0.2.0", source_sha=SOURCE_SHA, release_id=23456789,
+                publication_target="github-and-pypi",
             )
             release = {
                 "id": 23456789,
@@ -448,6 +455,158 @@ class PublicationPolicyTests(unittest.TestCase):
             with self.subTest(policies=replacement):
                 with self.assertRaises(RuntimeError):
                     self.publisher.validate_environment(environment, replacement)
+
+    def test_every_publication_command_requires_a_known_explicit_target(self) -> None:
+        for command in ("plan", "preflight", "stage-github", "promote"):
+            for target in (None, "", "pypi", "github", "GITHUB-ONLY"):
+                with self.subTest(command=command, target=target):
+                    argv = [
+                        "release_publish.py", command,
+                        "--version", "0.2.1", "--source-sha", SOURCE_SHA,
+                        "--prepare-run-id", str(RUN_ID),
+                        "--manifest-sha256", "a" * 64,
+                    ]
+                    if command == "preflight":
+                        argv.extend(["--out", "unused-candidate"])
+                    elif command in {"stage-github", "promote"}:
+                        argv.extend(["--bundle", "unused-candidate"])
+                    if command == "promote":
+                        argv.extend(["--release-id", "23456789"])
+                    if target is not None:
+                        argv.extend(["--publication-target", target])
+                    with (
+                        patch.object(sys, "argv", argv),
+                        patch.object(self.publisher, "github", side_effect=AssertionError("network before target admission")),
+                        patch.object(self.publisher, "pypi_version", side_effect=AssertionError("PyPI before target admission")),
+                        patch.object(self.publisher.subprocess, "run", side_effect=AssertionError("subprocess before target admission")),
+                        redirect_stderr(io.StringIO()),
+                    ):
+                        with self.assertRaises(SystemExit) as failure:
+                            self.publisher.main()
+                    self.assertEqual(failure.exception.code, 2)
+
+    def test_write_commands_reject_missing_or_different_workflow_target_before_effects(self) -> None:
+        for command in (self.publisher.stage_github, self.publisher.promote):
+            for target in PUBLICATION_TARGETS:
+                other = next(mode for mode in PUBLICATION_TARGETS if mode != target)
+                for workflow_target in (None, "", "unknown", other):
+                    with self.subTest(command=command, target=target, workflow_target=workflow_target):
+                        context = {
+                            "GITHUB_ACTIONS": "true",
+                            "GITHUB_EVENT_NAME": "workflow_dispatch",
+                            "GITHUB_REPOSITORY": "dprb-work/daml",
+                            "GITHUB_REF": "refs/heads/main",
+                            "GITHUB_SHA": SOURCE_SHA,
+                            "GITHUB_WORKFLOW_REF": "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/main",
+                        }
+                        if workflow_target is not None:
+                            context["RELEASE_TARGET"] = workflow_target
+                        args = argparse.Namespace(
+                            version="0.2.1", source_sha=SOURCE_SHA,
+                            prepare_run_id=RUN_ID, manifest_sha256="a" * 64,
+                            artifact_id=87654321, bundle=Path("unused-candidate"),
+                            release_id=23456789, publication_target=target,
+                        )
+                        with (
+                            patch.dict(os.environ, context, clear=True),
+                            patch.object(self.publisher, "github", side_effect=AssertionError("GitHub before target admission")),
+                            patch.object(self.publisher, "pypi_version", side_effect=AssertionError("PyPI before target admission")),
+                            patch.object(self.publisher.subprocess, "run", side_effect=AssertionError("external write before target admission")),
+                        ):
+                            with self.assertRaises(RuntimeError):
+                                command(args)
+
+    def test_matching_target_does_not_authorize_noncanonical_write_context(self) -> None:
+        cases = (
+            ("GITHUB_ACTIONS", "false"),
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REPOSITORY", "untrusted/daml"),
+            ("GITHUB_REF", "refs/tags/v0.2.1"),
+            ("GITHUB_WORKFLOW_REF", "dprb-work/daml/.github/workflows/check.yml@refs/heads/main"),
+            ("GITHUB_WORKFLOW_REF", "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/release"),
+        )
+        for command in (self.publisher.stage_github, self.publisher.promote):
+            for target in PUBLICATION_TARGETS:
+                for field, value in cases:
+                    with self.subTest(command=command, target=target, field=field, value=value):
+                        context = {
+                            "GITHUB_ACTIONS": "true",
+                            "GITHUB_EVENT_NAME": "workflow_dispatch",
+                            "GITHUB_REPOSITORY": "dprb-work/daml",
+                            "GITHUB_REF": "refs/heads/main",
+                            "GITHUB_SHA": SOURCE_SHA,
+                            "GITHUB_WORKFLOW_REF": "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/main",
+                            "RELEASE_TARGET": target,
+                            field: value,
+                        }
+                        args = argparse.Namespace(publication_target=target)
+                        with (
+                            patch.dict(os.environ, context, clear=True),
+                            patch.object(self.publisher, "github", side_effect=AssertionError("GitHub before context admission")),
+                            patch.object(self.publisher, "pypi_version", side_effect=AssertionError("PyPI before context admission")),
+                            patch.object(self.publisher.subprocess, "run", side_effect=AssertionError("write before context admission")),
+                        ):
+                            with self.assertRaises(RuntimeError):
+                                command(args)
+
+    def test_registry_observation_requires_exact_unyanked_wheel_hashes(self) -> None:
+        manifest = {"assets": [
+            {"filename": f"daml_config-0.2.1-{platform}.whl", "sha256": digit * 64}
+            for platform, digit in (("linux", "a"), ("macos", "b"), ("windows", "c"))
+        ]}
+        exact = {"urls": [
+            {
+                "filename": asset["filename"],
+                "digests": {"sha256": asset["sha256"]},
+                "yanked": False,
+                "packagetype": "bdist_wheel",
+            }
+            for asset in manifest["assets"]
+        ]}
+        self.publisher.observe_pypi(manifest, exact)
+        absent_file = copy.deepcopy(exact)
+        absent_file["urls"].pop()
+        wrong_hash = copy.deepcopy(exact)
+        wrong_hash["urls"][0]["digests"]["sha256"] = "f" * 64
+        duplicate = copy.deepcopy(exact)
+        duplicate["urls"].append(copy.deepcopy(duplicate["urls"][0]))
+        extra = copy.deepcopy(exact)
+        extra["urls"].append({
+            "filename": "daml_config-0.2.1.tar.gz", "digests": {"sha256": "d" * 64},
+            "yanked": False, "packagetype": "sdist",
+        })
+        yanked = copy.deepcopy(exact)
+        yanked["urls"][0]["yanked"] = True
+        wrong_kind = copy.deepcopy(exact)
+        wrong_kind["urls"][0]["packagetype"] = "sdist"
+        for observed in (None, {"urls": []}, absent_file, wrong_hash, duplicate, extra, yanked, wrong_kind):
+            with self.subTest(observed=observed):
+                with self.assertRaises(RuntimeError):
+                    self.publisher.observe_pypi(manifest, observed)
+
+    def test_github_only_rejects_registry_wheel_directory_without_preparing_files(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="daml-no-registry-wheels-") as temporary:
+            root = Path(temporary)
+            candidate = root / "candidate"
+            registry = root / "pypi"
+            argv = [
+                "release_publish.py", "preflight", "--publication-target", "github-only",
+                "--version", "0.2.1", "--source-sha", SOURCE_SHA,
+                "--prepare-run-id", str(RUN_ID), "--manifest-sha256", "a" * 64,
+                "--out", str(candidate), "--wheel-dir", str(registry),
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                patch.object(self.publisher, "github", side_effect=AssertionError("network before wheel-dir admission")),
+                patch.object(self.publisher, "pypi_version", side_effect=AssertionError("GitHub-only contacted PyPI")),
+                patch.object(self.publisher.subprocess, "run", side_effect=AssertionError("external effect before wheel-dir admission")),
+                redirect_stderr(io.StringIO()),
+            ):
+                with self.assertRaises(SystemExit) as failure:
+                    self.publisher.main()
+            self.assertEqual(failure.exception.code, 2)
+            self.assertFalse(registry.exists())
+            self.assertFalse(candidate.exists())
 
 
 
