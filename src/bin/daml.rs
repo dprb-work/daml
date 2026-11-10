@@ -1,12 +1,12 @@
 //! Check, resolve, and explain configuration through DAML's core engine.
 
 use daml::{
-    Bundle, Explanation, ExplanationConstraint, FormatOptions, Limits, Origin, ResolveError,
-    ResolvedNode, ResolvedValue, SchemaModule, Schemas, SemanticNode,
+    Bundle, Document, Explanation, ExplanationConstraint, FormatOptions, Limits, Origin,
+    ResolveError, ResolvedNode, ResolvedValue, SchemaModule, Schemas, SemanticNode, SemanticValue,
+    SourceEdit, SourceEditLimits, Value,
 };
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 use std::{
-    borrow::Cow,
     env,
     error::Error,
     ffi::OsString,
@@ -19,9 +19,9 @@ use std::{
 const MAX_SCHEMA_BYTES: usize = 8 * 1024 * 1024;
 const MAX_MODULES: usize = 10_000;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
-const HELP: &str = r#"Usage: daml <check|resolve|explain> [OPTIONS] [FILE|-]
+const HELP: &str = r#"Usage: daml <check|resolve|explain|edit> [OPTIONS] [FILE|-]
 
-Check configuration, resolve defaults, or explain a checked value.
+Check configuration, resolve defaults, explain a checked value, or edit authored source.
 Read stdin when FILE is omitted or '-'. Input files are never changed.
 
 Options:
@@ -34,12 +34,15 @@ Options:
                    JSON omits assertions and projects temporal/cron kinds to strings;
                    numeric values remain exact.
   --path POINTER   explain only: RFC 6901 path (default: empty root pointer).
+  --edits FILE     edit only: a DAML sequence of replace/insert/remove operation maps.
+                   Requires op/path strings and value for replace/insert; '-' is forbidden.
   --               Treat remaining arguments as file names.
   --help           Show this help, alone or immediately after an operation.
 
-A root assertion or --expected is required. Stdin requires --bundle or --module.
+A final root assertion or --expected is required. Stdin requires --bundle or --module.
 check writes no successful data. resolve writes completed data; explain writes
 JSON containing semantic values, origins, assertions, and constraint locations.
+edit validates the changed document and writes authored source without omitted defaults.
 Output is bounded to 8 MiB; normal engine admission/work limits also apply.
 
 Exit status: 0 success; 1 configuration/schema/admission/path/representation error;
@@ -51,6 +54,7 @@ enum Operation {
     Check,
     Resolve,
     Explain,
+    Edit,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +71,27 @@ struct Options {
     expected: Option<String>,
     format: OutputFormat,
     pointer: String,
+    edits: Option<PathBuf>,
+}
+
+enum CommandOutput {
+    Bytes(Vec<u8>),
+    Edited(Document),
+}
+
+impl CommandOutput {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Bytes(bytes) => bytes,
+            Self::Edited(document) => document.source().as_bytes(),
+        }
+    }
+}
+
+enum EditInput {
+    Replace { path: String, value: SemanticNode },
+    Insert { path: String, value: SemanticNode },
+    Remove { path: String },
 }
 
 struct Failure {
@@ -118,14 +143,16 @@ impl Failure {
 }
 
 fn main() -> ExitCode {
-    let result = parse_options(env::args_os().skip(1)).and_then(|options| match options {
-        Some(options) => execute(options).map(Cow::Owned),
-        None => Ok(Cow::Borrowed(HELP.as_bytes())),
-    });
+    let result =
+        parse_options(env::args_os().skip(1)).and_then(|options| options.map(execute).transpose());
     let result = result.and_then(|output| {
         let mut stdout = io::stdout().lock();
         stdout
-            .write_all(&output)
+            .write_all(
+                output
+                    .as_ref()
+                    .map_or(HELP.as_bytes(), CommandOutput::as_bytes),
+            )
             .and_then(|()| stdout.flush())
             .map_err(|error| Failure::usage(format!("stdout: {error}")))
     });
@@ -141,7 +168,7 @@ fn main() -> ExitCode {
 fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Options>, Failure> {
     let command = args
         .next()
-        .ok_or_else(|| Failure::usage("expected check, resolve, or explain; use --help"))?;
+        .ok_or_else(|| Failure::usage("expected check, resolve, explain, or edit; use --help"))?;
     if command == "--help" && args.next().is_none() {
         return Ok(None);
     }
@@ -149,9 +176,10 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Opti
         Some("check") => Operation::Check,
         Some("resolve") => Operation::Resolve,
         Some("explain") => Operation::Explain,
+        Some("edit") => Operation::Edit,
         _ => {
             return Err(Failure::usage(
-                "expected check, resolve, or explain; use --help",
+                "expected check, resolve, explain, or edit; use --help",
             ));
         }
     };
@@ -163,6 +191,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Opti
         expected: None,
         format: OutputFormat::Daml,
         pointer: String::new(),
+        edits: None,
     };
     let mut positional = false;
     let mut format_seen = false;
@@ -208,6 +237,15 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Opti
             }
             path_seen = true;
             options.pointer = option_text(&mut args, "--path")?;
+        } else if !positional && argument == "--edits" {
+            if operation != Operation::Edit || options.edits.is_some() {
+                return Err(Failure::usage("--edits is required once, on edit only"));
+            }
+            let value = option_value(&mut args, "--edits")?;
+            if value == "-" {
+                return Err(Failure::usage("--edits cannot read stdin"));
+            }
+            options.edits = Some(value.into());
         } else if !positional && argument != "-" && argument.as_encoded_bytes().starts_with(b"-") {
             return Err(Failure::usage(format!(
                 "unknown option {}",
@@ -224,6 +262,9 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<Option<Opti
     }
     if options.input.as_deref() == Some(Path::new("-")) {
         options.input = None;
+    }
+    if operation == Operation::Edit && options.edits.is_none() {
+        return Err(Failure::usage("edit requires --edits FILE"));
     }
     Ok(Some(options))
 }
@@ -262,7 +303,97 @@ fn read_text(path: Option<&Path>, limit: usize) -> Result<String, Failure> {
     String::from_utf8(bytes).map_err(|error| Failure::configuration(format!("{label}: {error}")))
 }
 
-fn execute(options: Options) -> Result<Vec<u8>, Failure> {
+fn edit_text(node: Option<SemanticNode>, name: &str, index: usize) -> Result<String, Failure> {
+    let node = node
+        .ok_or_else(|| Failure::configuration(format!("edit operation {index}: missing {name}")))?;
+    if node.tag.is_some() {
+        return Err(Failure::configuration(format!(
+            "edit operation {index}: {name} must be an untagged string"
+        )));
+    }
+    match node.value {
+        SemanticValue::String(value) => Ok(value),
+        _ => Err(Failure::configuration(format!(
+            "edit operation {index}: {name} must be an untagged string"
+        ))),
+    }
+}
+
+fn read_edits(path: &Path, max_operations: usize) -> Result<Vec<EditInput>, Failure> {
+    let source = read_text(Some(path), Limits::default().max_input_bytes)?;
+    let document = daml::parse(source).map_err(Failure::engine)?;
+    let Value::Sequence(items) = &document.root().value else {
+        return Err(Failure::configuration(
+            "edits must be an untagged DAML sequence",
+        ));
+    };
+    if document.root().tag.is_some() {
+        return Err(Failure::configuration(
+            "edits must be an untagged DAML sequence",
+        ));
+    }
+    if items.len() > max_operations {
+        return Err(Failure::configuration("edit batch exceeds operation limit"));
+    }
+    // Project the admitted batch once, then move its owned values into requests.
+    // Do not copy/reparse each value fragment or convert the configuration tree.
+    let SemanticValue::Sequence(items) = SemanticNode::from_document(&document).value else {
+        unreachable!("an admitted sequence projects as a semantic sequence");
+    };
+    let mut edits = Vec::with_capacity(items.len());
+    for (index, item) in items.into_iter().enumerate() {
+        let SemanticValue::Mapping(mut fields) = item.value else {
+            return Err(Failure::configuration(format!(
+                "edit operation {index}: expected an untagged mapping"
+            )));
+        };
+        if item.tag.is_some() {
+            return Err(Failure::configuration(format!(
+                "edit operation {index}: expected an untagged mapping"
+            )));
+        }
+        if fields
+            .keys()
+            .any(|name| !matches!(name.as_str(), "op" | "path" | "value"))
+        {
+            return Err(Failure::configuration(format!(
+                "edit operation {index}: unknown field"
+            )));
+        }
+        let op = edit_text(fields.remove("op"), "op", index)?;
+        let path = edit_text(fields.remove("path"), "path", index)?;
+        let value = fields.remove("value");
+        let edit = match op.as_str() {
+            "replace" | "insert" => {
+                let value = value.ok_or_else(|| {
+                    Failure::configuration(format!("edit operation {index}: missing value"))
+                })?;
+                if op == "replace" {
+                    EditInput::Replace { path, value }
+                } else {
+                    EditInput::Insert { path, value }
+                }
+            }
+            "remove" => {
+                if value.is_some() {
+                    return Err(Failure::configuration(format!(
+                        "edit operation {index}: remove forbids value"
+                    )));
+                }
+                EditInput::Remove { path }
+            }
+            _ => {
+                return Err(Failure::configuration(format!(
+                    "edit operation {index}: unknown operation"
+                )));
+            }
+        };
+        edits.push(edit);
+    }
+    Ok(edits)
+}
+
+fn execute(options: Options) -> Result<CommandOutput, Failure> {
     if options.input.is_none() && options.bundle.is_none() && options.modules.is_empty() {
         return Err(Failure::configuration(
             "stdin requires --bundle or --module",
@@ -270,6 +401,28 @@ fn execute(options: Options) -> Result<Vec<u8>, Failure> {
     }
     let source = read_text(options.input.as_deref(), Limits::default().max_input_bytes)?;
     let document = daml::parse(source).map_err(Failure::engine)?;
+    let document = if options.operation == Operation::Edit {
+        let limits = SourceEditLimits::default();
+        let inputs = read_edits(
+            options.edits.as_deref().expect("edit flag was admitted"),
+            limits.max_operations,
+        )?;
+        let edits: Vec<_> = inputs
+            .iter()
+            .map(|input| match input {
+                EditInput::Replace { path, value } => SourceEdit::Replace { path, value },
+                EditInput::Insert { path, value } => SourceEdit::Insert { path, value },
+                EditInput::Remove { path } => SourceEdit::Remove { path },
+            })
+            .collect();
+        document
+            .prepare_source_edits(&edits, FormatOptions::default(), limits)
+            .map_err(Failure::engine)?
+            .apply(document.source())
+            .map_err(Failure::engine)?
+    } else {
+        document
+    };
     if document.tag(document.root()).is_none() && options.expected.is_none() {
         return Err(Failure::configuration(
             "a root assertion or --expected contract is required",
@@ -305,13 +458,18 @@ fn execute(options: Options) -> Result<Vec<u8>, Failure> {
         return json_output(&Report {
             explanation: &explanation,
             source: options.input.as_deref(),
-        });
+        })
+        .map(CommandOutput::Bytes);
     }
     let resolved = schemas
         .resolve_with_limits(&document, expected, Default::default())
         .map_err(Failure::engine)?;
+    if options.operation == Operation::Edit {
+        drop(resolved);
+        return Ok(CommandOutput::Edited(document));
+    }
     if options.operation == Operation::Check {
-        return Ok(Vec::new());
+        return Ok(CommandOutput::Bytes(Vec::new()));
     }
     match options.format {
         OutputFormat::Json => json_output(&NodeOutput {
@@ -326,6 +484,7 @@ fn execute(options: Options) -> Result<Vec<u8>, Failure> {
             .map(String::into_bytes)
             .map_err(Failure::engine),
     }
+    .map(CommandOutput::Bytes)
 }
 
 struct BoundedOutput(Vec<u8>);

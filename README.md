@@ -142,8 +142,8 @@ DAML validates the pattern; the consuming application owns scheduling.
 
 | Component | Availability |
 |---|---|
-| Rust library | Source; parsing, definitions, completion, validation, formatting |
-| Configuration CLI | [Source-built](docs/cli.md); validation, resolution, and provenance/constraint explanation |
+| Rust library | Source; parsing, definitions, completion, validation, formatting, targeted source edits |
+| Configuration CLI | [Source-built](docs/cli.md); validation, resolution, provenance/constraint explanation and comment-preserving edits |
 | Formatter and language server | [Native releases](docs/distribution.md) provide syntax diagnostics/formatting; [current source LSP](docs/lsp.md) adds opt-in semantic authoring |
 | VS Code extension | Source-built VSIX with explicit semantic contexts, or a qualified candidate; not published to a marketplace |
 | Syntect highlighting | [Standalone grammar](integrations/syntect/README.md); consumer registration and theme ownership stay with the client |

@@ -24,6 +24,8 @@ original field order. Exact number values are retained, but original numeric
 spelling is not a semantic round-trip guarantee. See [formatting versus semantic
 writing](formatting.md).
 
+For targeted edits to authored DAML, use [`daml edit`](cli.md#edit-authored-source) or the Rust source-editing API. These splice supplied values into one parsed snapshot and preserve bytes outside their declared regions. They are not whole-document semantic writing or a JSON/YAML converter. Replacing or removing a subtree owns its internal comments; adjacent comments remain.
+
 ## Configuration conversion needs a loss policy
 
 A file converter would need to decide what to accept and what to preserve:
