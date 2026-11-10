@@ -159,8 +159,8 @@ impl fmt::Display for SemanticError {
 }
 impl Error for SemanticError {}
 
-const MAX_NODES: usize = 100_000;
-const MAX_DEPTH: usize = 128;
+pub(crate) const MAX_NODES: usize = 100_000;
+pub(crate) const MAX_DEPTH: usize = 128;
 pub(crate) const MAX_SCALAR_BYTES: usize = 1024 * 1024;
 const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 

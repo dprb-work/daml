@@ -75,6 +75,8 @@ under the selected schema context before accepting an edit. See the
 [browser SDK](../bindings/browser/README.md) for the lossless transport and
 browser lifecycle around these same core operations.
 
+For a targeted change without whole-document reflow or semantic rewriting, use [`daml edit`](cli.md#edit-authored-source) or the Rust source-editing API. It renders only new values, preserves unrelated source bytes and can validate the complete result without writing omitted defaults. Prepared patches reject stale snapshots.
+
 ## Command
 
 ```sh
