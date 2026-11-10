@@ -3,17 +3,20 @@
 
 `check-environment` and `plan` perform external reads only. `preflight` also
 stages the approved files locally. `stage-github` creates a draft with unchanged
-assets before the official PyPA action; `promote` publishes only that draft after
-observing the exact public PyPI wheel hashes. Both write commands are restricted
-to the main-only protected publication workflow.
+assets; `promote` publishes only that draft. The explicit publication target
+selects GitHub alone or GitHub plus PyPI. Only the latter prepares registry
+wheels and requires exact public PyPI hashes after the official PyPA action.
+Both write commands require the main-only protected publication workflow and
+the approved publication target.
 
 Publication is NOT atomic: a failure can leave a tag/draft/partial GitHub release
-or some/all PyPI wheels. Never blindly
-rerun, delete, overwrite, or use skip-existing. Run `plan` with the original four
-inputs, inspect the recorded public hashes and draft assets, and obtain fresh
-owner authorization for remaining effects. This CLI deliberately has no recovery
-write mode. PyPI Trusted Publisher setup must bind dprb-work/daml,
-publish-release.yml, environment release, project daml-config.
+or, for github-and-pypi, some/all PyPI wheels. Never blindly rerun, delete,
+overwrite, or use skip-existing. Run `plan` with the original four candidate
+inputs and publication target, inspect the recorded public hashes and draft
+assets, and obtain fresh owner authorization for remaining effects. This CLI
+deliberately has no recovery write mode. For github-and-pypi, PyPI Trusted
+Publisher setup must bind dprb-work/daml, publish-release.yml, environment
+release, project daml-config.
 """
 
 from __future__ import annotations
@@ -40,10 +43,16 @@ PUBLISH_WORKFLOW = ".github/workflows/publish-release.yml"
 BUNDLE_ARTIFACT = "daml-release-candidate"
 API_ROOT = f"repos/{REPOSITORY}"
 GH_API = ["gh", "api", "--hostname", "github.com"]
+PUBLICATION_TARGETS = ("github-only", "github-and-pypi")
+GITHUB_ONLY_NOTES = (
+    "GitHub-only release: the Python wheels are attached to this GitHub release "
+    "for installation. This release is not published to PyPI."
+)
 RECOVERY = (
     "External effects may already exist. Do not rerun publication or overwrite "
     "anything: use release_publish.py plan with the original version, source SHA, "
-    "prepare run ID and manifest digest; obtain owner authorization for recovery."
+    "prepare run ID, manifest digest and publication target; obtain owner "
+    "authorization for recovery."
 )
 
 
@@ -357,7 +366,7 @@ def require_absent_github(version: str) -> None:
         )
 
 
-def require_publish_context() -> None:
+def require_publish_context(publication_target: str) -> None:
     if (
         os.environ.get("GITHUB_ACTIONS") != "true"
         or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
@@ -368,6 +377,13 @@ def require_publish_context() -> None:
     ):
         raise RuntimeError(
             "GitHub promotion is restricted to the protected main publication workflow"
+        )
+    if (
+        publication_target not in PUBLICATION_TARGETS
+        or os.environ.get("RELEASE_TARGET") != publication_target
+    ):
+        raise RuntimeError(
+            "publication target must match the protected workflow RELEASE_TARGET"
         )
 
 
@@ -412,13 +428,16 @@ def validate_draft(release: dict, args: argparse.Namespace) -> None:
 
 
 def stage_github(args: argparse.Namespace) -> None:
-    require_publish_context()
+    require_publish_context(args.publication_target)
     check_environment()
     run, _ = preparation(args)
     manifest = bundle(args, args.bundle)
     if manifest["run_attempt"] != run["run_attempt"]:
         raise RuntimeError("preparation was rerun after approval")
-    if pypi_version(args.version) is not None:
+    if (
+        args.publication_target == "github-and-pypi"
+        and pypi_version(args.version) is not None
+    ):
         raise RuntimeError(
             "PyPI version already exists; inspect manually before recovery"
         )
@@ -454,6 +473,11 @@ def stage_github(args: argparse.Namespace) -> None:
             "--target",
             args.source_sha,
             "--generate-notes",
+            *(
+                ["--notes", GITHUB_ONLY_NOTES]
+                if args.publication_target == "github-only"
+                else []
+            ),
             "--title",
             tag,
         ],
@@ -470,13 +494,14 @@ def stage_github(args: argparse.Namespace) -> None:
 
 
 def promote(args: argparse.Namespace) -> None:
-    require_publish_context()
+    require_publish_context(args.publication_target)
     check_environment()
     run, _ = preparation(args)
     manifest = bundle(args, args.bundle)
     if manifest["run_attempt"] != run["run_attempt"]:
         raise RuntimeError("preparation was rerun after approval")
-    observe_pypi(manifest, pypi_version(args.version))
+    if args.publication_target == "github-and-pypi":
+        observe_pypi(manifest, pypi_version(args.version))
     validate_draft(github(f"releases/{args.release_id}"), args)
     require_current_main(args)
     published = github(
@@ -495,39 +520,52 @@ def promote(args: argparse.Namespace) -> None:
 
 
 def plan(args: argparse.Namespace, manifest: dict, artifact: dict) -> dict:
-    observed = pypi_version(args.version)
+    if args.publication_target == "github-and-pypi":
+        observed = pypi_version(args.version)
+        files = [] if observed is None else observed["urls"]
+        expected = wheel_hashes(manifest)
+        pypi = {
+            "pypi_version_exists": observed is not None,
+            "pypi_files": [
+                {
+                    "filename": item["filename"],
+                    "sha256": item["digests"]["sha256"],
+                    "approved": expected.get(item["filename"])
+                    == item["digests"]["sha256"],
+                    "yanked": item.get("yanked"),
+                }
+                for item in files
+            ],
+            "pypi_missing_files": sorted(
+                set(expected) - {item["filename"] for item in files}
+            ),
+        }
+    else:
+        # Not observed or applicable: null must not imply registry absence.
+        pypi = {
+            "pypi_version_exists": None,
+            "pypi_files": None,
+            "pypi_missing_files": None,
+        }
     reference, release = github_state(args.version)
-    files = [] if observed is None else observed["urls"]
-    expected = wheel_hashes(manifest)
     return {
         "repository": REPOSITORY,
         "version": args.version,
+        "publication_target": args.publication_target,
         "source_sha": args.source_sha,
         "prepare_run_id": args.prepare_run_id,
         "manifest_sha256": args.manifest_sha256,
         "artifact_id": artifact["id"],
         "artifact_digest": artifact["digest"],
-        "pypi_version_exists": observed is not None,
-        "pypi_files": [
-            {
-                "filename": item["filename"],
-                "sha256": item["digests"]["sha256"],
-                "approved": expected.get(item["filename"]) == item["digests"]["sha256"],
-                "yanked": item.get("yanked"),
-            }
-            for item in files
-        ],
-        "pypi_missing_files": sorted(
-            set(expected) - {item["filename"] for item in files}
-        ),
+        **pypi,
         "github_tag": reference,
         "github_release": release,
         "approved_github_files": {
             name: {"size": size, "sha256": digest}
             for name, (size, digest) in release_files(args.bundle).items()
         },
-        "remaining_effects": "No effects authorized by this plan. If both targets are absent, "
-        "approve the exact candidate in release environment. Otherwise stop: compare remote "
+        "remaining_effects": "No effects authorized by this plan. If all selected targets are absent, "
+        "approve the exact candidate and publication target in release environment. Otherwise stop: compare remote "
         "tag/source and release asset digests against this bundle; separately authorize only "
         "remaining effects. No automatic recovery, overwrite, rebuild or package retry.",
     }
@@ -543,6 +581,9 @@ def main() -> None:
     )
     for name in ("plan", "preflight", "stage-github", "promote"):
         command = commands.add_parser(name)
+        command.add_argument(
+            "--publication-target", required=True, choices=PUBLICATION_TARGETS
+        )
         command.add_argument("--version", required=True)
         command.add_argument("--source-sha", required=True)
         command.add_argument("--prepare-run-id", required=True, type=int)
@@ -577,6 +618,12 @@ def main() -> None:
         parser.error("run and artifact IDs must be positive")
     if args.command == "promote" and args.release_id < 1:
         parser.error("release-id must be positive")
+    if (
+        args.command == "preflight"
+        and args.publication_target == "github-only"
+        and args.wheel_dir is not None
+    ):
+        parser.error("github-only does not prepare a registry wheel directory")
     if args.command == "stage-github":
         stage_github(args)
         return
@@ -592,7 +639,10 @@ def main() -> None:
     check_environment()
     require_current_main(args)
     manifest, artifact = download_candidate(args, args.out)
-    if pypi_version(args.version) is not None:
+    if (
+        args.publication_target == "github-and-pypi"
+        and pypi_version(args.version) is not None
+    ):
         raise RuntimeError(
             "PyPI version already exists; use plan, never blanket skip-existing"
         )
@@ -609,11 +659,16 @@ def main() -> None:
         with Path(output).open("a", encoding="utf-8") as stream:
             stream.write(f"artifact_id={artifact['id']}\n")
     summary = (
+        f"Publication target: {args.publication_target}\n"
         f"Approved candidate: {REPOSITORY} {args.version}\n"
         f"Source: {args.source_sha}\nPreparation: {args.prepare_run_id}\n"
         f"Manifest SHA-256: {args.manifest_sha256}\n"
         f"Immutable artifact: {artifact['id']} ({artifact['digest']})\n"
-        "Approval authorizes GitHub draft staging, PyPI wheels, then making the unchanged GitHub release public.\n"
+        + (
+            "Approval authorizes GitHub draft staging, PyPI wheels, then making the unchanged GitHub release public.\n"
+            if args.publication_target == "github-and-pypi"
+            else "Approval authorizes GitHub draft staging and making the unchanged GitHub release public; no PyPI publication.\n"
+        )
         + RECOVERY
         + "\n"
     )

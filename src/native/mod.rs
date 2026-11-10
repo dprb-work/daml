@@ -11,6 +11,8 @@ pub(crate) mod tooling;
 use crate::{Node, Span, StringValue};
 
 pub use bundle::{BUNDLE_MANIFEST, Bundle};
+#[cfg(feature = "lsp")]
+pub(crate) use compiler::EDITOR_BUILTINS;
 pub use error::{NativeError, NativeErrorKind};
 pub use format::format_definition;
 pub use syntax::{parse_definition, parse_definition_with_limits};

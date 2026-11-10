@@ -20,8 +20,8 @@ import sys
 import tarfile
 import tempfile
 import zipfile
-from pathlib import Path
 from contextlib import redirect_stdout
+from pathlib import Path
 from unittest.mock import patch
 
 from test_release_delivery import load_policy, prepare_origin, release_environment
@@ -148,6 +148,7 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                 "GITHUB_SHA": args.source_sha,
                 "GITHUB_WORKFLOW_REF": "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/main",
                 "GITHUB_OUTPUT": str(output),
+                "RELEASE_TARGET": "github-and-pypi",
             }
             responses = {
                 "environments/release": environment,
@@ -223,6 +224,7 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                 version=args.version, source_sha=args.source_sha,
                 prepare_run_id=args.prepare_run_id, manifest_sha256=args.manifest_sha256,
                 artifact_id=artifact_id, bundle=candidate,
+                publication_target="github-and-pypi",
             )
             failure = None
             with (
@@ -254,6 +256,276 @@ def check_staging_boundary(args: argparse.Namespace, candidate: Path, manifest: 
                 if case.startswith("wrong-tag") and not state["tag_observed"]:
                     raise AssertionError("wrong-tag case did not reach reference verification")
             passed.append(case)
+    return passed
+
+
+def check_publication_targets(args: argparse.Namespace, candidate: Path, manifest: dict, common) -> list[str]:
+    """Exercise both effect targets using real admitted bytes and API-shaped ports."""
+    with patch.dict(sys.modules, {"release_common": common}):
+        publisher = load_policy("release_publish")
+    tag = f"v{args.version}"
+    exact_reference = {
+        "ref": f"refs/tags/{tag}",
+        "object": {"type": "commit", "sha": args.source_sha},
+    }
+    assets = [
+        {
+            "name": path.name, "state": "uploaded", "size": path.stat().st_size,
+            "digest": "sha256:" + digest(path),
+        }
+        for path in sorted(candidate.iterdir())
+    ]
+    exact_draft = {
+        "id": 23456789, "draft": True, "tag_name": tag,
+        "target_commitish": args.source_sha, "assets": assets,
+    }
+    exact_pypi = {"urls": [
+        {
+            "filename": asset["filename"], "digests": {"sha256": asset["sha256"]},
+            "yanked": False, "packagetype": "bdist_wheel",
+        }
+        for asset in manifest["assets"] if asset["kind"] == "python"
+    ]}
+    cases = [
+        ("preflight", "exact"),
+        ("plan", "exact"),
+        ("stage-github", "exact"),
+        ("promote", "exact"),
+    ]
+    for command in ("stage-github", "promote"):
+        cases.extend((command, failure) for failure in (
+            "moved-main", "weakened-environment", "wrong-source",
+            "wrong-manifest-digest", "replaced-artifact", "stale-attempt", "mutated-payload",
+        ))
+    cases.extend(("stage-github", failure) for failure in ("existing-tag", "existing-release"))
+    cases.extend(("promote", failure) for failure in (
+        "wrong-draft-source", "public-draft", "missing-draft-asset",
+        "wrong-draft-asset-hash", "wrong-tag-source", "missing-tag",
+    ))
+    passed = []
+    # Build the download response from the real bundle, without executing it.
+    with tempfile.TemporaryFile() as archive:
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as zipped:
+            for path in sorted(candidate.iterdir()):
+                zipped.write(path, path.name)
+        archive.seek(0)
+        archive_digest = "sha256:" + hashlib.file_digest(archive, "sha256").hexdigest()
+        for target in ("github-only", "github-and-pypi"):
+            target_cases = list(cases)
+            if target == "github-and-pypi":
+                target_cases.extend((
+                    ("preflight", "existing-pypi"),
+                    ("stage-github", "existing-pypi"),
+                    ("promote", "missing-pypi"),
+                    ("promote", "wrong-pypi-hash"),
+                    ("promote", "missing-pypi-wheel"),
+                ))
+            for command, case in target_cases:
+                with tempfile.TemporaryDirectory(prefix="daml-publication-target-") as temporary:
+                    root = Path(temporary)
+                    output = root / "github-output"
+                    registry = root / "pypi"
+                    run, workflow = prepare_origin()
+                    run.update(
+                        id=args.prepare_run_id, head_sha=args.source_sha,
+                        run_attempt=manifest["run_attempt"],
+                    )
+                    environment, policies = release_environment()
+                    artifact_id = 87654321
+                    artifact = {
+                        "id": artifact_id, "name": "daml-release-candidate", "expired": False,
+                        "digest": archive_digest,
+                        "workflow_run": {"id": args.prepare_run_id, "head_sha": args.source_sha},
+                    }
+                    responses = {
+                        "environments/release": environment,
+                        "environments/release/deployment-branch-policies?per_page=100": policies,
+                        "actions/workflows/prepare-release.yml": workflow,
+                        f"actions/runs/{args.prepare_run_id}": run,
+                        f"compare/{args.source_sha}...main": {
+                            "status": "identical", "merge_base_commit": {"sha": args.source_sha},
+                        },
+                        f"actions/runs/{args.prepare_run_id}/artifacts?per_page=100&page=1": {
+                            "total_count": 1, "artifacts": [artifact],
+                        },
+                        "": {"default_branch": "main"},
+                        "git/ref/heads/main": {"object": {"type": "commit", "sha": args.source_sha}},
+                    }
+                    state = {
+                        "reference": json.loads(json.dumps(exact_reference)) if command == "promote" else None,
+                        "release": json.loads(json.dumps(exact_draft)) if command == "promote" else None,
+                        "writes": [],
+                    }
+                    observation = json.loads(json.dumps(exact_pypi)) if command == "promote" else None
+                    if case == "moved-main":
+                        responses["git/ref/heads/main"]["object"]["sha"] = "f" * 40
+                    elif case == "weakened-environment":
+                        environment["protection_rules"][0]["prevent_self_review"] = False
+                    elif case == "wrong-source":
+                        run["head_sha"] = "f" * 40
+                    elif case == "replaced-artifact":
+                        artifact["id"] += 1
+                    elif case == "stale-attempt":
+                        run["run_attempt"] += 1
+                    elif case == "existing-tag":
+                        state["reference"] = exact_reference
+                    elif case == "existing-release":
+                        state["release"] = exact_draft
+                    elif case == "wrong-draft-source":
+                        state["release"]["target_commitish"] = "f" * 40
+                    elif case == "public-draft":
+                        state["release"]["draft"] = False
+                    elif case == "missing-draft-asset":
+                        state["release"]["assets"].pop()
+                    elif case == "wrong-draft-asset-hash":
+                        state["release"]["assets"][0]["digest"] = "sha256:" + "f" * 64
+                    elif case == "wrong-tag-source":
+                        state["reference"]["object"]["sha"] = "f" * 40
+                    elif case == "missing-tag":
+                        state["reference"] = None
+                    elif case == "existing-pypi":
+                        observation = exact_pypi
+                    elif case == "missing-pypi":
+                        observation = None
+                    elif case == "wrong-pypi-hash":
+                        observation["urls"][0]["digests"]["sha256"] = "f" * 64
+                    elif case == "missing-pypi-wheel":
+                        observation["urls"].pop()
+                    context = {
+                        "GITHUB_ACTIONS": "true",
+                        "GITHUB_EVENT_NAME": "workflow_dispatch",
+                        "GITHUB_REPOSITORY": "dprb-work/daml",
+                        "GITHUB_REF": "refs/heads/main",
+                        "GITHUB_SHA": args.source_sha,
+                        "GITHUB_WORKFLOW_REF": "dprb-work/daml/.github/workflows/publish-release.yml@refs/heads/main",
+                        "GITHUB_OUTPUT": str(output),
+                        "RELEASE_TARGET": target,
+                    }
+
+                    def github(path: str, *, method="GET", data=None, missing_ok=False):
+                        if method == "POST" and path == "git/refs":
+                            if data != {"ref": f"refs/tags/{tag}", "sha": args.source_sha}:
+                                raise AssertionError("tag effect differs from the approved source")
+                            state["writes"].append("tag")
+                            state["reference"] = json.loads(json.dumps(exact_reference))
+                            return state["reference"]
+                        if method == "PATCH" and path == f"releases/{exact_draft['id']}":
+                            if data != {"draft": False}:
+                                raise AssertionError("unexpected release mutation")
+                            state["writes"].append("publish")
+                            state["release"]["draft"] = False
+                            return state["release"]
+                        if method != "GET":
+                            raise AssertionError(f"unexpected GitHub effect: {method} {path}")
+                        if path == f"git/ref/tags/{tag}":
+                            return state["reference"]
+                        if path in (f"releases/tags/{tag}", f"releases/{exact_draft['id']}"):
+                            return state["release"]
+                        if path == "releases?per_page=100&page=1":
+                            return [] if state["release"] is None else [state["release"]]
+                        return responses[path]
+
+                    def release_command(command_args, **kwargs):
+                        if command_args == [
+                            *publisher.GH_API,
+                            f"{publisher.API_ROOT}/actions/artifacts/{artifact_id}/zip",
+                        ]:
+                            archive.seek(0)
+                            shutil.copyfileobj(archive, kwargs["stdout"])
+                            return subprocess.CompletedProcess(command_args, 0)
+                        if command_args[:3] != ["gh", "release", "create"]:
+                            raise AssertionError(f"unexpected subprocess effect: {command_args}")
+                        if state["reference"] != exact_reference:
+                            raise AssertionError("draft before exact tag")
+                        state["writes"].append("draft")
+                        uploaded = []
+                        for filename in command_args[4:command_args.index("--repo")]:
+                            path = Path(filename)
+                            uploaded.append({
+                                "name": path.name, "state": "uploaded", "size": path.stat().st_size,
+                                "digest": "sha256:" + digest(path),
+                            })
+                        state["release"] = {
+                            "id": exact_draft["id"], "draft": "--draft" in command_args,
+                            "tag_name": command_args[3],
+                            "target_commitish": command_args[command_args.index("--target") + 1],
+                            "assets": uploaded,
+                        }
+                        return subprocess.CompletedProcess(command_args, 0)
+
+                    def pypi(version):
+                        if target == "github-only":
+                            raise AssertionError("GitHub-only publication contacted PyPI")
+                        if version != args.version:
+                            raise AssertionError("registry lookup does not use the approved version")
+                        return observation
+
+                    approved_digest = "0" * 64 if case == "wrong-manifest-digest" else args.manifest_sha256
+                    argv = [
+                        "release_publish.py", command, "--publication-target", target,
+                        "--version", args.version, "--source-sha", args.source_sha,
+                        "--prepare-run-id", str(args.prepare_run_id),
+                        "--manifest-sha256", approved_digest, "--artifact-id", str(artifact_id),
+                    ]
+                    if command == "preflight":
+                        argv.extend(["--out", str(root / "candidate")])
+                        if target == "github-and-pypi":
+                            argv.extend(["--wheel-dir", str(registry)])
+                    elif command in {"stage-github", "promote"}:
+                        bundle_path = candidate
+                        if case == "mutated-payload":
+                            bundle_path = root / "mutated"
+                            shutil.copytree(candidate, bundle_path)
+                            flip_byte(bundle_path / manifest["assets"][0]["filename"])
+                        argv.extend(["--bundle", str(bundle_path)])
+                    if command == "promote":
+                        argv.extend(["--release-id", str(exact_draft["id"])])
+                    failure = None
+                    with (
+                        patch.dict(os.environ, context, clear=True),
+                        patch.object(sys, "argv", argv),
+                        patch.object(publisher, "github", side_effect=github),
+                        patch.object(publisher, "pypi_version", side_effect=pypi),
+                        patch.object(publisher.subprocess, "run", side_effect=release_command),
+                        patch.object(publisher.urllib.request, "urlopen", side_effect=AssertionError("unexpected live network request")),
+                        redirect_stdout(io.StringIO()),
+                    ):
+                        try:
+                            publisher.main()
+                        except (RuntimeError, ValueError) as exc:
+                            failure = exc
+                    identity = f"{target}:{command}:{case}"
+                    if case != "exact":
+                        if failure is None or state["writes"] or output.exists():
+                            raise AssertionError(f"failed admission allowed effects or outputs: {identity}")
+                    else:
+                        if failure is not None:
+                            raise failure
+                        expected_writes = {
+                            "preflight": [], "plan": [], "stage-github": ["tag", "draft"],
+                            "promote": ["publish"],
+                        }[command]
+                        if state["writes"] != expected_writes:
+                            raise AssertionError(f"publication effects differ: {identity}")
+                        if command == "stage-github":
+                            if state["release"]["assets"] != assets or state["release"]["draft"] is not True:
+                                raise AssertionError(f"staged release differs from the unchanged bundle: {identity}")
+                        if command == "preflight":
+                            downloaded = {path.name: digest(path) for path in (root / "candidate").iterdir()}
+                            expected = {path.name: digest(path) for path in candidate.iterdir()}
+                            if downloaded != expected:
+                                raise AssertionError(f"preflight changed the approved bundle: {identity}")
+                            if target == "github-and-pypi":
+                                actual_wheels = {path.name: digest(path) for path in registry.iterdir()}
+                                expected_wheels = {
+                                    asset["filename"]: asset["sha256"]
+                                    for asset in manifest["assets"] if asset["kind"] == "python"
+                                }
+                                if actual_wheels != expected_wheels:
+                                    raise AssertionError("registry directory does not contain exactly unchanged approved wheels")
+                    if target == "github-only" and registry.exists():
+                        raise AssertionError(f"GitHub-only publication prepared registry wheels: {identity}")
+                    passed.append(identity)
     return passed
 
 
@@ -465,6 +737,7 @@ def check_candidate(args: argparse.Namespace) -> dict:
         lambda directory: corrupt_vsix_license(directory, b"deliberately noncanonical license\n"),
     )
     staging_cases = check_staging_boundary(args, candidate, manifest, common)
+    target_cases = check_publication_targets(args, candidate, manifest, common)
     # Detect accidental writes to the supplied baseline, not just its temporary copies.
     common.validate_bundle(candidate, **binding)
     return {
@@ -476,8 +749,9 @@ def check_candidate(args: argparse.Namespace) -> dict:
         "rejected_cases": passed,
         "staging_policy_cases": staging_cases,
         "staging_external_effects": "fixture-adapters-only; no API/subprocess effect executed",
+        "publication_target_cases": target_cases,
         "temporary_copies": "removed",
-        "publication": "not-invoked",
+        "publication": "fixture-adapters-only; no live publication",
         "runtime_installation": "not-exercised",
     }
 

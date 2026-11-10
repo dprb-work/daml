@@ -1,0 +1,129 @@
+%YAML 1.2
+---
+name: DAML
+version: 1
+file_extensions:
+  - daml
+  - daml.bundle
+scope: source.daml
+
+# Display-only lexical rules. Feed complete physical lines with their endings
+# and retain Syntect's parse state; bare CR input must also be split into lines.
+variables:
+  key_character: '[\p{L}\p{N}\p{M}_./-]'
+  key: '[\p{L}\p{N}_./-]{{key_character}}*'
+  tag_segment: '[\p{L}\p{N}_-][\p{L}\p{N}\p{M}_-]*'
+  tag: '{{tag_segment}}(?:\.{{tag_segment}})*'
+  line_end: '(?:\r\n|\r|\n|$)'
+  triple_double_end: '^([ \t]*)(""")(?=[ \t]*(?:#|{{line_end}}))'
+  triple_single_end: >-
+    ^([ \t]*)(''')(?=[ \t]*(?:#|{{line_end}}))
+
+contexts:
+  main:
+    - match: '#[^\r\n]*'
+      scope: comment.line.number-sign.daml
+
+    # Field fragments need no enclosing collection. Keys outrank literals and
+    # types, including numeric/dotted names and native optional fields.
+    - match: '(?<!{{key_character}}){{key}}(?=\??[ \t]*:)'
+      scope: entity.name.label.daml
+
+    # Dispatch raw Regex only for this exact constructor and a same-line
+    # payload. Qualified tags and longer names use ordinary string contexts.
+    - match: '(!Regex)[ \t]*(""")(?=[ \t]*{{line_end}})'
+      captures:
+        1: entity.name.type.tag.daml
+        2: punctuation.definition.string.begin.daml
+      push: raw-regex-triple-double
+    - match: >-
+        (!Regex)[ \t]*(''')(?=[ \t]*{{line_end}})
+      captures:
+        1: entity.name.type.tag.daml
+        2: punctuation.definition.string.begin.daml
+      push: raw-regex-triple-single
+    - match: '(!Regex)[ \t]*(")(?!(?:""))'
+      captures:
+        1: entity.name.type.tag.daml
+        2: punctuation.definition.string.begin.daml
+      push: raw-regex-double
+
+    # Temporal and Cron payloads use these same ordinary quoted contexts.
+    - match: '"""(?=[ \t]*{{line_end}})'
+      scope: punctuation.definition.string.begin.daml
+      push: triple-double
+    - match: >-
+        '''(?=[ \t]*{{line_end}})
+      scope: punctuation.definition.string.begin.daml
+      push: triple-single
+    - match: '"'
+      scope: punctuation.definition.string.begin.daml
+      push: double
+
+    - match: '!{{tag}}'
+      scope: entity.name.type.tag.daml
+    - match: '(?<!{{key_character}})(?:closed|unset)(?!{{key_character}})'
+      scope: keyword.control.daml
+    - match: '(?<!{{key_character}})(?:true|false|null)(?!{{key_character}})'
+      scope: constant.language.daml
+    - match: '(?<!{{key_character}})(?:String|Bool|Int|Number|Object|List|Tuple|Map|Any|Never|Regex|Date|Time|DateTime|Cron)(?!{{key_character}})'
+      scope: entity.name.type.daml
+    - match: '(?<!{{key_character}})-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?(?!{{key_character}})'
+      scope: constant.numeric.daml
+    - match: '[&|=?:]'
+      scope: keyword.operator.daml
+    - match: '[{}\[\](),]'
+      scope: punctuation.definition.collection.daml
+
+  double:
+    - meta_scope: string.quoted.double.daml
+    # Consuming escaped backslashes in pairs preserves quote escape parity.
+    - match: '\\(?:[\\"/bfnrt]|u[0-9A-Fa-f]{4})'
+      scope: constant.character.escape.daml
+    - match: '"'
+      scope: punctuation.definition.string.end.daml
+      pop: true
+    - match: '{{line_end}}'
+      pop: true
+
+  triple-double:
+    - meta_scope: string.quoted.triple.double.daml
+    - match: '{{triple_double_end}}'
+      captures:
+        2: punctuation.definition.string.end.daml
+      pop: true
+    - match: '\\\\|\\"""'
+      scope: constant.character.escape.daml
+
+  triple-single:
+    - meta_scope: string.quoted.triple.single.daml
+    - match: '{{triple_single_end}}'
+      captures:
+        2: punctuation.definition.string.end.daml
+      pop: true
+    - match: >-
+        \\\\|\\'''
+      scope: constant.character.escape.daml
+
+  raw-regex-double:
+    - meta_content_scope: string.regexp.daml
+    # A quote closes a raw pattern even immediately after a backslash.
+    - match: '"'
+      scope: punctuation.definition.string.end.daml
+      pop: true
+    - match: '{{line_end}}'
+      pop: true
+
+  raw-regex-triple-double:
+    - meta_content_scope: string.regexp.daml
+    - match: '{{triple_double_end}}'
+      captures:
+        2: punctuation.definition.string.end.daml
+      pop: true
+
+  raw-regex-triple-single:
+    - meta_content_scope: string.regexp.daml
+    - match: '{{triple_single_end}}'
+      captures:
+        2: punctuation.definition.string.end.daml
+      pop: true

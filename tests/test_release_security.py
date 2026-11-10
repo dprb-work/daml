@@ -321,6 +321,60 @@ class DependencyInventoryTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def repository_inventory(self):
+        names = [
+            name.decode("utf-8")
+            for name in self.module._git(ROOT, "ls-files", "-z").split(b"\0")
+            if name
+        ]
+        policy = json.loads(
+            (ROOT / "security" / "policy.json").read_text(encoding="utf-8")
+        )
+        return names, policy
+
+    def test_repository_tracked_locks_are_admitted_before_scanner_execution(self):
+        names, policy = self.repository_inventory()
+        stopped = RuntimeError("inventory admitted; scanner intentionally not executed")
+        # Exercise the real inventory gate, then stop at the scanner boundary.
+        # This is not evidence that a scanner covered these dependencies.
+        with (
+            patch.object(self.module, "_trivy", side_effect=stopped),
+            self.assertRaises(RuntimeError) as caught,
+        ):
+            self.module._dependencies(
+                [],
+                {"tool": {"image": "not-executed"}},
+                ROOT,
+                self.root,
+                policy,
+                names,
+            )
+        self.assertIs(caught.exception, stopped)
+
+    def test_unconfigured_tracked_syntect_lock_is_rejected_without_scanning(self):
+        names, policy = self.repository_inventory()
+        lock = "integrations/verify/syntect/Cargo.lock"
+        self.assertIn(lock, names)
+        self.assertIn(lock, policy["dependency_files"])
+        policy["dependency_files"].remove(lock)
+        with (
+            patch.object(
+                self.module,
+                "_trivy",
+                side_effect=AssertionError("inventory drift must fail before scanning"),
+            ),
+            self.assertRaises(self.module._DependencyFailure) as caught,
+        ):
+            self.module._dependencies([], {}, ROOT, self.root, policy, names)
+        self.assertEqual(
+            caught.exception.detail,
+            {
+                "failure_count": 1,
+                "failures": [{"code": "unconfigured-lock", "path": lock}],
+                "failures_truncated": False,
+            },
+        )
+
     def test_empty_npm_lock_requires_matching_dependency_free_manifest(self):
         directory = self.root / "npm"
         directory.mkdir()

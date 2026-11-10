@@ -1,6 +1,6 @@
 # Definitively Asserted DAML for VS Code-compatible editors
 
-The source-buildable VSIX provides `.daml` and `daml.bundle` detection, TextMate highlighting, diagnostics and formatting through `daml-lsp`. Matching current source builds add explicitly selected semantic diagnostics, completion, hover and definition navigation. Documents are syntax-only by default. The language id `definitively-asserted-daml` is distinct from Digital Asset's DAML extension.
+The source-buildable VSIX provides `.daml` and `daml.bundle` detection, TextMate highlighting, diagnostics and formatting through `daml-lsp`. Matching current source builds add standard semantic tokens and explicitly selected semantic diagnostics, completion, hover and definition navigation. Highlighting needs no selected schema context; validation is syntax-only by default. Clients and user themes choose token colors. The language id `definitively-asserted-daml` is distinct from Digital Asset's DAML extension.
 
 ## Install the language server
 

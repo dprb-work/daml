@@ -1,4 +1,4 @@
-use super::{Parser, check_input, is_name_char};
+use super::{Parser, TokenKind, check_input, is_name_char};
 use crate::names::valid_key;
 use crate::native::{DefaultValue, Expression, ExpressionKind, Member};
 use crate::{ErrorKind, Limits, ParseError, Span};
@@ -8,7 +8,7 @@ pub(crate) fn parse_definition(source: &str, limits: Limits) -> Result<Expressio
     Parser::<false>::new(source, limits).native_definition()
 }
 
-impl<const EDITOR: bool> Parser<'_, EDITOR> {
+impl<const EDITOR: bool, const TOKENS: bool> Parser<'_, EDITOR, TOKENS> {
     pub(super) fn native_definition(&mut self) -> Result<Expression, ParseError> {
         self.trivia()?;
         if self.pos == self.source.len() {
@@ -36,10 +36,10 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
             let save = self.pos;
             self.trivia()?;
             if self.peek() != Some('|') {
-                self.pos = save;
+                self.rewind(save);
                 break;
             }
-            self.pos += 1;
+            self.operator()?;
             self.trivia()?;
             alternatives.push(self.intersection(depth, tuple_position)?);
         }
@@ -65,7 +65,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                 ));
             }
             let assignment = self.pos;
-            self.pos += 1;
+            self.operator()?;
             self.trivia()?;
             left.default = if self.source[self.pos..].starts_with("unset") {
                 let end = self.pos + 5;
@@ -75,6 +75,13 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                     .is_none_or(|ch| !is_name_char(ch))
                 {
                     self.pos = end;
+                    self.observe(
+                        Span {
+                            start: end - 5,
+                            end,
+                        },
+                        TokenKind::Keyword,
+                    )?;
                     DefaultValue::Unset
                 } else {
                     DefaultValue::Value(self.value(depth)?)
@@ -88,7 +95,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                 end: assignment + 1,
             });
         } else {
-            self.pos = before_default;
+            self.rewind(before_default);
         }
         Ok(left)
     }
@@ -103,10 +110,10 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
             let save = self.pos;
             self.trivia()?;
             if self.peek() != Some('&') {
-                self.pos = save;
+                self.rewind(save);
                 break;
             }
-            self.pos += 1;
+            self.operator()?;
             self.trivia()?;
             values.push(self.atom(depth, tuple_position)?);
         }
@@ -131,7 +138,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
         self.count_node(self.pos)?;
         let start = self.pos;
         if self.peek() == Some('(') {
-            self.pos += 1;
+            self.operator()?;
             self.trivia()?;
             let inner = self.expression(depth + 1, tuple_position)?;
             self.trivia()?;
@@ -142,7 +149,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                     self.char_end(self.pos),
                 ));
             }
-            self.pos += 1;
+            self.operator()?;
             return Ok(Expression {
                 span: Span {
                     start,
@@ -155,6 +162,13 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
         }
         if self.source[self.pos..].starts_with("closed") {
             self.pos += 6;
+            self.observe(
+                Span {
+                    start,
+                    end: self.pos,
+                },
+                TokenKind::Keyword,
+            )?;
             self.horizontal();
             let inner = Box::new(self.atom(depth + 1, tuple_position)?);
             return Ok(Expression {
@@ -168,7 +182,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
             });
         }
         if self.peek() == Some('!') {
-            self.pos += 1;
+            self.operator()?;
             let name_start = self.pos;
             while self.peek().is_some_and(is_name_char) {
                 self.pos += self.peek().unwrap().len_utf8();
@@ -195,15 +209,17 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                 end: self.pos,
             };
             if self.source.get(name.start..name.end) == Some("Regex") {
+                self.observe_name(name, true)?;
                 self.horizontal();
                 return self.regex(start);
             }
+            self.observe_name(name, false)?;
             let save = self.pos;
             self.horizontal();
             if crate::TemporalKind::from_constructor(&self.source[name.start..name.end]).is_some()
                 && matches!(self.peek(), Some('"' | '\''))
             {
-                self.pos = start;
+                self.rewind(start);
                 let node = self.value(depth)?;
                 return Ok(Expression {
                     span: node.span,
@@ -319,7 +335,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                     assignment: None,
                 });
             }
-            self.pos = save;
+            self.rewind(save);
             return Ok(Expression {
                 span: Span {
                     start,
@@ -349,12 +365,12 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
         if depth > self.limits.max_depth || depth > 128 {
             return Err(self.error(ErrorKind::LimitExceeded, self.pos, self.char_end(self.pos)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut items = Vec::new();
         loop {
             let newline = self.trivia()?;
             if self.peek() == Some(']') {
-                self.pos += 1;
+                self.operator()?;
                 break;
             }
             if self.pos == self.source.len() {
@@ -385,14 +401,12 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
         if self.peek() != Some('"') && !self.source[self.pos..].starts_with("'''") {
             return Err(self.error(ErrorKind::ExpectedValue, self.pos, self.char_end(self.pos)));
         }
-        let (pattern, end) =
-            crate::strings::scan_regex(self.source, self.pos, self.limits.max_scalar_bytes)
-                .map_err(|mut error| {
-                    if error.kind == ErrorKind::UnterminatedString {
-                        error.span.start = start;
-                    }
-                    error
-                })?;
+        let (pattern, end) = self.quoted(true).map_err(|mut error| {
+            if error.kind == ErrorKind::UnterminatedString {
+                error.span.start = start;
+            }
+            error
+        })?;
         self.pos = end;
         Ok(Expression {
             span: Span { start, end },
@@ -413,14 +427,14 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
         if depth > self.limits.max_depth || depth > 128 {
             return Err(self.error(ErrorKind::LimitExceeded, self.pos, self.char_end(self.pos)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut members = Vec::new();
         let mut keys = std::collections::HashSet::new();
         let mut separated = true;
         loop {
             let newline = self.trivia()?;
             if self.peek() == Some('}') {
-                self.pos += 1;
+                self.operator()?;
                 break;
             }
             if self.pos == self.source.len() {
@@ -448,6 +462,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                 start: key_start,
                 end: self.pos,
             };
+            self.observe(key, TokenKind::Property)?;
             if !keys.insert(&self.source[key.start..key.end]) {
                 return Err(self.error(ErrorKind::DuplicateKey, key.start, key.end));
             }
@@ -456,7 +471,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
             }
             let optional = self.peek() == Some('?');
             if optional {
-                self.pos += 1;
+                self.operator()?;
             }
             self.horizontal();
             if self.peek() != Some(':') {
@@ -473,7 +488,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                     self.char_end(self.pos),
                 ));
             }
-            self.pos += 1;
+            self.operator()?;
             self.horizontal();
             let mut constraint = self.expression(depth + 1, false)?;
             let before_default = self.pos;
@@ -489,7 +504,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
             }
             if self.peek() == Some('=') {
                 let assignment = self.pos;
-                self.pos += 1;
+                self.operator()?;
                 self.trivia()?;
                 constraint.default = if self.source[self.pos..].starts_with("unset")
                     && self.source[self.pos + 5..]
@@ -498,6 +513,13 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                         .is_none_or(|ch| !is_name_char(ch))
                 {
                     self.pos += 5;
+                    self.observe(
+                        Span {
+                            start: self.pos - 5,
+                            end: self.pos,
+                        },
+                        TokenKind::Keyword,
+                    )?;
                     DefaultValue::Unset
                 } else {
                     DefaultValue::Value(self.value(depth + 1)?)
@@ -508,7 +530,7 @@ impl<const EDITOR: bool> Parser<'_, EDITOR> {
                     end: assignment + 1,
                 });
             } else {
-                self.pos = before_default;
+                self.rewind(before_default);
             }
             if !metadata && let Some(assignment) = first_scalar_default_assignment(&constraint) {
                 return Err(self.error(

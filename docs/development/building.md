@@ -24,7 +24,7 @@ Run the aggregate gate used by CI:
 ./scripts/check
 ```
 
-It checks library and fuzz formatting, the default portable-library build, all-feature Clippy, Rust tests and doctests, warning-clean rustdoc, and isolated Python extension build, Clippy, Ruff, and behavioral tests. Checks stop at the first failure. Run `./scripts/check-python` for the binding checks alone.
+It checks library, fuzz and Syntect-verifier formatting, the default portable-library build, all-feature Clippy, Rust tests and doctests, warning-clean rustdoc, the isolated Syntect consumer's Clippy and grammar tests, and isolated Python extension build, Clippy, Ruff, and behavioral tests. Checks stop at the first failure. Run `./scripts/check-python` for the binding checks alone.
 
 Focused Rust commands are also available:
 
@@ -44,7 +44,7 @@ cargo deny --locked check
 cargo deny --all-features --locked check
 ```
 
-CI runs dependency checks separately from the Rust gate. `deny.toml` allows the licenses used by selected dependencies and forbids validator HTTP, file, and async retrieval features. No advisories are ignored; duplicate dependency versions remain warnings for review. The isolated fuzz package and Python binding have their own policy checks.
+CI runs dependency checks separately from the Rust gate. Root `deny.toml` allows the licenses used by selected dependencies and forbids validator HTTP, file, and async retrieval features; it ignores no advisories. Duplicate dependency versions remain warnings for review. The isolated fuzz package and Python binding have their own policy checks. The nonshipping [Syntect verifier](../../integrations/syntect/README.md#verify-the-supplied-artifact) has a separate locked audit with exactly two approved informational-maintenance exceptions; its lockfile also remains in the release-security scan inventory.
 
 `Cargo.lock` is tracked, and CI uses `--locked` to prevent implicit dependency changes. A toolchain upgrade must update the pin and pass the aggregate gate. DAML's code is MIT licensed; see the root `LICENSE`.
 

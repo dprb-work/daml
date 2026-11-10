@@ -267,7 +267,7 @@ impl Cursor {
     }
 }
 
-impl<const EDITOR: bool> Parser<'_, EDITOR> {
+impl<const EDITOR: bool, const TOKENS: bool> Parser<'_, EDITOR, TOKENS> {
     pub(super) fn editor_hint(
         &mut self,
         kind: CompletionKind,

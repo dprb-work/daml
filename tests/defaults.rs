@@ -656,7 +656,10 @@ fn expensive_exact_number_uniqueness_fails_through_the_work_budget() {
 
 #[test]
 fn uniqueness_work_propagates_through_references_to_default_created_arrays() {
-    let values = (0..500).map(|value| json!(value)).collect::<Vec<_>>();
+    // Two thousand distinct values require 1,999,000 pairwise comparisons.
+    // Exhaust the budget through actual uniqueness work, not the inert default
+    // payload that older whole-schema reservations multiplied into every check.
+    let values = (0..2_000).map(|value| json!(value)).collect::<Vec<_>>();
     let schema = |unique, values| {
         json!({
             "type": "object",

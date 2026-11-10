@@ -19,7 +19,7 @@ DAML's implementation is organized around explicit owners. Extend the existing o
 - `src/semantic.rs` owns editable semantic snapshots and bounded canonical data writing. `Schemas` selects source-visible names that retain bound identity; the writer checks the selected output grammar. Names remain borrowed from their input or registry owner.
 - `bindings/browser/src` owns JavaScript shape/UTF-16 admission, lossless transport, JavaScript errors, and owned snapshot lifecycle, not language semantics. Input and resolved traversals remain distinct to avoid an intermediate Rust tree and preserve their different provenance requirements.
 - `scripts/cargo-notices.py` owns the Cargo notice-tool pin, license-policy translation, template invocation, and temporary-config lifecycle for native and browser packaging. Each packager owns its build, archive, and provenance format.
-- The optional `src/lsp` adapter owns in-memory URI/version state and protocol coordinate conversion. It reuses the checked parser and formatter; protocol dependencies and the stdio binary are activated only by the `lsp` feature. It does not read source/schema files or select a schema-folder root.
+- The optional `src/lsp` adapter owns in-memory URI/version state and protocol coordinate conversion. It reuses the checked parser and formatter; protocol dependencies and the stdio binary are activated only by the `lsp` feature. Explicit semantic contexts own local bundle analysis. Semantic-token classification uses only the current source and its data/native grammar role, without filesystem discovery or theme/color policy.
 
 Structural recursion makes progress through instance children. Same-instance
 cycles fail composition; runtime work admission distinguishes error, validity
