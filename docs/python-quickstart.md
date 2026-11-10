@@ -165,6 +165,28 @@ defaults; custom validators and default factories are rejected rather than
 silently omitted. The [Python API reference](python.md#derive-schemas-from-python-types)
 describes the supported subset.
 
+## 7. Edit without rewriting the file
+
+With a current source build, append this after the consumer's final `print`:
+
+```python
+edited = schemas.edit(document, [
+    {"op": "replace", "path": "/name",
+     "value": {"kind": "string", "value": "production"}},
+], expected="app.Worker")
+print(edited.source)
+```
+
+Run it against the step 3 file. The printed source changes `name` to
+`"production"` and still omits `retries`. The checked result satisfies
+`app.Worker`, but defaults are not written into the authored document.
+Comments and whitespace outside the replaced value remain unchanged.
+
+`schemas.edit` returns a new document; it does not write `worker.daml`.
+Use `edited.source` when your application decides to save.
+See [source-preserving edits](python.md#preserve-source-while-editing)
+for insertion, removal, batch paths, limits, and errors.
+
 ## Where to go next
 
 - If you used a source checkout, run the checked-in

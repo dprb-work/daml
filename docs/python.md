@@ -1,7 +1,7 @@
 # Python API
 
 The optional `daml-config` Python distribution (`import daml`) delegates parsing,
-formatting, bundle loading, completion, and validation to the Rust library.
+formatting, source editing, bundle loading, completion, and validation to Rust.
 Install a verified candidate wheel or build from source. Nothing is published
 to PyPI yet. The native `daml-fmt` and `daml-lsp` archives are separate and do not
 require Python.
@@ -413,6 +413,60 @@ Optional expected-type names on semantic and staged entry points use the same
 bounded UTF-8 admission and cumulative invocation budget as the value. Oversized
 names fail before registry lookup or construction of a large lookup diagnostic.
 
+### Preserve source while editing
+
+Use `Document.edit` for syntax-only edits or `Schemas.edit` to validate the
+complete result against an existing registry:
+
+```python
+document = daml.parse('# keep this comment\n{name:"demo"\n retries:3}\n')
+edited = document.edit([
+    {"op": "replace", "path": "/name",
+     "value": {"kind": "string", "value": "worker"}},
+    {"op": "remove", "path": "/retries"},
+])
+assert edited.to_python() == {"name": "worker"}
+assert document.source == '# keep this comment\n{name:"demo"\n retries:3}\n'
+
+# With a previously composed or compiled registry:
+checked = schemas.edit(edited, [
+    {"op": "insert", "path": "/retries",
+     "value": {"kind": "number", "value": "5"}},
+], expected="app.Worker")
+```
+
+Both methods return a new `Document`; neither changes the original or writes a
+file. They splice newly rendered values into the original source and preserve
+bytes outside the edited regions. Replacing a container replaces its contents,
+including comments inside that region. Unlike `write`, this is not a canonical
+rewrite of the whole document.
+
+`edits` must be a list or tuple of operation dictionaries. `replace` and `insert`
+require `op`, `path`, and a rich semantic `value`; `remove` requires only `op`
+and `path`. Extra fields are rejected. Values use the same exact-number,
+temporal, cron, and assertion representation as `Document.value()`, not ordinary
+Python values.
+
+Paths are RFC 6901 pointers into the original snapshot. Array indices do not
+shift between operations. Replace and remove require an authored target;
+insert requires an absent object key or a valid array insertion position.
+The empty path replaces the root; root insertion and removal are invalid.
+Overlapping operations are rejected rather than sequenced. See
+[source-editing rules](cli.md#edit-authored-source) for region and comment behavior.
+
+`Schemas.edit(document, edits, expected=None, line_width=80)` uses contextual
+rendering, reparses the complete result, then resolves it before returning.
+It can repair an initially schema-invalid document. Completion validates omitted
+defaults without inserting them into the returned source; a default-only field
+is not an authored edit target. Literal assertions and `expected` both apply.
+Native assertion types must already be admitted by the compiled registry;
+editing does not reopen a bundle or load more definitions.
+
+`Document.edit(edits, line_width=80)` reparses without schema validation.
+Both retain the core limits: 1,024 operations, 16 MiB of cumulative source-edit
+work, and 8 MiB of output, plus the parser, semantic-value, and resolver bounds.
+Python admission uses one shared semantic budget for the entire batch.
+
 ### Stage consumer transformations before strict admission
 
 Use `schemas.resolve_staged(document, stage, expected=None, initial_edits=None)`
@@ -454,12 +508,14 @@ the application owns construction and freshness.
 | `Document.to_python()`, `Document.tags()` | Owned value/metadata exports |
 | `Document.value()` | Editable exact semantic tree with literal assertions |
 | `Document.format(line_width=80)` | Data reflow without completion |
+| `Document.edit(edits, line_width=80)` | Source-preserving edits with syntax validation |
 | `format_definition(source, line_width=80)` | Native definition syntax and reflow |
 | `Bundle.open(root)` | Required local bundle manifest |
 | `Bundle.discover(document_path)` | Nearest ancestor bundle, or `None` |
 | `Bundle.from_sources(root, sources)` | Explicit owned UTF-8 resource table; no filesystem fallback |
 | `Bundle.compile(document, expected=None, additional_types=None)` | Reachable and explicitly loaded native definitions |
 | `Schemas.resolve(document, expected=None)` | Completion and validation |
+| `Schemas.edit(document, edits, expected=None, line_width=80)` | Source-preserving edits with final completion and validation |
 | `Schemas.resolve_semantic(value, expected=None)` | Complete and validate edited semantic values |
 | `Schemas.validate_semantic(value, expected=None)` | Validate supplied semantic data/assertions without completion or mutation |
 | `Schemas.resolve_staged(document, stage, expected=None, initial_edits=None)` | Shared staged completion followed by strict admission |
@@ -493,6 +549,7 @@ The public exception classes derive from `ValueError`:
 | `SchemaError` | `kind`, optional `schema=(resource, pointer)` |
 | `ResolveError` | `kind`, instance `path`, optional input `span`, optional `schema`, optional default `origin=(resource, pointer)` |
 | `SemanticError` | `kind`, RFC 6901 `pointer` |
+| `SourceEditError` | `kind`, optional target `path`, optional conflicting `operations=(first, second)` |
 
 Spans are half-open byte ranges, not Python string character indexes. Defaults
 inserted by resolution have a default origin rather than a fabricated input
@@ -501,6 +558,16 @@ and `origin=None`. An in-memory input has no fabricated filename. Rust source
 chains become Python `__cause__` chains; filesystem causes use `OSError`
 subclasses. Materialization errors from Python's own numeric constructors
 propagate normally.
+
+Source-edit kinds are `InvalidPointer`, `PathNotFound`, `InvalidTarget`,
+`Conflict`, `LimitExceeded`, `StaleSource`, `Parse`, `Semantic`, and `Resolve`.
+Conflict indices are zero-based positions in the supplied batch. Wrapped parse,
+semantic-rendering, and resolution failures retain their public typed
+`__cause__`. Malformed Python operation records, values, Unicode, and shared
+admission-budget failures raise `SemanticError` directly. More than 1,024
+operations raises `SourceEditError` with kind `LimitExceeded` before converting
+any element. Python argument conversion can still raise `TypeError` or
+`OverflowError`.
 
 ## Prepare wheels
 
