@@ -26,6 +26,35 @@ struct Resolver<'a, 's> {
     pending_defaults: Option<stage::PendingDefaults>,
 }
 
+// Keep text work lazy so an early contradiction need not inspect later names.
+// The budget is borrowed only by next(), leaving recursive consumers free to use it.
+struct PropertyNames<'a, I> {
+    names: I,
+    seen: HashSet<&'a str>,
+}
+
+impl<'a, I: Iterator<Item = &'a str>> PropertyNames<'a, I> {
+    fn next(
+        &mut self,
+        budget: &mut Budget<'_>,
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<Option<&'a str>, ResolveError> {
+        for name in self.names.by_ref() {
+            // Reserve hashing and a spelling comparison before deduplication.
+            budget.charge_work(
+                name.len().div_ceil(64).saturating_add(1).saturating_mul(2),
+                node,
+                path,
+            )?;
+            if self.seen.insert(name) {
+                return Ok(Some(name));
+            }
+        }
+        Ok(None)
+    }
+}
+
 enum CandidateSource<'a> {
     Document(&'a Document),
     Semantic(&'a SemanticNode),
@@ -1008,8 +1037,8 @@ impl<'a> Resolver<'a, '_> {
 
         if let ResolvedValue::Mapping(fields) = &mut node.value {
             for (key, child) in fields.iter_mut() {
-                let child_schemas = Self::property_schemas(&schemas, key);
                 let child_path = crate::pointer::join(path, key);
+                let child_schemas = self.property_schemas(&schemas, key, child, &child_path)?;
                 let placeholder = ResolvedNode {
                     value: ResolvedValue::Null,
                     tag: None,
@@ -1022,13 +1051,16 @@ impl<'a> Resolver<'a, '_> {
             }
         }
         if matches!(node.value, ResolvedValue::Mapping(_)) {
-            for key in Self::property_names(&schemas) {
+            let mut names = self.property_names(&schemas, &node, path)?;
+            let mut supplied_lookup_work = self.supplied_property_lookup_work(&node, path)?;
+            while let Some(key) = names.next(&mut self.budget, &node, path)? {
+                self.budget.charge_work(supplied_lookup_work, &node, path)?;
                 if node.get(key).is_some() {
                     continue;
                 }
-                let child_schemas = Self::property_schemas(&schemas, key);
+                let child_schemas = self.property_schemas(&schemas, key, &node, path)?;
                 let child_path = crate::pointer::join(path, key);
-                let required = schemas.iter().any(|schema| schema.requires_property(key));
+                let required = self.requires_property(&schemas, key, &node, path)?;
                 if let Some(child) = self.complete_missing(
                     &child_schemas,
                     &child_path,
@@ -1039,6 +1071,8 @@ impl<'a> Resolver<'a, '_> {
                     self.budget.add_bytes(&node, key, &child_path)?;
                     if let ResolvedValue::Mapping(fields) = &mut node.value {
                         fields.insert(Cow::Borrowed(key), child);
+                        supplied_lookup_work = supplied_lookup_work
+                            .saturating_add(key.len().div_ceil(64).saturating_add(1));
                     }
                 }
             }
@@ -1566,60 +1600,22 @@ impl<'a> Resolver<'a, '_> {
                 .any(|schema| schema.container_kind() == Some("object"))
                 || (self.budget.stage.is_none() && matches!(node.value, ResolvedValue::Mapping(_)));
             if object {
-                let mut supplied_lookup_work = 1usize;
-                if present && let ResolvedValue::Mapping(fields) = &node.value {
-                    for name in fields.keys() {
-                        let work = name.len().div_ceil(64).saturating_add(1);
-                        self.budget.charge_work(work, node, path)?;
-                        supplied_lookup_work = supplied_lookup_work.saturating_add(work);
+                let supplied_lookup_work = if present {
+                    self.supplied_property_lookup_work(node, path)?
+                } else {
+                    0
+                };
+                let mut names = self.property_names(&combined, node, path)?;
+                while let Some(key) = names.next(&mut self.budget, node, path)? {
+                    self.budget.charge_work(supplied_lookup_work, node, path)?;
+                    let supplied = present.then(|| node.get(key)).flatten();
+                    if supplied.is_none() && !self.requires_property(&combined, key, node, path)? {
+                        continue;
                     }
-                }
-                let mut seen = HashSet::new();
-                for schema in &combined {
-                    for key in schema.property_names() {
-                        // Charge before deduplication hashes a name or compares
-                        // it with a prior spelling. Stop as soon as a field
-                        // proves incompatibility; do not prepare later fields.
-                        self.budget.charge_work(
-                            key.len().div_ceil(64).saturating_add(1).saturating_mul(2),
-                            node,
-                            path,
-                        )?;
-                        if !seen.insert(key) {
-                            continue;
-                        }
-                        self.budget.charge_work(
-                            supplied_lookup_work.saturating_add(combined.len()),
-                            node,
-                            path,
-                        )?;
-                        let supplied = present.then(|| node.get(key)).flatten();
-                        if supplied.is_none() {
-                            let mut required = false;
-                            for schema in &combined {
-                                self.budget.charge_work(
-                                    schema.required_lookup_work(),
-                                    node,
-                                    path,
-                                )?;
-                                if schema.requires_property(key) {
-                                    required = true;
-                                    break;
-                                }
-                            }
-                            if !required {
-                                continue;
-                            }
-                        }
-                        for schema in &combined {
-                            self.budget
-                                .charge_work(schema.property_lookup_work(), node, path)?;
-                        }
-                        let properties = Self::property_schemas(&combined, key);
-                        let properties = self.schema_conjunction(properties, node, path)?;
-                        if !self.finite_domains_overlap(&properties, supplied, node, path)? {
-                            return Ok(false);
-                        }
+                    let properties = self.property_schemas(&combined, key, node, path)?;
+                    let properties = self.schema_conjunction(properties, node, path)?;
+                    if !self.finite_domains_overlap(&properties, supplied, node, path)? {
+                        return Ok(false);
                     }
                 }
             }
@@ -1753,15 +1749,13 @@ impl<'a> Resolver<'a, '_> {
         node: &ResolvedNode<'a>,
         path: &str,
     ) -> Result<u8, ResolveError> {
-        self.budget.charge_work(schemas.len(), node, path)?;
-        if !schemas.iter().any(|schema| schema.requires_property(key)) {
+        if !self.requires_property(schemas, key, node, path)? {
             return Ok(0);
         }
         let mut shapes = 0;
         let mut seen = HashSet::new();
         for schema in schemas {
-            self.budget.step(node, path)?;
-            if let Some(property) = schema.property(key) {
+            if let Some(property) = self.property_schema(*schema, key, node, path)? {
                 shapes |= self.schema_container_shapes(property, node, path, &mut seen)?;
             }
         }
@@ -1797,17 +1791,10 @@ impl<'a> Resolver<'a, '_> {
         combined.extend_from_slice(&branch);
         match &node.value {
             ResolvedValue::Mapping(fields) => {
-                for schema in &combined {
-                    let properties = schema
-                        .value()
-                        .get("properties")
-                        .and_then(JsonValue::as_object)
-                        .map_or(0, serde_json::Map::len);
-                    self.budget
-                        .charge_work(properties.saturating_add(1), node, path)?;
-                }
-                for key in Self::property_names(&combined) {
-                    self.budget.step(node, path)?;
+                let mut names = self.property_names(&combined, node, path)?;
+                let supplied_lookup_work = self.supplied_property_lookup_work(node, path)?;
+                while let Some(key) = names.next(&mut self.budget, node, path)? {
+                    self.budget.charge_work(supplied_lookup_work, node, path)?;
                     if fields.contains_key(key) {
                         continue;
                     }
@@ -1821,13 +1808,11 @@ impl<'a> Resolver<'a, '_> {
                     }
                     // Common constraints already create this container. A branch
                     // can still add completion work inside its initially empty value.
-                    self.budget.charge_work(branch.len(), node, path)?;
-                    let branch_children = Self::property_schemas(&branch, key);
+                    let branch_children = self.property_schemas(&branch, key, node, path)?;
                     if branch_children.is_empty() {
                         continue;
                     }
-                    self.budget.charge_work(common.len(), node, path)?;
-                    let common_children = Self::property_schemas(&common, key);
+                    let common_children = self.property_schemas(&common, key, node, path)?;
                     let child_path = crate::pointer::join(path, key);
                     for (shape, value) in [
                         (1, ResolvedValue::Mapping(BTreeMap::new())),
@@ -1856,13 +1841,11 @@ impl<'a> Resolver<'a, '_> {
                 }
                 for (key, value) in fields {
                     self.budget.step(value, path)?;
-                    self.budget.charge_work(branch.len(), value, path)?;
-                    let branch_children = Self::property_schemas(&branch, key);
+                    let branch_children = self.property_schemas(&branch, key, value, path)?;
                     if branch_children.is_empty() {
                         continue;
                     }
-                    self.budget.charge_work(common.len(), value, path)?;
-                    let common_children = Self::property_schemas(&common, key);
+                    let common_children = self.property_schemas(&common, key, value, path)?;
                     if self.has_implicit_branch_work(
                         &common_children,
                         &branch_children,
@@ -1922,19 +1905,84 @@ impl<'a> Resolver<'a, '_> {
         }
         Ok(false)
     }
-    fn property_schemas(schemas: &[SchemaView<'a>], key: &str) -> Vec<SchemaView<'a>> {
-        schemas
-            .iter()
-            .filter_map(|schema| schema.property(key))
-            .collect()
+    fn property_schema(
+        &mut self,
+        schema: SchemaView<'a>,
+        key: &str,
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<Option<SchemaView<'a>>, ResolveError> {
+        self.budget
+            .charge_work(schema.property_lookup_work(), node, path)?;
+        Ok(schema.property(key))
     }
 
-    fn property_names(schemas: &[SchemaView<'a>]) -> impl Iterator<Item = &'a str> {
-        let mut seen = HashSet::new();
-        schemas
-            .iter()
-            .flat_map(|schema| schema.property_names())
-            .filter(move |name| seen.insert(*name))
+    fn property_schemas(
+        &mut self,
+        schemas: &[SchemaView<'a>],
+        key: &str,
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<Vec<SchemaView<'a>>, ResolveError> {
+        let mut properties = Vec::new();
+        for schema in schemas {
+            if let Some(property) = self.property_schema(*schema, key, node, path)? {
+                properties.push(property);
+            }
+        }
+        Ok(properties)
+    }
+
+    fn requires_property(
+        &mut self,
+        schemas: &[SchemaView<'a>],
+        key: &str,
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<bool, ResolveError> {
+        for schema in schemas {
+            self.budget
+                .charge_work(schema.required_lookup_work(), node, path)?;
+            if schema.requires_property(key) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn supplied_property_lookup_work(
+        &mut self,
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<usize, ResolveError> {
+        let mut lookup_work = 1usize;
+        if let ResolvedValue::Mapping(fields) = &node.value {
+            for name in fields.keys() {
+                let work = name.len().div_ceil(64).saturating_add(1);
+                self.budget.charge_work(work, node, path)?;
+                lookup_work = lookup_work.saturating_add(work);
+            }
+        }
+        Ok(lookup_work)
+    }
+
+    fn property_names<'s>(
+        &mut self,
+        schemas: &'s [SchemaView<'a>],
+        node: &ResolvedNode<'_>,
+        path: &str,
+    ) -> Result<PropertyNames<'a, impl Iterator<Item = &'a str> + use<'a, 's>>, ResolveError> {
+        self.budget.charge_work(schemas.len(), node, path)?;
+        let capacity = schemas.iter().fold(0usize, |count, schema| {
+            count.saturating_add(schema.property_count())
+        });
+        // Reserve before allocation. Capacity covers every yielded name, so
+        // insertion never grows the table and rehashes previously charged text.
+        self.budget.charge_work(capacity, node, path)?;
+        Ok(PropertyNames {
+            names: schemas.iter().flat_map(|schema| schema.property_names()),
+            seen: HashSet::with_capacity(capacity),
+        })
     }
 
     fn known_tags(&mut self, node: &ResolvedNode<'_>, path: &str) -> Result<(), ResolveError> {
@@ -3015,12 +3063,21 @@ mod proof_work_tests {
 
     #[test]
     fn compatible_branch_reserves_wide_schema_name_text_work() {
+        check_wide_schema_name_text_work(false);
+    }
+
+    #[test]
+    fn discovery_reserves_wide_schema_name_text_work() {
+        check_wide_schema_name_text_work(true);
+    }
+
+    fn check_wide_schema_name_text_work(discovery: bool) {
         let prefix = "x".repeat(16 * 1024);
         let names = (0..100)
             .map(|index| format!("{prefix}{index:03}"))
             .collect::<Vec<_>>();
-        // The proof cannot admit even one pass over this text within a budget
-        // smaller than its 64-byte work-unit count.
+        // Neither proof nor discovery can admit a pass over this name text
+        // within a budget smaller than its 64-byte work-unit count.
         let max_steps = names
             .iter()
             .map(|name| name.len().div_ceil(64))
@@ -3036,14 +3093,16 @@ mod proof_work_tests {
                     "type": "object",
                     "properties": properties,
                     "required": if required_names { names.clone() } else { vec![] },
-                    "anyOf": [{"default": {}}]
+                    "anyOf": [{}, {"default": {}}]
                 }}}
             }))
             .expect("wide-name module fits existing source admission bounds");
             let schemas = Schemas::compose([module])
                 .expect("wide-name schema fits existing compilation bounds");
             let common = schemas.type_schema("app.Config").expect("root schema");
-            let branch = common.array_child("anyOf", 0).expect("default-bearing arm");
+            let branch = common
+                .array_child("anyOf", usize::from(!discovery))
+                .expect("empty discovery arm or default-bearing compatibility arm");
             let document = crate::parse("{\n}\n").expect("empty object input");
             let mut resolver = Resolver {
                 schemas: &schemas,
@@ -3063,11 +3122,14 @@ mod proof_work_tests {
             };
             let node = from_input(&document, document.root(), 0, "", &mut resolver.budget)
                 .expect("empty object capture needs no wide-name input work");
-            let error = resolver
-                .compatible_branch(&[common], branch, &node, "", true, &mut HashSet::new())
-                .expect_err(
-                    "compatibility must reserve schema-name text work before exceeding its budget",
-                );
+            let result = if discovery {
+                resolver.has_implicit_branch_work(&[common], &[branch], &node, "", 0)
+            } else {
+                resolver.compatible_branch(&[common], branch, &node, "", true, &mut HashSet::new())
+            };
+            let error = result.expect_err(
+                "schema-name traversal must reserve text work before exceeding its budget",
+            );
             assert_eq!(error.kind, ResolveErrorKind::LimitExceeded);
         }
     }

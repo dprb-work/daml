@@ -29,10 +29,12 @@ is introduced. The original unions still validate completed values, preserving
 `oneOf` overlap rejection and ambiguous-completion errors.
 
 Validation-only unions bypass compatibility proofs. Finite intersections start
-from the smallest available domain. Property-name hashing, required-name scans
-and ordered property lookups reserve text work before running. Immutable schema
-metadata stores the name-work bounds so estimating a lookup does not rescan its
-names. Proofs visit fields lazily and stop at the first contradiction.
+from the smallest available domain. One lazy `PropertyNames` cursor serves
+completion, proofs and implicit-container discovery. It reserves capacity before
+allocating its deduplication set, preventing growth from rehashing earlier long
+names. Each incoming name is charged before hashing. Required-name scans and
+ordered property lookups use immutable, precomputed name-work bounds. Proofs
+stop at the first contradiction without preparing later fields.
 
 `SchemaView::evaluation_work` now owns both acyclic and recursive runtime
 reservations. Unused definitions and default payloads no longer multiply every
@@ -55,14 +57,14 @@ timeout. These are conservative budget thresholds, not timings or engine visits.
 
 | Depth | Alternatives | Root-only before | Root-only after | Tagged before | Tagged after |
 |---:|---:|---:|---:|---:|---:|
-| 1 | 4 | 4,672 | 1,211 | 8,900 | 1,467 |
-| 2 | 4 | 123,762 | 3,808 | 410,541 | 4,673 |
-| 3 | 4 | >1m | 12,053 | >1m | 14,939 |
-| 4 | 4 | >1m | 42,890 | >1m | 53,445 |
-| 3 | 1 | 3,905 | 1,526 | 5,857 | 2,210 |
-| 3 | 2 | 71,360 | 3,498 | 285,986 | 4,748 |
-| 3 | 8 | >1m | 61,146 | >1m | 69,254 |
-| 3 | 16 | >1m | 398,141 | >1m | 424,595 |
+| 1 | 4 | 4,672 | 1,253 | 8,900 | 1,509 |
+| 2 | 4 | 123,762 | 3,878 | 410,541 | 4,743 |
+| 3 | 4 | >1m | 12,151 | >1m | 15,037 |
+| 4 | 4 | >1m | 43,016 | >1m | 53,571 |
+| 3 | 1 | 3,905 | 1,660 | 5,857 | 2,353 |
+| 3 | 2 | 71,360 | 3,620 | 285,986 | 4,876 |
+| 3 | 8 | >1m | 61,196 | >1m | 69,292 |
+| 3 | 16 | >1m | 398,095 | >1m | 424,513 |
 
 Reproduce the diagnostic with:
 
@@ -91,7 +93,7 @@ the complete Olaf catalog.
 Before the fix, native semantic resolution failed specifically with
 `schema validation work exceeds step limit`, including with a diagnostic
 100-million-unit allowance. Afterwards it resolves with the unchanged default
-allowance; its minimum successful semantic work budget is 485,473 units. Only
+allowance; its minimum successful semantic work budget is 548,523 units. Only
 the two-way optional `optimize` completion remains a search choice.
 
 The rebuilt native Python extension resolves the same captured semantic tree.
@@ -117,12 +119,14 @@ admitted modules exceeding the aggregate schema-node bound are still rejected.
 
 Review regressions also cover large enum intersections and mandatory common
 defaults under validation-only unions. Both initially failed with work exhaustion
-despite inexpensive valid completions. A private proof-boundary test uses
-100 schema names of about 16 KiB each and a budget smaller than one text pass;
-it rejects before uncharged hashing or required-name comparisons, with and
-without required fields. The rejected implementation returned `true` at that
-boundary. Default-bearing optional/numeric cases exercise pruning rather than
-merely checking the original validator's final rejection.
+despite inexpensive valid completions. Private proof and discovery boundary tests
+use 100 schema names of about 16 KiB each and a budget smaller than one text
+pass. Both paths reject before unreserved hashing or required-name comparisons,
+with and without required fields. Rejected implementations returned `true`
+(compatibility) or `false` (discovery) after doing uncharged text work. The shared
+cursor also prevents hash-table growth from repeatedly hashing old long names.
+Default-bearing optional/numeric cases exercise pruning rather than merely
+checking the original validator's final rejection.
 
 One existing reference/default uniqueness fixture depended on obsolete
 whole-schema overreservation: 500 distinct integers fit its 10-million-unit
@@ -132,10 +136,12 @@ comparisons. Ordinary validation still fits; referenced uniqueness remains
 over budget. No production bound was weakened to satisfy that check.
 
 The consolidation pass removed the separate acyclic runtime cost coefficient;
-compilation admission retains its distinct graph accounting. The simplification
-pass removed diagnostic scaffolding and an unnecessary context clone. Branch
-proofs reuse schema conjunction, finite-domain comparison and the existing
-cumulative budget rather than adding a parallel validation path.
+compilation admission retains its distinct graph accounting. Completion, proof
+and discovery now share the charged name cursor and lookup helpers rather than
+leaving an unguarded pre-proof path. The simplification pass removed diagnostic
+scaffolding and an unnecessary context clone. Branch proofs reuse conjunction,
+finite-domain comparison and the existing cumulative budget rather than adding
+a parallel validation path.
 
 All work remained local. No release package, publication, deployment, hosted CI,
 Olaf edit, or separate browser-SDK worktree change is part of this repair.

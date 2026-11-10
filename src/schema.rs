@@ -456,6 +456,12 @@ impl<'a> SchemaView<'a> {
             .into_iter()
             .flat_map(|properties| properties.keys().map(String::as_str))
     }
+    pub(crate) fn property_count(self) -> usize {
+        self.value()
+            .get("properties")
+            .and_then(Value::as_object)
+            .map_or(0, serde_json::Map::len)
+    }
     // A lookup can compare long shared prefixes against multiple stored keys.
     // Reserve all stored key text: even a worst-case ordered lookup cannot
     // compare more property-name text than that. Compute this bound at admission,
