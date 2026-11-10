@@ -74,6 +74,18 @@ class CiPlanContractTests(unittest.TestCase):
             {"core", "fuzz"},
         )
 
+    def test_semantic_editor_fixture_changes_select_real_editor_checks(self) -> None:
+        for mode in ("ready", "push"):
+            for path in (
+                "tests/fixtures/semantic-editor/workspace/daml.bundle",
+                "tests/fixtures/semantic-editor/providers/Http.daml",
+                "tests/fixtures/semantic-editor/contracts/Adapter.daml",
+            ):
+                with self.subTest(mode=mode, path=path):
+                    result = plan(mode, path)
+                    self.assertEqual(result["tier"], "targeted")
+                    self.assertEqual(set(result["checks"]), {"core", "fuzz", "editors"})
+
     def test_parser_and_native_formatter_changes_require_editor_integration(self) -> None:
         required = {"core", "fuzz", "binaries", "editors"}
         for path in (
@@ -92,6 +104,26 @@ class CiPlanContractTests(unittest.TestCase):
         workflow = plan("ready", ".github/workflows/check.yml")
         self.assertEqual(workflow["tier"], "full")
         assert_selected(plan("ready", "src/lsp/adapter.rs")["checks"], "core", "editors")
+
+    def test_syntect_consumer_dependency_inputs_require_their_scoped_audit(self) -> None:
+        for mode in ("ready", "push"):
+            for filename in ("Cargo.toml", "Cargo.lock", "deny.toml"):
+                with self.subTest(mode=mode, filename=filename):
+                    result = plan(mode, f"integrations/verify/syntect/{filename}")
+                    self.assertEqual(result["tier"], "targeted")
+                    self.assertEqual(
+                        set(result["checks"]), {"core", "dependencies", "editors"}
+                    )
+
+    def test_syntect_grammar_and_checks_keep_existing_integration_boundaries(self) -> None:
+        for path in (
+            "integrations/syntect/daml.sublime-syntax",
+            "integrations/verify/syntect/tests/grammar.rs",
+        ):
+            with self.subTest(path=path):
+                result = plan("ready", path)
+                self.assertEqual(result["tier"], "targeted")
+                self.assertEqual(set(result["checks"]), {"core", "editors"})
 
     def test_unknown_and_broad_paths_fail_closed(self) -> None:
         all_checks = {"docs", "core", "dependencies", "fuzz", "editors", "binaries"}

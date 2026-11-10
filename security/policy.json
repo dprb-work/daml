@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "max_evidence_age_hours": 24,
+  "max_database_age_hours": 24,
+  "tools": {
+    "trivy": {
+      "version": "0.76.2",
+      "image": "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb"
+    },
+    "semgrep": {
+      "version": "1.184.0",
+      "image": "semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed"
+    },
+    "clamav": {
+      "version": "1.5.4",
+      "image": "clamav/clamav:1.5.4@sha256:6d87c712e3391e13c1ba6e05dfb074d4b1ddb5a6834b23bb9da990d2a4ef042a"
+    }
+  },
+  "dependency_files": [
+    "Cargo.lock",
+    "bindings/browser/Cargo.lock",
+    "bindings/browser/package-lock.json",
+    "bindings/browser/verify/package-lock.json",
+    "bindings/python/Cargo.lock",
+    "bindings/python/uv.lock",
+    "fuzz/Cargo.lock",
+    "integrations/verify/package-lock.json",
+    "integrations/verify/syntect/Cargo.lock",
+    "integrations/vscode/package-lock.json"
+  ],
+  "sast_rule_ids": [
+    "python-subprocess-shell-true",
+    "python-yaml-unsafe-load",
+    "javascript-child-process-shell-true",
+    "javascript-eval-location",
+    "rust-command-shell-c"
+  ],
+  "sast_extensions": [".py", ".js", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".rs"]
+}

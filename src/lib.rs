@@ -47,6 +47,7 @@
 use std::borrow::Cow;
 
 mod cron;
+mod explain;
 mod format;
 mod json_backend;
 #[cfg(feature = "lsp")]
@@ -62,10 +63,12 @@ mod schema;
 mod schema_error;
 mod semantic;
 mod source;
+mod source_edit;
 mod strict_json;
 mod strings;
 mod temporal;
 
+pub use explain::{ExplainError, Explanation, ExplanationConstraint};
 pub use format::{FormatError, FormatOptions, format};
 pub use model::{Document, Entry, ErrorKind, Limits, Node, ParseError, Span, StringValue, Value};
 pub use native::{
@@ -85,6 +88,7 @@ pub use schema_error::{SchemaError, SchemaErrorKind};
 pub use semantic::{
     SemanticError, SemanticErrorKind, SemanticNode, SemanticTag, SemanticValue, format_semantic,
 };
+pub use source_edit::{SourceChange, SourceEdit, SourceEditError, SourceEditLimits, SourcePatch};
 pub use temporal::{ParsedTemporal, TemporalError, TemporalKind, TemporalValue};
 
 /// Parses one complete DAML value with default resource bounds.

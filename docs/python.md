@@ -44,7 +44,7 @@ Activate it with `. .venv/bin/activate` on Linux/macOS or
 the following Linux example includes optional Pydantic/dataclass schema support:
 
 ```sh
-uv pip install --only-binary=:all: './download/daml_config-0.1.0-cp312-abi3-manylinux_2_35_x86_64.whl[types]'
+uv pip install --only-binary=:all: './download/daml_config-0.2.0-cp312-abi3-manylinux_2_35_x86_64.whl[types]'
 python -c "import daml; print(daml.parse('{ retries: 3 }').to_python())"
 ```
 
@@ -520,3 +520,7 @@ for prerequisites, the platform matrix and installed-artifact verification.
 
 Source builds still use `uv sync` above. No Python sdist, wheel release asset or
 PyPI upload is implied by a candidate build.
+
+The [coordinated release pipeline](development/releases.md) qualifies all shipping
+components and promotes only explicitly approved files. A version declaration
+or source merge does not itself publish `daml-config`.

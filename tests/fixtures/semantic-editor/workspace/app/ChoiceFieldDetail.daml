@@ -1,0 +1,7 @@
+(closed !Object {
+  a?: !String
+} & !Object {
+  b?: !String
+}) | closed !Object {
+  b?: !Int
+}

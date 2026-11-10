@@ -36,9 +36,11 @@ unsupported path bytes fail closed instead of truncating the change set.
   workflow/control changes, and unknown paths fail closed to this tier. Invalid
   or incomplete path input fails planning, so the required aggregate cannot pass.
 - **Manual full:** dispatching `Check` runs every check group through the same
-  planner. The standalone `Editor integrations` and `Binaries` workflows remain
-  available for their verification contracts; only `Binaries` retains its prior
-  manual-dispatch entrypoint.
+  planner and additionally qualifies the packed browser SDK and collects a complete
+  release candidate. This is a non-publishing preparation preview; it does not make
+  a feature-branch candidate eligible for promotion. The standalone `Editor
+  integrations` and `Binaries` workflows remain available for their verification
+  contracts; only `Binaries` retains its prior manual-dispatch entrypoint.
 
 An `edited` PR event is metadata-only only when `changes` is nonempty, contains
 only `title` or `body`, and each value has exactly a `from` field. A previous
@@ -68,15 +70,16 @@ archives package it; it selects binary build and installed archive proof.
 | `core` | `./scripts/check`: Rust formatting, library checks, all-feature Clippy and tests, rustdoc, and isolated Python binding checks. |
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
 | `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Source changes and retained fixture/fuzz inputs select this boundary. |
-| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron extension-host verification. Integration, protocol, shared parser, and native formatter inputs select this boundary. |
+| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Integration, protocol, shared parser, native formatter and semantic-editor fixture inputs select this boundary. |
 | `binaries` | Native archive builds/installed contracts and stable-ABI Python wheel builds/isolated installs on Linux x64, macOS ARM64 and Windows x64. The same wheel is exercised on CPython 3.12 and 3.13. Native source, package metadata, toolchain, and distribution inputs select this boundary. |
 
 The planner selects `core`, `fuzz`, `binaries`, and `editors` for `src/**`.
 The LSP consumes shared parser and native formatter behavior, so source-level
 engine changes retain the actual installed-editor integration proof instead of
 depending on a brittle per-file exclusion list. `tests/**` and `examples/**` select
-`core`; `tests/fixtures/**` also selects `fuzz`. `SOURCES.md` selects only
-`binaries`. `integrations/**` selects `core` and `editors`. Cargo manifests,
+`core`; `tests/fixtures/**` also selects `fuzz`, and
+`tests/fixtures/semantic-editor/**` additionally selects `editors`. `SOURCES.md`
+selects only `binaries`. `integrations/**` selects `core` and `editors`. Cargo manifests,
 lockfiles, the Rust toolchain, and dependency policy select the affected
 dependencies, fuzz, binary, and editor boundaries as well as `core`. Selection is
 based on the repository's input map, not file extensions.
@@ -88,6 +91,14 @@ and exercises installed base and `types`-extra consumers. It publishes no
 registry package or release asset. Editor verification runs in an Ubuntu
 Electron integration test. Linux uses Ubuntu 22.04; a local Linux run does not
 prove macOS or Windows execution.
+
+Selected heavy work first checks coordinated shipping versions and the release
+admission regressions. Release preparation adds browser package/type/native-parity
+and Chromium verification without adding a planner identity. Collection waits for
+all qualification groups, validates the unchanged eight payloads, runs corruption
+probes and retains the candidate for 14 days. The canonical `Prepare release`
+workflow uses this same graph; only its successful main-branch runs can be
+promoted. See [release operations](releases.md).
 
 The automatic aggregate is `Check / Required`. Keep any existing required checks
 in repository rulesets and require this aggregate there; workflow YAML cannot

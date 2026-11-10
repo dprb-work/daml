@@ -142,17 +142,23 @@ DAML validates the pattern; the consuming application owns scheduling.
 
 | Component | Availability |
 |---|---|
-| Rust library | Source; parsing, definitions, completion, validation, formatting |
-| Formatter and language server | [Native releases](docs/distribution.md); syntax diagnostics and formatting |
-| VS Code extension | Build and install a VSIX; not published to a marketplace |
+| Rust library | Source; parsing, definitions, completion, validation, formatting, targeted source edits |
+| Configuration CLI | [Source-built](docs/cli.md); validation, resolution, provenance/constraint explanation and comment-preserving edits |
+| Formatter and language server | [Native releases](docs/distribution.md) provide syntax diagnostics/formatting; [current source LSP](docs/lsp.md) adds opt-in semantic authoring |
+| VS Code extension | Source-built VSIX with explicit semantic contexts, or a qualified candidate; not published to a marketplace |
+| Syntect highlighting | [Standalone grammar](integrations/syntect/README.md); consumer registration and theme ownership stay with the client |
 | Python bindings | Source or [candidate wheel](docs/python.md#install-a-candidate-wheel); `daml-config` is not published to PyPI |
-| Browser/WASM SDK | Separate GitHub release archive; not published to npm |
+| Browser/WASM SDK | GitHub release archive; not published to npm |
 | YAML/JSON converters | Not implemented; see [interoperability limits](docs/conversion.md) |
 
 [Components and availability](docs/components.md) links the installation guides.
 Source on `main` and versioned archives can expose different APIs; use the
-reference for the version you select. Editor support does not yet include
-schema-aware completion, hover, or semantic diagnostics.
+reference for the version you select. Current semantic editor features require
+matching source-built server and client.
+
+The source targets coordinated `0.2.0` delivery. The
+[release pipeline](docs/development/releases.md) keeps qualification and
+publication separate; a manifest version does not establish download availability.
 
 ## Is DAML a good fit?
 

@@ -65,12 +65,20 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
             or path == ".cargo/config.toml"
         ):
             selected.update(("dependencies", "fuzz", "binaries", "editors"))
+        if path in {
+            "integrations/verify/syntect/Cargo.toml",
+            "integrations/verify/syntect/Cargo.lock",
+            "integrations/verify/syntect/deny.toml",
+        }:
+            selected.add("dependencies")
         if (
             path.startswith(("fuzz/", "tests/fixtures/", "src/"))
             or path in {"Cargo.toml", "Cargo.lock", "deny.toml"}
         ):
             selected.add("fuzz")
-        if path.startswith(("integrations/", "src/")):
+        if path.startswith(
+            ("integrations/", "src/", "tests/fixtures/semantic-editor/")
+        ):
             selected.add("editors")
         if path.startswith("src/") or path in {
             "Cargo.toml",

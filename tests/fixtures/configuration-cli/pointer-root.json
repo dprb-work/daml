@@ -1,0 +1,1 @@
+{"types":{"app.Pointer":{"schema":{"type":"object","properties":{"a/b":{"type":"array","items":{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"]}}}}}}}

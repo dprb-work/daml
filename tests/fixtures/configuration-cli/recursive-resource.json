@@ -1,0 +1,1 @@
+{"resources":[{"uri":"urn:recursive:node","schema":{"type":"object","properties":{"value":{"type":"integer","minimum":0},"next":{"$ref":"urn:recursive:node"}},"required":["value"],"additionalProperties":false}}]}

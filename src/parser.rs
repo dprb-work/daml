@@ -1,8 +1,12 @@
+#[cfg(feature = "lsp")]
+pub(crate) mod editor;
 pub(crate) mod native;
+pub(crate) mod tokens;
 use crate::names::{valid_key, valid_tag};
 use crate::source::line_end;
 use crate::{Entry, ErrorKind, Limits, Node, ParseError, Span, Value};
 use std::collections::HashSet;
+use tokens::Kind as TokenKind;
 
 const HARD_MAX_DEPTH: usize = 128;
 
@@ -72,36 +76,56 @@ pub(crate) fn scan_trivia(
 
 pub(crate) fn parse(source: &str, limits: Limits) -> Result<Node, ParseError> {
     check_input(source, limits)?;
-    let mut parser = Parser {
-        source,
-        pos: usize::from(source.starts_with('\u{feff}')) * '\u{feff}'.len_utf8(),
-        limits,
-        nodes: 0,
-    };
-    parser.trivia()?;
-    if parser.pos == source.len() {
-        return Err(parser.error(ErrorKind::ExpectedValue, parser.pos, parser.pos));
-    }
-    let root = parser.value(0)?;
-    parser.trivia()?;
-    if parser.pos != source.len() {
-        return Err(parser.error(
-            ErrorKind::TrailingInput,
-            parser.pos,
-            parser.char_end(parser.pos),
-        ));
-    }
-    Ok(root)
+    Parser::<false>::new(source, limits).document()
 }
 
-struct Parser<'a> {
+struct Parser<'a, const EDITOR: bool = false, const TOKENS: bool = false> {
     source: &'a str,
     pos: usize,
     limits: Limits,
     nodes: usize,
+    #[cfg(feature = "lsp")]
+    editor: Option<editor::Cursor>,
+    #[cfg(feature = "lsp")]
+    tokens: Vec<tokens::Token>,
 }
 
-impl Parser<'_> {
+impl<'a, const EDITOR: bool, const TOKENS: bool> Parser<'a, EDITOR, TOKENS> {
+    fn new(source: &'a str, limits: Limits) -> Self {
+        Self {
+            source,
+            pos: usize::from(source.starts_with('\u{feff}')) * '\u{feff}'.len_utf8(),
+            limits,
+            nodes: 0,
+            #[cfg(feature = "lsp")]
+            editor: None,
+            #[cfg(feature = "lsp")]
+            tokens: Vec::new(),
+        }
+    }
+
+    fn document(&mut self) -> Result<Node, ParseError> {
+        #[cfg(feature = "lsp")]
+        let gap_start = self.pos;
+        self.trivia()?;
+        #[cfg(feature = "lsp")]
+        self.editor_gap(
+            editor::CompletionKind::Value,
+            gap_start,
+            true,
+            self.peek().is_none(),
+        )?;
+        if self.pos == self.source.len() {
+            return Err(self.error(ErrorKind::ExpectedValue, self.pos, self.pos));
+        }
+        let root = self.value(0)?;
+        self.trivia()?;
+        if self.pos != self.source.len() {
+            return Err(self.error(ErrorKind::TrailingInput, self.pos, self.char_end(self.pos)));
+        }
+        Ok(root)
+    }
+
     fn error(&self, kind: ErrorKind, start: usize, end: usize) -> ParseError {
         ParseError::new(kind, start, end)
     }
@@ -119,6 +143,19 @@ impl Parser<'_> {
     }
 
     fn trivia(&mut self) -> Result<bool, ParseError> {
+        #[cfg(feature = "lsp")]
+        if TOKENS {
+            return self.token_trivia();
+        }
+        #[cfg(feature = "lsp")]
+        if EDITOR {
+            let cursor = self.editor.as_mut().expect("editor mode has cursor state");
+            let (end, newline) = scan_trivia(self.source, self.pos, self.source.len(), |span| {
+                cursor.comment(span)
+            })?;
+            self.pos = end;
+            return Ok(newline);
+        }
         let (end, newline) = scan_trivia(self.source, self.pos, self.source.len(), |_| {})?;
         self.pos = end;
         Ok(newline)
@@ -133,46 +170,29 @@ impl Parser<'_> {
     }
 
     fn value(&mut self, parent_depth: usize) -> Result<Node, ParseError> {
+        #[cfg(feature = "lsp")]
+        let gap_start = self.pos;
         self.trivia()?;
+        #[cfg(feature = "lsp")]
+        self.editor_gap(
+            editor::CompletionKind::Value,
+            gap_start,
+            true,
+            matches!(self.peek(), None | Some('}' | ']')),
+        )?;
         let start = self.pos;
         let tag = if self.peek() == Some('!') {
-            self.pos += 1;
-            let tag_start = self.pos;
-            while self.peek().is_some_and(is_name_char) {
-                self.pos += self.peek().unwrap().len_utf8();
-            }
-            if self.peek().is_some_and(is_forbidden_token_char) {
-                return Err(self.error(
-                    ErrorKind::InvalidCharacter,
-                    self.pos,
-                    self.char_end(self.pos),
-                ));
-            }
-            if self.pos == tag_start || self.pos - tag_start > self.limits.max_scalar_bytes {
-                return Err(self.error(
-                    if self.pos == tag_start {
-                        ErrorKind::InvalidTag
-                    } else {
-                        ErrorKind::LimitExceeded
-                    },
-                    tag_start,
-                    self.pos,
-                ));
-            }
-            if !valid_tag(&self.source[tag_start..self.pos]) {
-                return Err(self.error(ErrorKind::InvalidTag, tag_start, self.pos));
-            }
-            let tag_end = self.pos;
-            let tag = Span {
-                start: tag_start,
-                end: tag_end,
-            };
+            self.operator()?;
+            let tag = self.tag_name()?;
+            let tag_end = tag.end;
             self.horizontal();
             if let Some(kind) =
                 crate::TemporalKind::from_constructor(&self.source[tag.start..tag.end])
             {
                 return self.temporal_literal(start, None, kind);
             }
+            #[cfg(feature = "lsp")]
+            self.editor_tag(tag)?;
             if self.peek() == Some('!') {
                 let intrinsic_start = self.pos + 1;
                 let end = self.source[intrinsic_start..]
@@ -181,7 +201,15 @@ impl Parser<'_> {
                 if let Some(kind) =
                     crate::TemporalKind::from_constructor(&self.source[intrinsic_start..end])
                 {
+                    self.operator()?;
                     self.pos = end;
+                    self.observe_name(
+                        Span {
+                            start: intrinsic_start,
+                            end,
+                        },
+                        false,
+                    )?;
                     self.horizontal();
                     return self.temporal_literal(start, Some(tag), kind);
                 }
@@ -192,7 +220,7 @@ impl Parser<'_> {
                 if parent_depth + 1 > self.limits.max_depth || parent_depth + 1 > HARD_MAX_DEPTH {
                     return Err(self.error(ErrorKind::LimitExceeded, start, tag_end));
                 }
-                self.pos = tag_end;
+                self.rewind(tag_end);
                 self.count_node(start)?;
                 return Ok(Node {
                     span: Span {
@@ -216,14 +244,12 @@ impl Parser<'_> {
                 if self.source[self.pos..].starts_with("\"\"\"")
                     || self.source[self.pos..].starts_with("'''") =>
             {
-                let (string, end) =
-                    crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)?;
+                let (string, end) = self.quoted(false)?;
                 self.pos = end;
                 Value::String(string)
             }
             Some('"') => {
-                let (string, end) =
-                    crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)?;
+                let (string, end) = self.quoted(false)?;
                 self.pos = end;
                 Value::String(string)
             }
@@ -236,14 +262,35 @@ impl Parser<'_> {
             }
             Some('t') if self.keyword("true") => {
                 self.pos += 4;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Bool(true)
             }
             Some('f') if self.keyword("false") => {
                 self.pos += 5;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Bool(false)
             }
             Some('n') if self.keyword("null") => {
                 self.pos += 4;
+                self.observe(
+                    Span {
+                        start: scalar_start,
+                        end: self.pos,
+                    },
+                    TokenKind::Keyword,
+                )?;
                 Value::Null
             }
             Some('-' | '.' | '0'..='9') => self.number()?,
@@ -261,6 +308,16 @@ impl Parser<'_> {
         {
             return Err(self.error(ErrorKind::LimitExceeded, scalar_start, self.pos));
         }
+        #[cfg(feature = "lsp")]
+        if matches!(value, Value::Number(_) | Value::Bool(_) | Value::Null) {
+            self.editor_hint(
+                editor::CompletionKind::Value,
+                Span {
+                    start: scalar_start,
+                    end: self.pos,
+                },
+            )?;
+        }
         Ok(Node {
             span: Span {
                 start,
@@ -269,6 +326,36 @@ impl Parser<'_> {
             tag,
             value,
         })
+    }
+
+    // Shared by strict data parsing and root-assertion inspection. Cursor mode
+    // observes the original name before validation, without admitting it.
+    fn tag_name(&mut self) -> Result<Span, ParseError> {
+        let start = self.pos;
+        while self.peek().is_some_and(is_name_char) {
+            self.pos += self.peek().unwrap().len_utf8();
+        }
+        if self.peek().is_some_and(is_forbidden_token_char) {
+            return Err(self.error(
+                ErrorKind::InvalidCharacter,
+                self.pos,
+                self.char_end(self.pos),
+            ));
+        }
+        if self.pos - start > self.limits.max_scalar_bytes {
+            return Err(self.error(ErrorKind::LimitExceeded, start, self.pos));
+        }
+        let span = Span {
+            start,
+            end: self.pos,
+        };
+        #[cfg(feature = "lsp")]
+        self.editor_hint(editor::CompletionKind::Tag, span)?;
+        if self.pos == start || !valid_tag(&self.source[start..self.pos]) {
+            return Err(self.error(ErrorKind::InvalidTag, start, self.pos));
+        }
+        self.observe_name(span, false)?;
+        Ok(span)
     }
 
     fn temporal_literal(
@@ -287,14 +374,13 @@ impl Parser<'_> {
         if !matches!(self.peek(), Some('"' | '\'')) {
             return Err(self.error(invalid, start, self.char_end(self.pos)));
         }
-        let (text, end) = crate::strings::scan(self.source, self.pos, self.limits.max_scalar_bytes)
-            .map_err(|error| {
-                if error.kind == ErrorKind::LimitExceeded {
-                    error
-                } else {
-                    self.error(invalid, payload_start, error.span.end)
-                }
-            })?;
+        let (text, end) = self.quoted(false).map_err(|error| {
+            if error.kind == ErrorKind::LimitExceeded {
+                error
+            } else {
+                self.error(invalid, payload_start, error.span.end)
+            }
+        })?;
         self.pos = end;
         let value = crate::ParsedTemporal::parse(kind, text, self.source)
             .map_err(|_| self.error(invalid, payload_start, end))?;
@@ -383,6 +469,13 @@ impl Parser<'_> {
         if self.peek().is_some_and(is_name_char) {
             return Err(self.error(ErrorKind::InvalidNumber, start, self.char_end(self.pos)));
         }
+        self.observe(
+            Span {
+                start,
+                end: self.pos,
+            },
+            TokenKind::Number,
+        )?;
         Ok(Value::Number(Span {
             start,
             end: self.pos,
@@ -394,14 +487,27 @@ impl Parser<'_> {
         if depth > self.limits.max_depth || depth > HARD_MAX_DEPTH {
             return Err(self.error(ErrorKind::LimitExceeded, open, self.char_end(open)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut entries = Vec::new();
         let mut keys = HashSet::new();
         let mut separated = true;
+        #[cfg(feature = "lsp")]
+        let map_scope = self.editor_enter_map();
         loop {
+            #[cfg(feature = "lsp")]
+            let gap_start = self.pos;
             let newline = self.trivia()?;
+            #[cfg(feature = "lsp")]
+            self.editor_gap(
+                editor::CompletionKind::Field,
+                gap_start,
+                separated,
+                matches!(self.peek(), None | Some('}')),
+            )?;
             if self.peek() == Some('}') {
-                self.pos += 1;
+                self.operator()?;
+                #[cfg(feature = "lsp")]
+                self.editor_leave_map(map_scope);
                 return Ok(Value::Mapping(entries));
             }
             if self.pos == self.source.len() {
@@ -438,6 +544,14 @@ impl Parser<'_> {
             if self.pos - key_start > self.limits.max_scalar_bytes {
                 return Err(self.error(ErrorKind::LimitExceeded, key_start, self.pos));
             }
+            #[cfg(feature = "lsp")]
+            self.editor_hint(
+                editor::CompletionKind::Field,
+                Span {
+                    start: key_start,
+                    end: self.pos,
+                },
+            )?;
             if !valid_key(&self.source[key_start..self.pos]) {
                 return Err(self.error(ErrorKind::ExpectedKey, key_start, self.pos));
             }
@@ -445,6 +559,7 @@ impl Parser<'_> {
                 start: key_start,
                 end: self.pos,
             };
+            self.observe(key, TokenKind::Property)?;
             if !keys.insert(&self.source[key_start..self.pos]) {
                 return Err(self.error(ErrorKind::DuplicateKey, key_start, self.pos));
             }
@@ -456,8 +571,12 @@ impl Parser<'_> {
                     self.char_end(self.pos),
                 ));
             }
-            self.pos += 1;
+            self.operator()?;
+            #[cfg(feature = "lsp")]
+            let parent_path = self.editor_field(key)?;
             let value = self.value(depth)?;
+            #[cfg(feature = "lsp")]
+            self.editor_leave_path(parent_path);
             entries.push(Entry { key, value });
             separated = false;
         }
@@ -468,13 +587,26 @@ impl Parser<'_> {
         if depth > self.limits.max_depth || depth > HARD_MAX_DEPTH {
             return Err(self.error(ErrorKind::LimitExceeded, open, self.char_end(open)));
         }
-        self.pos += 1;
+        self.operator()?;
         let mut items = Vec::new();
         let mut separated = true;
         loop {
+            #[cfg(feature = "lsp")]
+            let gap_start = self.pos;
             let newline = self.trivia()?;
+            #[cfg(feature = "lsp")]
+            let parent_path = self.editor_index(items.len())?;
+            #[cfg(feature = "lsp")]
+            self.editor_gap(
+                editor::CompletionKind::Value,
+                gap_start,
+                separated,
+                matches!(self.peek(), None | Some(']')),
+            )?;
             if self.peek() == Some(']') {
-                self.pos += 1;
+                self.operator()?;
+                #[cfg(feature = "lsp")]
+                self.editor_leave_path(parent_path);
                 return Ok(Value::Sequence(items));
             }
             if self.pos == self.source.len() {
@@ -488,6 +620,8 @@ impl Parser<'_> {
                 ));
             }
             items.push(self.value(depth)?);
+            #[cfg(feature = "lsp")]
+            self.editor_leave_path(parent_path);
             separated = false;
         }
     }

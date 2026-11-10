@@ -1,0 +1,9 @@
+closed !Object {
+  choice: (closed !Object {
+    a?: !String
+  } & !Object {
+    b?: !String
+  }) | closed !Object {
+    c?: !String
+  }
+}

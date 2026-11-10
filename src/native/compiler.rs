@@ -32,9 +32,9 @@ struct DefaultCheck {
     fixed_choices: Vec<(String, usize)>,
 }
 #[derive(Clone)]
-struct SchemaOrigin {
-    path: PathBuf,
-    span: Span,
+pub(super) struct SchemaOrigin {
+    pub(super) path: PathBuf,
+    pub(super) span: Span,
 }
 #[derive(Clone)]
 struct PresetFragment {
@@ -211,6 +211,8 @@ struct Compiler<'a> {
     materialized_bytes: usize,
     lowering_depth: usize,
     default_validation_steps: usize,
+    #[cfg(feature = "lsp")]
+    editor: Option<super::tooling::EditorIndex>,
 }
 
 fn index_default_position(
@@ -309,13 +311,8 @@ fn index_default_position(
     Ok(id)
 }
 
-pub(super) fn compile<'names>(
-    bundle: &Bundle,
-    document: &Document,
-    expected: Option<&str>,
-    additional_types: impl IntoIterator<Item = &'names str>,
-) -> Result<Schemas, NativeError> {
-    let mut compiler = Compiler {
+fn new_compiler(bundle: &Bundle) -> Compiler<'_> {
+    Compiler {
         bundle,
         contexts: HashMap::new(),
         schema_sources: HashMap::new(),
@@ -347,11 +344,69 @@ pub(super) fn compile<'names>(
         materialized_bytes: 0,
         lowering_depth: 0,
         default_validation_steps: 0,
-    };
+        #[cfg(feature = "lsp")]
+        editor: None,
+    }
+}
+
+pub(super) fn compile<'names>(
+    bundle: &Bundle,
+    document: &Document,
+    expected: Option<&str>,
+    additional_types: impl IntoIterator<Item = &'names str>,
+) -> Result<Schemas, NativeError> {
+    compile_inner(
+        &mut new_compiler(bundle),
+        Some(document),
+        expected,
+        additional_types,
+    )
+}
+
+#[cfg(feature = "lsp")]
+pub(super) fn compile_editor(
+    bundle: &Bundle,
+    document: Option<&Document>,
+    expected: Option<&str>,
+    additional_types: &[&str],
+) -> super::tooling::EditorCompilation {
+    let mut compiler = new_compiler(bundle);
+    compiler.editor = Some(super::tooling::EditorIndex::default());
+    let mut schemas = compile_inner(
+        &mut compiler,
+        document,
+        expected,
+        additional_types.iter().copied(),
+    );
+    let mut index = compiler
+        .editor
+        .take()
+        .expect("editor compilation owns its source index");
+    if let Err(error) = index.finish(std::mem::take(&mut compiler.schema_origins))
+        && schemas.is_ok()
+    {
+        schemas = Err(error);
+    }
+    super::tooling::EditorCompilation { schemas, index }
+}
+
+fn compile_inner<'names>(
+    compiler: &mut Compiler<'_>,
+    document: Option<&Document>,
+    expected: Option<&str>,
+    additional_types: impl IntoIterator<Item = &'names str>,
+) -> Result<Schemas, NativeError> {
+    let bundle = compiler.bundle;
+    #[cfg(feature = "lsp")]
+    if let Some(index) = &mut compiler.editor {
+        index.initialize(bundle)?;
+    }
     let mut roots = Vec::new();
-    collect_config_tags(document, document.root(), &mut roots);
-    if let Some(expected) = expected {
-        roots.push((expected, document.root().span));
+    if let Some(document) = document {
+        collect_config_tags(document, document.root(), &mut roots);
+        if let Some(expected) = expected {
+            roots.push((expected, document.root().span));
+        }
     }
     let mut source_tags = roots
         .iter()
@@ -362,6 +417,20 @@ pub(super) fn compile<'names>(
             let (key, _) = compiler.load_tag(tag, Some(span), &bundle.root)?;
             compiler.registrations.insert(tag.to_owned(), key);
         }
+    }
+    if document.is_none()
+        && let Some(expected) = expected
+    {
+        if expected.len() > crate::Limits::default().max_scalar_bytes {
+            return Err(NativeError::new(
+                NativeErrorKind::LimitExceeded,
+                "expected native type name exceeds compiler input bound",
+            )
+            .at_path(&bundle.root));
+        }
+        let (key, _) = compiler.load_tag(expected, None, &bundle.root)?;
+        compiler.registrations.insert(expected.to_owned(), key);
+        source_tags.insert(expected.to_owned());
     }
     let scalar_limit = crate::Limits::default().max_scalar_bytes;
     for (index, tag) in additional_types.into_iter().enumerate() {
@@ -394,7 +463,7 @@ pub(super) fn compile<'names>(
             compiler.registrations.entry(tag.clone()).or_insert(key);
         }
     }
-    for (alias, key) in compiler.registrations {
+    for (alias, key) in std::mem::take(&mut compiler.registrations) {
         if alias != key && !compiler.types.contains_key(&alias) {
             let target = compiler
                 .types
@@ -471,8 +540,14 @@ pub(super) fn compile<'names>(
         )
     };
     let module_value = Json::Object(Map::from_iter([
-        ("types".into(), Json::Object(compiler.types)),
-        ("resources".into(), Json::Array(compiler.resources)),
+        (
+            "types".into(),
+            Json::Object(std::mem::take(&mut compiler.types)),
+        ),
+        (
+            "resources".into(),
+            Json::Array(std::mem::take(&mut compiler.resources)),
+        ),
     ]));
     let module = SchemaModule::from_value(module_value)
         .map_err(|error| native_schema_error(error, &bundle.root, &compiler.schema_origins))?;
@@ -480,7 +555,7 @@ pub(super) fn compile<'names>(
         .map_err(|error| native_schema_error(error, &bundle.root, &compiler.schema_origins))?;
     schemas.restrict_source_tags(source_tags);
     let mut default_limits = crate::ResolutionLimits::default();
-    for check in compiler.checks {
+    for check in std::mem::take(&mut compiler.checks) {
         let validation = validation_schemas
             .as_ref()
             .expect("default checks have a validation projection");
@@ -1102,16 +1177,28 @@ impl Compiler<'_> {
             return Ok((key, id));
         }
         let (root, relative) = self.locate(tag, span, context_root)?;
+        #[cfg(feature = "lsp")]
+        if let Some(index) = &mut self.editor {
+            index.dependency(&root.join(super::BUNDLE_MANIFEST))?;
+        }
         let canonical_root = self
             .bundle
             .canonical_root(&root)
             .map_err(|error| error.at_span(span).for_reference(tag))?;
         self.imports_for(&canonical_root)?;
         let file = canonical_root.join(relative);
+        #[cfg(feature = "lsp")]
+        if let Some(index) = &mut self.editor {
+            index.dependency(&file)?;
+        }
         let mut logical_parent = file.parent();
         while let Some(directory) = logical_parent {
             if directory == canonical_root.as_path() {
                 break;
+            }
+            #[cfg(feature = "lsp")]
+            if let Some(index) = &mut self.editor {
+                index.dependency(&directory.join(super::BUNDLE_MANIFEST))?;
             }
             if self.bundle.has_manifest(directory) {
                 return Err(NativeError::new(
@@ -1142,10 +1229,20 @@ impl Compiler<'_> {
             if directory == canonical_root.as_path() {
                 break;
             }
+            #[cfg(feature = "lsp")]
+            if let Some(index) = &mut self.editor {
+                index.dependency(&directory.join(super::BUNDLE_MANIFEST))?;
+            }
             if self.bundle.has_manifest(directory) {
                 return Err(NativeError::new(NativeErrorKind::NestedBundleBoundary, "definition path crosses a nested bundle; add the nested bundle as an explicit import").at_path(directory).at_span(span).for_reference(tag));
             }
             parent = directory.parent();
+        }
+        #[cfg(feature = "lsp")]
+        if let Some(index) = &mut self.editor {
+            index.dependency(&canonical_file)?;
+            index.source_alias(&file, &canonical_file)?;
+            index.reference(context_root, tag, &canonical_file)?;
         }
         let relative = canonical_file
             .strip_prefix(&canonical_root)
@@ -1173,19 +1270,17 @@ impl Compiler<'_> {
             .at_path(&canonical_file));
         }
         let remaining = crate::schema::profile::MAX_SOURCE_BYTES.saturating_sub(self.source_bytes);
+        #[cfg(feature = "lsp")]
+        let remaining = self.editor.as_ref().map_or(remaining, |index| {
+            remaining.min(index.remaining_source_bytes())
+        });
         self.active.insert(key.clone());
         let source = self
             .bundle
             .read_resource(&canonical_file, remaining)
             .map_err(|error| error.at_span(span).for_reference(tag))?;
         self.source_bytes += source.len();
-        let definition = super::parse_definition(source).map_err(|error| {
-            NativeError::new(NativeErrorKind::InvalidDefinition, error.to_string())
-                .at_path(&canonical_file)
-                .at_span(error.span)
-                .caused_by(error)
-        })?;
-        let definition = Rc::new(definition);
+        let definition = self.parse_source(source, &canonical_file, &canonical_root)?;
         self.definition_stack.push(Rc::clone(&definition));
         let (mut contract, mut full) = self.lower_definition(
             &definition.root,
@@ -1219,6 +1314,28 @@ impl Compiler<'_> {
             .insert(id.clone(), SchemaSource::Type(key.clone()));
         self.active.remove(&key);
         Ok((key, id))
+    }
+
+    fn parse_source(
+        &mut self,
+        source: String,
+        file: &Path,
+        root: &Path,
+    ) -> Result<Rc<super::Definition>, NativeError> {
+        #[cfg(feature = "lsp")]
+        if let Some(index) = &mut self.editor {
+            return index.definition(file, root, source);
+        }
+        #[cfg(not(feature = "lsp"))]
+        let _ = root;
+        super::parse_definition(source)
+            .map(Rc::new)
+            .map_err(|error| {
+                NativeError::new(NativeErrorKind::InvalidDefinition, error.to_string())
+                    .at_path(file)
+                    .at_span(error.span)
+                    .caused_by(error)
+            })
     }
 
     fn locate(
@@ -1278,7 +1395,30 @@ impl Compiler<'_> {
         if canonical == self.bundle.root || self.contexts.contains_key(&canonical) {
             return Ok(());
         }
-        let (canonical, imports, source_bytes) = self.bundle.load_imports(&canonical)?;
+        #[cfg(feature = "lsp")]
+        let admitted = if let Some(index) = &mut self.editor {
+            let manifest = canonical.join(super::BUNDLE_MANIFEST);
+            index.dependency(&manifest)?;
+            let actual = self.bundle.editor_source_path(&manifest)?;
+            index.dependency(&actual)?;
+            index.source_alias(&manifest, &actual)?;
+            let remaining = crate::schema::profile::MAX_SOURCE_BYTES
+                .saturating_sub(self.source_bytes)
+                .min(index.remaining_source_bytes());
+            let source = self.bundle.read_resource(&manifest, remaining)?;
+            let source_bytes = source.len();
+            index.retain_text(&actual, source)?;
+            let source = index
+                .source(&actual)
+                .expect("retained manifest has its admitted source");
+            let imports = self.bundle.imports_from_source(&canonical, source)?;
+            (canonical, imports, source_bytes)
+        } else {
+            self.bundle.load_imports(&canonical)?
+        };
+        #[cfg(not(feature = "lsp"))]
+        let admitted = self.bundle.load_imports(&canonical)?;
+        let (canonical, imports, source_bytes) = admitted;
         if source_bytes > crate::schema::profile::MAX_SOURCE_BYTES.saturating_sub(self.source_bytes)
         {
             return Err(NativeError::new(
@@ -1362,6 +1502,10 @@ impl Compiler<'_> {
             file,
             None,
         )?;
+        #[cfg(feature = "lsp")]
+        if let Some(index) = &mut self.editor {
+            index.alias(&id, &key.0, file)?;
+        }
         let projection = Rc::new(DefaultProjection {
             reference: key.0.clone(),
             paths: key.1.clone(),
@@ -4259,7 +4403,10 @@ fn contains_union(expression: &super::Expression) -> bool {
     }
 }
 
-fn expression_at(expression: &super::Expression, span: Span) -> Option<&super::Expression> {
+pub(super) fn expression_at(
+    expression: &super::Expression,
+    span: Span,
+) -> Option<&super::Expression> {
     if expression.span == span {
         return Some(expression);
     }
@@ -4697,6 +4844,12 @@ fn is_positive_number_literal(raw: &str) -> bool {
             .bytes()
             .any(|byte| matches!(byte, b'1'..=b'9'))
 }
+
+#[cfg(feature = "lsp")]
+pub(crate) const EDITOR_BUILTINS: &[&str] = &[
+    "Any", "Bool", "Cron", "Date", "DateTime", "Int", "List", "Map", "Never", "Number", "Object",
+    "String", "Time", "Tuple",
+];
 
 fn builtin(name: &str) -> Option<Map<String, Json>> {
     let mut schema = Map::new();

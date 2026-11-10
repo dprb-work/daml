@@ -352,6 +352,33 @@ pub(crate) struct SchemaView<'a> {
     id: SchemaId,
 }
 
+// Ordinary validation keeps the original task layout: only explanation tasks
+// retain growing output-path sizes. These two closed implementations are an
+// allocation boundary, not an extension point.
+trait EvaluationPath: Copy {
+    fn root(bytes: usize) -> Self;
+    fn extend(self, bytes: usize) -> Self;
+    fn bytes(self) -> usize;
+}
+impl EvaluationPath for () {
+    fn root(_: usize) -> Self {}
+    fn extend(self, _: usize) -> Self {}
+    fn bytes(self) -> usize {
+        0
+    }
+}
+impl EvaluationPath for usize {
+    fn root(bytes: usize) -> Self {
+        bytes
+    }
+    fn extend(self, bytes: usize) -> Self {
+        self.saturating_add(bytes)
+    }
+    fn bytes(self) -> usize {
+        self
+    }
+}
+
 impl<'a> SchemaView<'a> {
     fn entry(self) -> &'a SchemaEntry {
         &self.registry.entries[self.id.0]
@@ -364,6 +391,9 @@ impl<'a> SchemaView<'a> {
     }
     pub(crate) fn location(self) -> &'a SchemaLocation {
         &self.entry().location
+    }
+    pub(crate) fn explanation_location(self) -> &'a SchemaLocation {
+        &self.entry().diagnostic_location
     }
     pub(crate) fn binding(self) -> std::borrow::Cow<'a, str> {
         let location = self.location();
@@ -408,6 +438,9 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_array)
             .is_some_and(|required| required.iter().any(|name| name.as_str() == Some(key)))
     }
+    pub(crate) fn required_lookup_work(self) -> usize {
+        self.entry().required_lookup_work
+    }
 
     pub(crate) fn container_kind(self) -> Option<&'static str> {
         match self.value().get("type")?.as_str()? {
@@ -422,6 +455,19 @@ impl<'a> SchemaView<'a> {
             .and_then(Value::as_object)
             .into_iter()
             .flat_map(|properties| properties.keys().map(String::as_str))
+    }
+    pub(crate) fn property_count(self) -> usize {
+        self.value()
+            .get("properties")
+            .and_then(Value::as_object)
+            .map_or(0, serde_json::Map::len)
+    }
+    // A lookup can compare long shared prefixes against multiple stored keys.
+    // Reserve all stored key text: even a worst-case ordered lookup cannot
+    // compare more property-name text than that. Compute this bound at admission,
+    // not by rescanning the map before every runtime lookup.
+    pub(crate) fn property_lookup_work(self) -> usize {
+        self.entry().property_lookup_work
     }
     pub(crate) fn item(self, index: usize) -> Option<Self> {
         self.registry.locate(profile::item(self.value(), index)?)
@@ -450,9 +496,97 @@ impl<'a> SchemaView<'a> {
     pub(crate) fn has_defaults(self) -> bool {
         self.entry().has_defaults
     }
+
+    // Finite domains are constraints, not discriminator/tag metadata. They can
+    // prove that conjunctive obligations have no common value before defaults
+    // are chosen, including when the constrained member is still absent.
+    pub(crate) fn finite_values(self) -> Option<&'a [Value]> {
+        self.value()
+            .get("const")
+            .map(std::slice::from_ref)
+            .or_else(|| {
+                self.value()
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+            })
+    }
+
+    pub(crate) fn finite_value_work(self) -> usize {
+        if self.finite_values().is_some() {
+            self.entry().local_work
+        } else {
+            1
+        }
+    }
+
+    pub(crate) fn permits_finite_value(self, value: &Value) -> bool {
+        self.value()
+            .get("const")
+            .is_none_or(|constant| jsonschema::json::cmp::equal(constant, value))
+            && self
+                .value()
+                .get("enum")
+                .and_then(Value::as_array)
+                .is_none_or(|values| {
+                    values
+                        .iter()
+                        .any(|candidate| jsonschema::json::cmp::equal(candidate, value))
+                })
+    }
+
+    pub(crate) fn permits_finite_node(self, node: &ResolvedNode<'_>) -> bool {
+        let instance = NodeRef::new(node);
+        self.value()
+            .get("const")
+            .is_none_or(|constant| instance.equals_value(constant))
+            && self
+                .value()
+                .get("enum")
+                .and_then(Value::as_array)
+                .is_none_or(|values| values.iter().any(|value| instance.equals_value(value)))
+    }
     /// Reserve an upper bound before calling the upstream engine. This walks
     /// structure, never decides whether a constraint or branch is valid.
     pub(crate) fn evaluation_cost(self, node: &ResolvedNode<'_>, limit: usize) -> usize {
+        self.evaluation_work::<()>(node, limit, false, None)
+    }
+
+    /// Reserve validity checks without the eager error trees built by validate.
+    pub(crate) fn validity_cost(self, node: &ResolvedNode<'_>, limit: usize) -> usize {
+        self.evaluation_work::<()>(node, limit, true, None)
+    }
+
+    /// Reserve eager evaluation output as well as schema work before entering
+    /// the dependency. Annotation payloads are shared Arcs, but arena nodes,
+    /// dynamic annotations, diagnostic rendering and growing paths are owned.
+    pub(crate) fn explanation_resources(
+        self,
+        node: &ResolvedNode<'_>,
+        limits: crate::ResolutionLimits,
+    ) -> crate::ResolutionLimits {
+        let mut resources = crate::ResolutionLimits {
+            max_nodes: 0,
+            max_bytes: 0,
+            max_steps: 0,
+        };
+        resources.max_steps = self.evaluation_work::<usize>(
+            node,
+            limits.max_steps,
+            false,
+            Some((&mut resources, limits)),
+        );
+        resources
+    }
+
+    fn evaluation_work<P: EvaluationPath>(
+        self,
+        node: &ResolvedNode<'_>,
+        limit: usize,
+        validity_only: bool,
+        mut output: Option<(&mut crate::ResolutionLimits, crate::ResolutionLimits)>,
+    ) -> usize {
+        let explaining = output.is_some();
         fn measure(
             node: &ResolvedNode<'_>,
             uniqueness: bool,
@@ -510,15 +644,6 @@ impl<'a> SchemaView<'a> {
             );
             (units, unique)
         }
-        if let Some(work) = self.entry().work {
-            let (units, unique) = measure(node, self.entry().uses_uniqueness, &mut |_, _, _, _| {});
-            // Keep the admitted acyclic profile's existing cost and limits.
-            return work.saturating_mul(units.saturating_add(if self.entry().uses_uniqueness {
-                unique
-            } else {
-                0
-            }));
-        }
         let mut measured = HashMap::new();
         measure(
             node,
@@ -545,22 +670,25 @@ impl<'a> SchemaView<'a> {
                     .saturating_add(self.marking)
             }
         }
-        struct Task<'s, 'i> {
+        struct Task<'s, 'i, P> {
             schema: SchemaView<'s>,
             instance: NodeRef<'i>,
             passes: Passes,
             depth: usize,
             enclosing_error_units: usize,
+            output_path: P,
         }
         let mut pending = vec![Task {
             schema: self,
             instance: NodeRef::new(node),
             passes: Passes {
-                errors: 1,
+                errors: usize::from(!validity_only),
+                validity: usize::from(validity_only),
                 ..Passes::default()
             },
             depth: 0,
             enclosing_error_units: 0,
+            output_path: P::root(self.entry().dispatch_key.len().saturating_mul(2) + 32),
         }];
         let mut cost = 0usize;
         while let Some(task) = pending.pop() {
@@ -570,6 +698,7 @@ impl<'a> SchemaView<'a> {
                 passes,
                 depth,
                 enclosing_error_units,
+                output_path,
             } = task;
             let (units, unique, immediate) = match instance {
                 NodeRef::Value(node) | NodeRef::Dispatch { node, .. } => {
@@ -608,32 +737,57 @@ impl<'a> SchemaView<'a> {
                         .saturating_add(comparison)
                         .saturating_mul(passes.validity),
                 );
-            cost = cost.saturating_add(schema.entry().local_work.saturating_mul(data_work));
-            // Negation probes its child without errors, but its own error
-            // renders the entire authored child, including annotations.
-            // Validity/marking passes never render that diagnostic.
-            cost =
-                cost.saturating_add(schema.entry().not_render_work.saturating_mul(passes.errors));
+            // One work unit covers a value/node or 64 text bytes. Reserving
+            // 512 bytes per unit covers owned JSON containers, diagnostics
+            // (including JSON's at-most-sixfold escaping), and allocator slack.
+            // Per-output-unit storage and paths are reserved separately below.
+            let local_cost = schema
+                .entry()
+                .local_work
+                .saturating_mul(data_work)
+                .saturating_add(schema.entry().not_render_work.saturating_mul(passes.errors));
+            cost = cost.saturating_add(local_cost);
+            if let Some((resources, limits)) = &mut output {
+                let units = schema
+                    .value()
+                    .as_object()
+                    .map_or(0, Map::len)
+                    .saturating_add(4)
+                    .saturating_mul(passes.total());
+                resources.max_nodes = resources.max_nodes.saturating_add(units);
+                resources.max_bytes = resources
+                    .max_bytes
+                    .saturating_add(local_cost.saturating_mul(512))
+                    .saturating_add(units.saturating_mul(
+                        512usize.saturating_add(output_path.bytes().saturating_mul(4)),
+                    ));
+                if resources.max_nodes > limits.max_nodes || resources.max_bytes > limits.max_bytes
+                {
+                    return limit.saturating_add(1);
+                }
+            }
             if cost > limit || depth > MAX_SCHEMA_DEPTH {
                 return limit.saturating_add(1);
             }
             // Charge before queue allocation. Weighted modes coalesce identical
             // structural traversals without expanding the engine's replay tree.
-            let mut push = |schema, instance, passes: Passes, enclosing_error_units| {
-                if passes.total() == 0 {
-                    return;
-                }
-                cost = cost.saturating_add(1);
-                if cost <= limit {
-                    pending.push(Task {
-                        schema,
-                        instance,
-                        passes,
-                        depth: depth + 1,
-                        enclosing_error_units,
-                    });
-                }
-            };
+            let mut push =
+                |schema, instance, passes: Passes, enclosing_error_units, output_path| {
+                    if passes.total() == 0 {
+                        return;
+                    }
+                    cost = cost.saturating_add(1);
+                    if cost <= limit {
+                        pending.push(Task {
+                            schema,
+                            instance,
+                            passes,
+                            depth: depth + 1,
+                            enclosing_error_units,
+                            output_path,
+                        });
+                    }
+                };
             if passes.errors.saturating_add(passes.validity) != 0
                 && ["unevaluatedProperties", "unevaluatedItems"]
                     .iter()
@@ -652,16 +806,48 @@ impl<'a> SchemaView<'a> {
                         ..Passes::default()
                     },
                     enclosing_error_units,
+                    output_path,
                 );
             }
             if let Some(reference) = schema.referenced() {
-                push(reference, instance, passes, enclosing_error_units);
+                push(
+                    reference,
+                    instance,
+                    passes,
+                    enclosing_error_units,
+                    output_path.extend(5),
+                );
             }
             for child in profile::children(schema.value()).filter(|child| child.applies) {
                 let view = schema
                     .registry
                     .locate(child.value)
                     .expect("indexed schema child");
+                let escaped_len = |text: &str| {
+                    text.len().saturating_add(
+                        text.bytes()
+                            .filter(|byte| matches!(byte, b'~' | b'/'))
+                            .count(),
+                    )
+                };
+                let child_path_bytes = if explaining {
+                    1 + child.keyword().len()
+                        + child.map_key().map_or_else(
+                            || {
+                                child.array_index().map_or(0, |index| {
+                                    1 + if index == 0 {
+                                        1
+                                    } else {
+                                        index.ilog10() as usize + 1
+                                    }
+                                })
+                            },
+                            |key| 1 + escaped_len(key),
+                        )
+                        + 5
+                } else {
+                    0
+                };
                 // Structural applicability only: do not evaluate a dependency
                 // schema when its trigger member is absent (or not an object).
                 if child.keyword() == "dependentSchemas"
@@ -685,6 +871,11 @@ impl<'a> SchemaView<'a> {
                         },
                         // Conditions and negation test validity; they never
                         // collect their failing condition's nested errors.
+                        "if" if explaining => Passes {
+                            errors: passes.errors,
+                            validity: passes.validity.saturating_add(passes.marking),
+                            marking: passes.marking,
+                        },
                         "if" => Passes {
                             validity: passes.total(),
                             marking: passes.marking,
@@ -700,7 +891,13 @@ impl<'a> SchemaView<'a> {
                             marking: passes.marking,
                         },
                     };
-                    push(view, instance, child_passes, enclosing_error_units);
+                    push(
+                        view,
+                        instance,
+                        child_passes,
+                        enclosing_error_units,
+                        output_path.extend(child_path_bytes),
+                    );
                     continue;
                 }
                 // contains and unevaluated validators probe item/property
@@ -711,6 +908,7 @@ impl<'a> SchemaView<'a> {
                     "contains" | "unevaluatedProperties" | "unevaluatedItems"
                 ) {
                     Passes {
+                        errors: if explaining { passes.errors } else { 0 },
                         validity: passes.total(),
                         ..Passes::default()
                     }
@@ -759,7 +957,18 @@ impl<'a> SchemaView<'a> {
                                 } else {
                                     enclosing_error_units
                                 };
-                                push(view, instance, child_passes, error_units);
+                                let path_bytes = if explaining {
+                                    child_path_bytes.saturating_add(1 + escaped_len(key))
+                                } else {
+                                    0
+                                };
+                                push(
+                                    view,
+                                    instance,
+                                    child_passes,
+                                    error_units,
+                                    output_path.extend(path_bytes),
+                                );
                             }
                         }
                     }
@@ -787,6 +996,17 @@ impl<'a> SchemaView<'a> {
                                     NodeRef::new(value),
                                     child_passes,
                                     enclosing_error_units,
+                                    output_path.extend(if explaining {
+                                        child_path_bytes.saturating_add(
+                                            1 + if index == 0 {
+                                                1
+                                            } else {
+                                                index.ilog10() as usize + 1
+                                            },
+                                        )
+                                    } else {
+                                        0
+                                    }),
                                 );
                             }
                         }
@@ -799,6 +1019,53 @@ impl<'a> SchemaView<'a> {
             }
         }
         cost
+    }
+    pub(crate) fn evaluate(self, node: &ResolvedNode<'_>) -> jsonschema::Evaluation {
+        self.registry.validator.evaluate(NodeRef::Dispatch {
+            key: &self.entry().dispatch_key,
+            node,
+        })
+    }
+
+    /// Only whole-entry units identify applied contracts. Keyword/wrapper units
+    /// can share a location while describing different instances (for example
+    /// `contains` on an array and its per-item reference wrappers).
+    pub(crate) fn evaluation_schema(self, location: &str) -> Option<(Option<Self>, bool)> {
+        let pointer = if let Some((resource, fragment)) = location.split_once('#') {
+            if resource != self.registry.compiled_resource {
+                return None;
+            }
+            fragment
+        } else {
+            location
+        };
+        let pointer = if pointer.contains('%') {
+            std::borrow::Cow::Owned(percent_decode(pointer)?)
+        } else {
+            std::borrow::Cow::Borrowed(pointer)
+        };
+        let path = pointer.strip_prefix("/$defs/")?;
+        let (key, suffix) = path.split_once('/').unwrap_or((path, ""));
+        let index = key.parse::<usize>().ok()?;
+        self.registry.entries.get(index)?;
+        Some((
+            suffix
+                .is_empty()
+                .then(|| self.registry.view(SchemaId(index))),
+            suffix != "propertyNames",
+        ))
+    }
+
+    pub(crate) fn evaluation_instance_path(self, path: &str) -> Option<&str> {
+        let path = path.strip_prefix('/')?;
+        let suffix = path.strip_prefix(self.entry().dispatch_key.as_str())?;
+        (suffix.is_empty() || suffix.starts_with('/')).then_some(suffix)
+    }
+    pub(crate) fn is_valid(self, node: &ResolvedNode<'_>) -> bool {
+        self.registry.validator.is_valid(NodeRef::Dispatch {
+            key: &self.entry().dispatch_key,
+            node,
+        })
     }
     pub(crate) fn validate(self, node: &ResolvedNode<'_>) -> Result<(), SchemaFailure> {
         let entry = self.entry();
@@ -836,8 +1103,9 @@ struct SchemaEntry {
     default_origin: Option<SchemaLocation>,
     default_tags: HashMap<usize, usize>,
     dispatch_key: String,
-    work: Option<usize>,
     local_work: usize,
+    property_lookup_work: usize,
+    required_lookup_work: usize,
     not_render_work: usize,
     default_temporals: HashMap<usize, crate::temporal::TemporalMetadata>,
     has_defaults: bool,
@@ -1218,7 +1486,6 @@ impl Schemas {
             let info = stats
                 .remove(&entry.location)
                 .expect("every compiled view was preflighted");
-            entry.work = info.work;
             entry.not_render_work = info.not_render_work;
             entry.diagnostic_location = info.diagnostic_location;
             entry.has_defaults = info.defaults;
@@ -1436,8 +1703,26 @@ fn append_schema_entries(
             default_origin,
             default_tags: HashMap::new(),
             dispatch_key: entries.len().to_string(),
-            work: None,
             local_work: 0,
+            property_lookup_work: value.get("properties").and_then(Value::as_object).map_or(
+                1,
+                |properties| {
+                    properties.keys().fold(1usize, |work, name| {
+                        work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                    })
+                },
+            ),
+            required_lookup_work: value.get("required").and_then(Value::as_array).map_or(
+                1,
+                |required| {
+                    required
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .fold(1usize, |work, name| {
+                            work.saturating_add(name.len().div_ceil(64).saturating_add(1))
+                        })
+                },
+            ),
             not_render_work: 0,
             default_temporals: HashMap::new(),
             has_defaults: false,

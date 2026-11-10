@@ -130,6 +130,31 @@ cargo run --locked --example resolve -- examples/application.daml \
 It validates nested records, scalars, and arrays; fills the adapter timeout and
 request ID; and prints completed JSON data. It does not invoke an adapter.
 
+## Explain a checked value
+
+`Schemas::explain(document, expected: Option<&str>, pointer: &str)` performs normal
+completion and strict validation, then selects a value at an RFC 6901 pointer.
+The root needs an explicit assertion or expected type; the empty pointer selects
+the root. Malformed pointers and absent paths are distinct failures.
+
+The returned `Explanation` retains the checked document and exposes `path()`,
+`node()`, and `constraints()`. The node keeps its exact value, assertion, and
+input/default origins. Each `ExplanationConstraint` borrows an admitted registry
+schema and canonical location and records its actual instance path. Direct and
+ancestor obligations, validation-only branches, and nested assertions remain
+visible without flattening references or treating rejected alternatives as
+applied contracts.
+
+The engine reserves evaluation output and metadata work before allocation using
+the invocation's remaining resolution limits. Explanation may exhaust those
+limits sooner than ordinary resolution; it never truncates a report as success.
+`ExplainError` distinguishes resolution failures, missing root selection,
+invalid pointers/array-index tokens, and absent values.
+
+The source-built [`daml explain` command](cli.md#read-an-explanation) presents the
+same result as JSON. No Python or browser explanation binding is added.
+
+
 ## Validate without completion
 
 `Schemas::validate_semantic(&SemanticNode, expected: Option<&str>)` checks only
@@ -183,6 +208,18 @@ Default completion supports structural `properties`, `additionalProperties`
 unambiguous union paths. Branch candidates are checked against the completed
 document's ancestor constraints before ambiguity is reported. Unions without
 reachable defaults use ordinary validation without enumerating unchanged data.
+Completion excludes alternatives whose `const` or `enum` constraints cannot
+intersect the active structural obligations. Required fields can prove this
+before their defaults are inserted. Tags supply their bound schemas, not a
+name-based discriminator. Ordinary resolution can also use supplied scalar
+values; staged resolution uses retained assertions and contracts instead of
+values that callbacks can replace. The original union remains a validation
+obligation, including `oneOf` overlap checks.
+These proofs run only when alternatives can affect completion. Finite-domain
+comparisons and schema-name hashing/lookups share the cumulative work budget.
+Implicit-container discovery uses the same charged name traversal before branch
+proofs run.
+
 Defaults reachable in unsupported applicator positions—negation, conditionals,
 `contains`, `propertyNames`, `dependentSchemas`, pattern-selected properties, or
 unevaluated/content schemas—fail composition instead of being silently ignored.
@@ -442,8 +479,10 @@ materialized nesting is bounded at 128.
 Default resolution limits are 100,000 cumulatively materialized nodes, 8 MiB of
 value/key/tag bytes, and 1,000,000 conservative work units. Alternative candidates
 share those budgets. Validation reserves work before entering the engine,
-distinguishing validity probes, error collection and annotation walks. Recursive
-validation excludes inert descriptions and child-schema payloads from routine
+distinguishing validity probes, error collection and annotation walks. Successful
+checks use a bounded validity probe; failed probes reserve a separate diagnostic
+pass before collecting errors. Both acyclic and recursive validation exclude
+unused definitions, inert descriptions and child-schema payloads from routine
 local work. Error-collection passes also reserve the full authored `not` child
 serialized in a negation diagnostic, including annotations. Validity-only probes
 do not reserve that rendering work. Reservations include exact `uniqueItems`

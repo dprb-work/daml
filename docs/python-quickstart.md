@@ -179,5 +179,6 @@ describes the supported subset.
   contract. You don't need Python for that workflow.
 - Read [data and schema](data-and-schema.md) for the type/value analogy, or the
   [YAML/JSON comparison](comparison.md) for the tradeoffs.
-- [Set up the formatter and editor](getting-started.md). Current editor support
-  provides syntax diagnostics and formatting, not schema-aware validation.
+- [Set up the formatter and editor](getting-started.md). Syntax diagnostics and
+  formatting are the default; matching source builds add
+  [explicit semantic contexts](lsp.md#semantic-context).

@@ -1,0 +1,7 @@
+closed !Object {
+  name: !String
+  retries: !Int
+  note?: !String
+} = {
+  retries: 3
+}

@@ -7,6 +7,7 @@ DAML is an independent experimental language and implementation. This section is
 - [Building and checks](building.md): toolchains, local commands, CI behavior, and change expectations.
 - [Architecture and implementation boundaries](architecture.md): code ownership and defaults for new work.
 - [Native archive distribution](distribution.md): build, install, provenance, and archive verification.
+- [Release preparation and publication](releases.md): coordinated versions, exact candidate identities, human approval and recovery.
 
 ## Research and historical evidence
 
@@ -17,6 +18,7 @@ These records preserve the scope and evidence of earlier investigations. Their d
 - [Temporal representations](temporal-representations.md): standards, ecosystem parsing probes and open API decisions; not an implemented grammar.
 - [Hardening tools](hardening.md): fuzzing, measurement, and dependency-policy commands.
 - [Hardening baseline, 2026-10-18](hardening-baseline.md): recorded bounded campaigns, samples, and exact source revision.
+- [Validation work, 2026-11-10](validation-work.md): Recipe blocker diagnosis, structural branch pruning, before/after work thresholds, and native/WASM evidence.
 - [Edge-case record](edge-cases.md) and [raw probe output](edge-cases.json): preserved parser observations and provenance.
 
 See also [source and distribution notices](../../SOURCES.md).

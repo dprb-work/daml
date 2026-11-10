@@ -42,6 +42,7 @@ documents the supported type projection; it does not construct model instances.
 
 - [Install native tools](distribution.md), [format a file](formatting.md), or
   [configure an LSP editor](lsp.md).
+- [Check, resolve, explain, and edit configuration](cli.md) with the source-built CLI.
 - [Build and install the VS Code extension](../integrations/vscode/README.md).
 - [Understand YAML/JSON interoperability](conversion.md), including what plain
   exports lose and which converters aren't implemented.
