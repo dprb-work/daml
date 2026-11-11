@@ -5,13 +5,15 @@ The preparation workflow builds and exercises those files. A separate workflow
 promotes only the version, source revision, run and manifest digest that the
 owner approves, to the separately approved publication target.
 
-The coordinated source version is **0.2.1**. It is a release candidate until
-publication completes. Existing 0.2.0 releases remain available and unchanged.
+The coordinated source version is **0.2.1**. Its GitHub release was published
+on 2026-11-10 from
+`9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`; see the [recovery record](#v021-recovery-record).
+Its assets are immutable. Existing 0.2.0 releases remain available and unchanged.
 
-The owner selected **GitHub-only publication for v0.2.1**. PyPI publication and
-account setup are deferred. The three qualified wheels still ship as GitHub
-release attachments for manual download and installation; this does not make
-`daml-config` available from PyPI.
+The owner selected **GitHub-only publication for v0.2.1**, and publication
+completed. PyPI publication and account setup were deferred. The three qualified
+wheels are GitHub release attachments for manual download and installation;
+this does not make `daml-config` available from PyPI.
 
 ## What ships together
 
