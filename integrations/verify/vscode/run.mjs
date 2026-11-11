@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -23,6 +24,7 @@ const workspaceOverride = join(scratch, 'workspace-server-sentinel');
 const trustedLog = join(scratch, 'trusted-server-sentinel.log');
 const untrustedLog = join(scratch, 'untrusted-server-sentinel.log');
 const lifecycleWrapper = join(scratch, 'lifecycle-server-wrapper.cjs');
+const replacementWrapper = join(scratch, 'replacement-server-wrapper.cjs');
 const lifecycleWrapperPid = join(scratch, 'lifecycle-wrapper.pid');
 const lifecycleChildPid = join(scratch, 'lifecycle-server.pid');
 const lifecycleStatusFile = join(scratch, 'lifecycle-status.jsonl');
@@ -42,31 +44,17 @@ await writeFile(workspaceOverride, [
   '',
 ].join('\n'), 'utf8');
 await chmod(workspaceOverride, 0o755);
-await writeFile(lifecycleWrapper, `#!/usr/bin/env node
-const { spawn } = require('node:child_process');
-const { appendFileSync, writeFileSync } = require('node:fs');
-const record = event => appendFileSync(${JSON.stringify(lifecycleStatusFile)}, JSON.stringify(event) + '\\n');
-record({ event: 'wrapper-start', pid: process.pid, execPath: process.execPath });
-writeFileSync(${JSON.stringify(lifecycleWrapperPid)}, String(process.pid));
-let child;
-try {
-  child = spawn(${JSON.stringify(lsp)}, process.argv.slice(2), { stdio: 'inherit' });
-} catch (error) {
-  record({ event: 'spawn-error', code: error.code ?? null, message: error.message });
-  process.exit(1);
-}
-record({ event: 'child-spawn', pid: child.pid ?? null, execPath: ${JSON.stringify(lsp)} });
-if (child.pid !== undefined) writeFileSync(${JSON.stringify(lifecycleChildPid)}, String(child.pid));
-child.once('error', error => {
-  record({ event: 'spawn-error', code: error.code ?? null, message: error.message });
-  process.exit(1);
-});
-child.once('exit', (code, signal) => {
-  record({ event: 'child-exit', code, signal });
-  if (code === 0) setInterval(() => {}, 60_000);
-  else process.exit(code ?? 1);
-});
+const proxy = join(here, 'lifecycle-proxy.cjs');
+// VS Code may resolve a shell PATH without Node; use the harness runtime.
+await writeFile(lifecycleWrapper, `#!${process.execPath}
+process.env.DAML_LSP_PROXY_LINGER = '1';
+require(${JSON.stringify(proxy)});
 `, 'utf8');
+await writeFile(replacementWrapper, `#!${process.execPath}
+process.env.DAML_LSP_PROXY_LINGER = '0';
+require(${JSON.stringify(proxy)});
+`, 'utf8');
+await chmod(replacementWrapper, 0o755);
 await chmod(lifecycleWrapper, 0o755);
 await writeFile(join(trustedWorkspace, '.vscode', 'settings.json'), JSON.stringify({
   'definitivelyAssertedDaml.serverPath': workspaceOverride,
@@ -140,6 +128,9 @@ try {
       DAML_LSP_WRAPPER_PID_FILE: lifecycleWrapperPid,
       DAML_LSP_CHILD_PID_FILE: lifecycleChildPid,
       DAML_LSP_STAGE_FILE: lifecycleStageFile,
+      DAML_LSP_STATUS_FILE: lifecycleStatusFile,
+      DAML_LSP_REPLACEMENT_PATH: replacementWrapper,
+      DAML_LSP_WRAPPER_PATH: lifecycleWrapper,
     };
     await runTests({
       vscodeExecutablePath: executable,
@@ -149,6 +140,24 @@ try {
       launchArgs: [trustedWorkspace, '--user-data-dir', trustedUserData, '--extensions-dir', extensions, '--disable-workspace-trust'],
     });
     await assertNoInvocation(trustedLog, 'trusted workspace override');
+    const events = (await readFile(lifecycleStatusFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const sessions = events.filter(event => event.event === 'wrapper-start');
+    assert.equal(sessions.length, 2, 'one original and one current replacement may start; deactivation must not reactivate');
+    assert.ok(events.some(event => event.event === 'context-response-withheld'), 'the context operation must really be awaiting a missing response during replacement');
+    for (const session of sessions) {
+      const messages = events.filter(event => event.session === session.session && event.event === 'outbound').map(event => event.message);
+      const shutdown = messages.findIndex(message => message.method === 'shutdown');
+      assert.ok(shutdown >= 0, `session ${session.session} must submit shutdown`);
+      assert.equal(messages.filter(message => message.method === 'shutdown').length, 1);
+      assert.deepEqual(messages.slice(shutdown + 1).map(message => message.method), ['exit'],
+        `session ${session.session} sent application traffic after shutdown`);
+      const stream = events.filter(event => event.session === session.session);
+      const acknowledgment = stream.findIndex(event => event.event === 'shutdown-response');
+      const exit = stream.findIndex(event => event.event === 'outbound' && event.message.method === 'exit');
+      assert.ok(acknowledgment >= 0 && acknowledgment < exit, 'exit requires the shutdown acknowledgment');
+      assert.equal(stream[acknowledgment].message.id, messages[shutdown].id);
+      assert.equal(stream[acknowledgment].message.result, null);
+    }
   }
   async function runUntrusted() {
     const scenarioEnv = {
@@ -235,6 +244,25 @@ try {
   try {
     await killOwnedProcess(lifecycleChildPid, lsp);
     await killOwnedProcess(lifecycleWrapperPid, lifecycleWrapper);
+    // Replacement normally exits through deactivation. Clean up a failed run's
+    // remaining proxy/native child by recorded, task-owned PIDs as well.
+    try {
+      const events = (await readFile(lifecycleStatusFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+      for (const event of events) {
+        if (event.event !== 'wrapper-start' && event.event !== 'child-spawn') continue;
+        const pid = event.pid;
+        if (!Number.isSafeInteger(pid) || pid < 2) continue;
+        let command;
+        try { command = await readFile(`/proc/${pid}/cmdline`, 'utf8'); }
+        catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+        const expected = event.event === 'child-spawn' ? lsp : replacementWrapper;
+        if (!command.includes(expected)) continue;
+        try { process.kill(pid, 'SIGKILL'); }
+        catch (error) { if (error.code !== 'ESRCH') throw error; }
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

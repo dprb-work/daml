@@ -39,7 +39,7 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 | Completion | Visible assertion/reference names and contract fields, including required/optional/default details and reliable incomplete prefixes. |
 | Hover | Applicable constraints/defaults; checked configuration values distinguish supplied input from completed defaults. Invalid/incomplete data receives labeled hints only. |
 | Definition | Actual native source locations for references and configuration fields; no invented built-in targets. |
-| Shutdown | Standard shutdown response followed by exit; graceful sessions terminate successfully even while the client stdin pipe remains open. |
+| Shutdown | A null shutdown response closes ordinary session dispatch permanently. Later requests receive InvalidRequest; non-exit notifications and unsolicited responses are ignored until exit. Graceful sessions terminate successfully even while the client stdin pipe remains open. |
 
 Without a selected context, documents use only client-provided URIs and text.
 Untitled buffers and nonexistent file URIs work without filesystem access.
@@ -62,6 +62,16 @@ Diagnostics carry versions; clients must also discard a formatting result if
 their buffer changes after the request. Standard document-formatting requests
 and edits do not contain a document version, so the server does not claim to
 solve client-side edit races.
+
+Shutdown uses one absolute 30-second deadline for terminal protocol-channel sends
+and receives. Intervening traffic does not reset that budget. Missing `exit`,
+failed response delivery and broken input remain failures. This does not
+interrupt a transport thread blocked in an OS stdout write; the editor's process
+owner remains responsible for terminating an unresponsive server.
+
+Clients must close outgoing application-message admission before shutdown. The
+server's rejection of a late request is protocol defense, not permission for
+providers, synchronization or cancellation callbacks to keep sending work.
 
 ## Semantic token highlighting
 
@@ -226,9 +236,10 @@ constructor execution is provided. Separate [client integrations](../integration
 own highlighting presentation, process lifecycle, synchronization, dependency
 watching and edit application; the grammar is not a second language authority.
 
-The protocol DTOs, framing, stdio threads, and shutdown helper come from the
-pinned upstream libraries. DAML code owns versioned documents, explicit context,
-byte-span conversion and integration with the parser, formatter and native compiler.
+The protocol DTOs, framing and stdio threads come from the pinned upstream
+libraries. DAML owns protocol admission and terminal shutdown policy, versioned
+documents, explicit context, byte-span conversion and integration with the
+parser, formatter and native compiler.
 Initialization uses fallible sends rather than upstream helpers that panic on a disconnected client;
 invalid parameters leave the handshake pending so its error response can flush.
 No second grammar, async runtime, JSON-RPC framer or remote configuration host is

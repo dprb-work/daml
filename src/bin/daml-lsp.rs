@@ -22,6 +22,8 @@ fn main() -> ExitCode {
         // the client's stdin pipe open; joining that blocked reader would hang.
         return ExitCode::FAILURE;
     }
+    // The retained lsp-server reader stops after forwarding exit, without waiting
+    // for stdin EOF. Only a completed handshake reaches this transport join.
     match threads.join() {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) => {
