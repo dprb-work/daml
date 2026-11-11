@@ -5,24 +5,26 @@ The preparation workflow builds and exercises those files. A separate workflow
 promotes only the version, source revision, run and manifest digest that the
 owner approves, to the separately approved publication target.
 
-The coordinated source version is **0.2.1**. Its GitHub release was published
-on 2026-11-10 from
-`9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`; see the [recovery record](#v021-recovery-record).
-Its assets are immutable. Existing 0.2.0 releases remain available and unchanged.
+The coordinated source version is **0.2.2**, prepared as a fix-only release of
+the merged LSP lifecycle correction. See the [v0.2.2 notes and readiness](lsp-lifecycle-release-readiness.md).
+Its selected target is **GitHub-only**, with publication still subject to
+qualified candidate admission and `dprbook` protected-environment approval.
 
-The owner selected **GitHub-only publication for v0.2.1**, and publication
-completed. PyPI publication and account setup were deferred. The three qualified
-wheels are GitHub release attachments for manual download and installation;
-this does not make `daml-config` available from PyPI.
+The prior v0.2.1 GitHub release was published on 2026-11-10 from
+`9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`; see the [recovery record](#v021-recovery-record).
+Its assets and existing 0.2.0 releases remain unchanged. PyPI publication and
+account setup remain deferred. Attached wheels are manual downloads, not a
+`daml-config` PyPI publication. Versioned examples below retain the historical
+v0.2.1 tuple; use the new candidate's exact version and identity for v0.2.2.
 
 ## What ships together
 
 | Component | Payloads | Destination after approval |
 |---|---|---|
-| Formatter/LSP | Linux x64, macOS ARM64 and Windows x64 native archives | GitHub release `v0.2.1` |
-| Python | Three `daml-config` stable-ABI wheels; import remains `daml` | The same GitHub release; also PyPI only in `github-and-pypi` mode |
-| Browser SDK | `dprb-work-daml-browser-0.2.1.tgz` | The same GitHub release; not npm |
-| VS Code | `definitively-asserted-daml-0.2.1.vsix` | The same GitHub release; not a marketplace |
+| Formatter/LSP | Linux x64, macOS ARM64 and Windows x64 native archives | GitHub release `v0.2.2` |
+| Python | Three `daml-config` stable-ABI wheels; import remains `daml` | The same GitHub release; also PyPI only in separately authorized `github-and-pypi` mode |
+| Browser SDK | `dprb-work-daml-browser-0.2.2.tgz` | The same GitHub release; not npm |
+| VS Code | `definitively-asserted-daml-0.2.2.vsix` | The same GitHub release; not a marketplace |
 
 The candidate contains eight payloads, eight SHA-256 sidecars and `RELEASE.json`.
 It contains no Python sdist or published Cargo crate. The existing

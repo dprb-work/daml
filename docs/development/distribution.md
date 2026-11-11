@@ -88,8 +88,8 @@ The [LSP guide](../lsp.md) describes protocol capabilities. The VS Code extensio
 
 The same three native jobs prepare the `daml-config` distribution. Its import
 package remains `daml`; the unrelated PyPI project named `daml` is not this
-distribution. The Python Cargo manifest declares `0.2.0`; the release policy
-checks it against the other shipping components before qualification.
+distribution. The Python Cargo manifest declares the coordinated shipping version;
+the release policy checks it against the other shipping components before qualification.
 
 | Platform | Wheel contract |
 |---|---|

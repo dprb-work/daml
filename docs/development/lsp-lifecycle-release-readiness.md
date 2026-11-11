@@ -1,8 +1,8 @@
-# Proposed release notes and readiness: LSP lifecycle (#57)
+# DAML v0.2.2 release notes and readiness: LSP lifecycle (#57)
 
-**Status:** preparation only. This record does not name a next release version, establish a qualified candidate, or authorize a tag, publication, or release.
+**Status:** v0.2.2 selected for GitHub-only publication. Source preparation and candidate qualification precede publication; the protected `release` environment still requires `dprbook` approval of the exact candidate tuple. This record does not claim publication.
 
-## Draft release note
+## Release notes
 
 ### Language server lifecycle
 
@@ -10,7 +10,7 @@ The VS Code client now keeps each language-server session's startup, active work
 
 The `daml-lsp` server now treats shutdown as a terminal protocol state. It acknowledges shutdown once, rejects later requests with `InvalidRequest`, ignores non-exit notifications, and waits for `exit` under one 30-second deadline. The deadline bounds protocol waits; it does not interrupt an operating-system-level blocked stdout write.
 
-This change adds no user-facing setting or new language behavior. The VS Code extension remains a GitHub release attachment or source-buildable VSIX, not a marketplace publication. This wording is proposed for the next coordinated release; no version has been assigned.
+This fix-only release adds no user-facing setting or new language behavior. The VS Code extension remains a GitHub release attachment or source-buildable VSIX, not a marketplace publication. All shipping components advance together to 0.2.2; no new implementation changes are included beyond current `main`.
 
 ## Historical implementation evidence
 
@@ -23,20 +23,19 @@ These records support the merged change. They do not qualify a release candidate
 
 ## Current release state
 
-The [published v0.2.1 release](https://github.com/dprb-work/daml/releases/tag/v0.2.1) was published on 2026-11-10 from `9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`, before PR #57 merged. It does not contain this fix and must remain unchanged. The current source declarations in the root, Python, browser, and VS Code manifests remain `0.2.1`; a next coordinated version has not been selected in the release record.
+The [published v0.2.1 release](https://github.com/dprb-work/daml/releases/tag/v0.2.1) was published on 2026-11-10 from `9f6dcb0eb5d530b56737dd3bad23fcdee22030b0`, before PR #57 merged. It does not contain this fix and remains unchanged.
 
-The refreshed `main` used for this preparation was `9cef3336d6ffdd3a4efb8d1e8300732df77c76ca`, which contains PR #57. This is a source baseline, not a release candidate revision. The newest successful `Prepare release` run listed during this check was `42785680584`, for the already-published v0.2.1 source. No preparation run for the current `main` baseline was found. No open GitHub issue or pull request was returned by the live queries; that does not establish release approval or verify the current protected environment.
+The source baseline for PR #59 is `9cef3336d6ffdd3a4efb8d1e8300732df77c76ca`, which contains PR #57. PR #59 advances shipping declarations and path constraints to 0.2.2 and regenerates Cargo, npm and uv lockfiles using their owning tools. It adds no implementation changes. The final merged source SHA, preparation run, artifact ID and manifest digest must come from canonical main qualification, not this baseline.
 
-The release operator guide's opening status now identifies v0.2.1 as published. Its recovery record documents the prior protected run, recovery decision, and verified public assets. The guide's v0.2.1 GitHub-only selection applies to that completed release only; it does not select the next release's target.
+Daniel authorized preparing v0.2.2 and dispatching publication with the same `github-only` destination as v0.2.1, stopping at the protected environment review. The release includes the same eight payloads and checksum sidecars: three native archives, three Python wheels, the browser SDK and VSIX, plus `RELEASE.json`. No PyPI, npm, Cargo or marketplace publication is authorized. Only `dprbook` may supply the required human environment approval.
 
 ## Remaining release gates
 
-Complete these steps for a future release. The repository's [release operator guide](releases.md) owns the procedure.
+The repository's [release operator guide](releases.md) owns the procedure. Candidate/run and publication evidence are recorded by the release operator after these steps complete; unchecked items are not claims of completion.
 
-- [ ] Select the next coordinated version and publication target explicitly. Do not reuse or overwrite v0.2.1. Advance all shipping component versions together and regenerate their lockfiles as required by the guide.
-- [ ] Confirm the final accepted source is on current `main`, then run `python3 scripts/release_common.py check-version` and the canonical `Prepare release` workflow for that source.
-- [ ] Retain the successful main-branch candidate and record its exact version, full source SHA, preparation run ID, artifact ID, and `RELEASE.json` SHA-256. Confirm all eight payloads and sidecars match the candidate manifest.
-- [ ] Run `tests/release_candidate_check.py` with that exact tuple. Confirm the required security checks and freshness windows pass; the PR checks above do not satisfy candidate qualification.
-- [ ] Recheck the protected `release` environment with `python3 scripts/release_publish.py check-environment`. Obtain the owner's approval for the exact version, source, run, manifest digest, and target through the required human gate.
-- [ ] Publish only after that explicit authorization. Do not treat this draft PR, merged PR #57, historical CI, or a successful preparation run as publication authority.
-- [ ] After publication, verify the tag and every public asset against the approved hashes, then verify the GitHub-attached Python wheel installation as required for GitHub-only publication. Inspect and resolve any partial effects through the guide; do not rerun blindly.
+- [x] Select v0.2.2 and `github-only`; advance all shipping component versions and regenerate lockfiles. Do not reuse or overwrite v0.2.1.
+- [ ] Complete PR #59 checks and merge; confirm the final source is current `main`.
+- [ ] Run the canonical `Prepare release` workflow and retain its version, full source SHA, preparation run ID, artifact ID and `RELEASE.json` SHA-256.
+- [ ] Validate all eight payloads and sidecars with `tests/release_candidate_check.py` using that exact tuple; confirm security evidence and freshness.
+- [ ] Recheck the protected `release` environment, dispatch the publication workflow with the exact tuple and `github-only`, then stop for `dprbook` environment approval. Never self-approve or bypass this gate.
+- [ ] After human approval and completed publication, verify the tag and all public assets against the approved hashes, install the attached Python wheel outside the checkout, and exercise downloaded Linux x64 `--version` and one clean LSP initialize/shutdown/exit session. This verification is deferred until the operator receives the post-approval continuation.
