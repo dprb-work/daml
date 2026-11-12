@@ -2,7 +2,7 @@
   "name": "definitively-asserted-daml",
   "displayName": "Definitively Asserted DAML",
   "description": "Syntax highlighting, formatting, and explicitly selected schema-aware authoring for DAML documents.",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "dprb-work",
   "license": "MIT",
   "repository": {
