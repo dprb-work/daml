@@ -239,7 +239,7 @@ fn default_actions(
             Err(error) => return Err(failed(super::display(&error))),
         };
         let edited = patch
-            .apply(data.source())
+            .apply_syntax(data.source())
             .map_err(|error| failed(super::display(&error)))?;
         let checked = schemas
             .resolve_with_limits(&edited, expected, Default::default())

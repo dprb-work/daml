@@ -127,6 +127,19 @@ impl SourcePatch<'_> {
     /// Returns [`SourceEditError::StaleSource`] before constructing output for a
     /// changed snapshot, or the original parser/schema cause on readmission.
     pub fn apply(&self, current_source: &str) -> Result<Document, SourceEditError> {
+        let document = self.apply_syntax(current_source)?;
+        if let Some((schemas, expected)) = self.context {
+            schemas
+                .resolve_with_limits(&document, expected, crate::ResolutionLimits::default())
+                .map_err(SourceEditError::Resolve)?;
+        }
+        Ok(document)
+    }
+
+    // Internal consumers that inspect the checked result resolve the returned
+    // document themselves. Keep construction/readmission here, without running
+    // and discarding the same resolution twice.
+    pub(crate) fn apply_syntax(&self, current_source: &str) -> Result<Document, SourceEditError> {
         if current_source != self.source {
             return Err(SourceEditError::StaleSource);
         }
@@ -138,14 +151,7 @@ impl SourcePatch<'_> {
             cursor = change.span.end;
         }
         output.push_str(&self.source[cursor..]);
-        let document =
-            crate::parse_with_limits(output, self.parse).map_err(SourceEditError::Parse)?;
-        if let Some((schemas, expected)) = self.context {
-            schemas
-                .resolve_with_limits(&document, expected, crate::ResolutionLimits::default())
-                .map_err(SourceEditError::Resolve)?;
-        }
-        Ok(document)
+        crate::parse_with_limits(output, self.parse).map_err(SourceEditError::Parse)
     }
 }
 
