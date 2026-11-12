@@ -96,6 +96,28 @@ fn version_reports_embedded_package_version_without_starting_protocol() {
     assert!(output.stderr.is_empty());
 }
 
+#[test]
+fn help_and_unknown_argument_exit_without_starting_protocol() {
+    let binary = support::binary("daml-lsp", env!("CARGO_BIN_EXE_daml-lsp"));
+    let help = Command::new(binary)
+        .arg("--help")
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(String::from_utf8_lossy(&help.stdout).contains("usage: daml-lsp"));
+    assert!(help.stderr.is_empty());
+
+    let unknown = Command::new(binary)
+        .arg("--unknown")
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(unknown.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("usage: daml-lsp"));
+}
+
 impl Drop for LanguageServer {
     fn drop(&mut self) {
         self.stdin.take();
