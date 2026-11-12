@@ -451,10 +451,10 @@ fn assert_location(value: &Value, uri: &str, expected: Value) {
     );
 }
 fn default_actions(response: Value) -> Vec<Value> {
-    response
-        .as_array()
-        .expect("code action result must be an array")
-        .clone()
+    match response {
+        Value::Array(actions) => actions,
+        _ => panic!("code action result must be an array"),
+    }
 }
 
 fn assert_defaults(actions: &[Value], fields: &[&str]) {
