@@ -84,7 +84,8 @@ impl Session {
         if context.expected.is_none() && data.tag(data.root()).is_none() {
             return empty();
         }
-        let Some((target, path)) = object_at(data, data.root(), start, "") else {
+        let mut path = String::new();
+        let Some(target) = object_at(data, data.root(), start, &mut path)? else {
             return empty();
         };
         let analysis = match self.analysis(uri, &[], &mut Vec::new()) {
@@ -132,45 +133,58 @@ impl Session {
 }
 
 // Parsed node spans include tags and closing braces, but exclude trailing trivia.
-// A single admitted source tree bounds this traversal and pointer construction.
+// Reuse one bounded pointer buffer along the selected branch, rather than
+// retaining a copy of every ancestor's growing path.
 fn object_at<'a>(
     data: &Document,
     node: &'a Node,
     offset: usize,
-    path: &str,
-) -> Option<(&'a Node, String)> {
+    path: &mut String,
+) -> Result<Option<&'a Node>, RequestFailure> {
     if offset < node.span.start || offset >= node.span.end {
-        return None;
+        return Ok(None);
     }
+    let parent_len = path.len();
     match &node.value {
         Value::Mapping(entries) => {
             for entry in entries {
                 if offset >= entry.value.span.start && offset < entry.value.span.end {
-                    let child_path =
-                        crate::pointer::join(path, data.slice(entry.key).expect("parsed key"));
-                    if let Some(target) = object_at(data, &entry.value, offset, &child_path) {
-                        return Some(target);
+                    append_path(path, data.slice(entry.key).expect("parsed key"))?;
+                    if let Some(target) = object_at(data, &entry.value, offset, path)? {
+                        return Ok(Some(target));
                     }
+                    path.truncate(parent_len);
                     break;
                 }
             }
-            Some((node, path.to_owned()))
+            Ok(Some(node))
         }
         Value::Sequence(items) => {
             for (index, item) in items.iter().enumerate() {
                 if offset >= item.span.start && offset < item.span.end {
-                    return object_at(
-                        data,
-                        item,
-                        offset,
-                        &crate::pointer::join(path, &index.to_string()),
-                    );
+                    append_path(path, &index.to_string())?;
+                    let target = object_at(data, item, offset, path)?;
+                    if target.is_none() {
+                        path.truncate(parent_len);
+                    }
+                    return Ok(target);
                 }
             }
-            None
+            Ok(None)
         }
-        _ => None,
+        _ => Ok(None),
     }
+}
+
+fn append_path(path: &mut String, segment: &str) -> Result<(), RequestFailure> {
+    let size = path
+        .len()
+        .checked_add(crate::pointer::segment_len(segment))
+        .filter(|size| *size <= super::MAX_METADATA_BYTES)
+        .ok_or_else(|| failed("code action traversal path limit exceeded"))?;
+    path.reserve(size - path.len());
+    crate::pointer::append(path, segment);
+    Ok(())
 }
 
 #[expect(
