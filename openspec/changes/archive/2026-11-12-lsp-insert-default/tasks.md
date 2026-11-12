@@ -12,4 +12,4 @@
 ## 3. Handoff
 
 - [x] 3.1 Update docs/lsp.md for action availability, canonical append style, errors and snapshot limits. `./scripts/check` passed on the complete implementation with check revision `ba932e1`; test-only compaction and removal of an owned-response copy through `ce273ee` then passed the whole affected 30-test suite. The composed CLI prerequisite passed its 36 process tests and all three actual version commands.
-- [ ] 3.2 Complete independent whole-change review and record result acceptance under Daniel's delegated low-risk merge authority; retain evidence. Release, activation and any editor/plugin work require separate authorization.
+- [x] 3.2 Independent whole-change and exact-head reviews approved `46872b3`; full qualification and Required passed in run `43292965133`. Result accepted and merged under Daniel's delegated low-risk authority in PR #62 (`7e48286`). Native version flags merged separately in PR #61 (`360e3aa`); spec-only PR #60 was superseded and closed. Release, activation and any editor/plugin work remain separately authorized decisions; no release, tag or publication occurred.
