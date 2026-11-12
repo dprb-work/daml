@@ -143,6 +143,10 @@ impl Failure {
 }
 
 fn main() -> ExitCode {
+    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        println!("daml {}", env!("CARGO_PKG_VERSION"));
+        return ExitCode::SUCCESS;
+    }
     let result =
         parse_options(env::args_os().skip(1)).and_then(|options| options.map(execute).transpose());
     let result = result.and_then(|output| {

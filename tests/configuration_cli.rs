@@ -60,6 +60,19 @@ fn run(args: &[&str], input: Option<&[u8]>) -> Output {
     child.wait_with_output().unwrap()
 }
 
+
+
+#[test]
+fn version_reports_embedded_package_version_without_reading_stdin() {
+    let output = run(&["--version"], None);
+    status(&output, 0);
+    assert_eq!(
+        output.stdout,
+        format!("daml {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
+    );
+    assert!(output.stderr.is_empty());
+}
+
 fn status(out: &Output, expected: i32) {
     assert_eq!(
         out.status.code(),

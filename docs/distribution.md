@@ -51,7 +51,10 @@ a versioned directory. Keep multiple version directories when you need to switch
 versions; point `PATH` or your editor's server setting at the selected
 directory.
 
-The LSP server starts a stdio session when launched without arguments. `--help` prints command usage and is not an LSP session. See the [language server guide](lsp.md) and [formatter reference](formatting.md) for their contracts.
+The LSP server starts a stdio session when launched without arguments. `--help`
+prints command usage, and `--version` reports the embedded release version;
+neither starts an LSP session. See the [language server guide](lsp.md) and
+[formatter reference](formatting.md) for their contracts.
 
 ## Build from source
 

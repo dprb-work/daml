@@ -81,6 +81,21 @@ impl LanguageServer {
     }
 }
 
+#[test]
+fn version_reports_embedded_package_version_without_starting_protocol() {
+    let output = Command::new(support::binary("daml-lsp", env!("CARGO_BIN_EXE_daml-lsp")))
+        .arg("--version")
+        .stdin(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout,
+        format!("daml-lsp {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
+    );
+    assert!(output.stderr.is_empty());
+}
+
 impl Drop for LanguageServer {
     fn drop(&mut self) {
         self.stdin.take();

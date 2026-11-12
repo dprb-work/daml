@@ -5,6 +5,14 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        if args.next().is_none() {
+            println!("daml-lsp {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        eprintln!("usage: daml-lsp [--version]");
+        return ExitCode::from(2);
+    }
     if let Some(arg) = args.next() {
         if arg == "--help" && args.next().is_none() {
             println!(
