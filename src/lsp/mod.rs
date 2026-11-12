@@ -152,6 +152,18 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
             .as_ref()
             .and_then(|general| general.position_encodings.as_deref()),
     );
+    let code_actions = params
+        .capabilities
+        .text_document
+        .as_ref()
+        .and_then(|text| text.code_action.as_ref())
+        .is_some_and(|actions| actions.code_action_literal_support.is_some())
+        && params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.workspace_edit.as_ref())
+            .is_some_and(|edit| edit.document_changes == Some(true));
     drop(params); // No workspace roots or initialization settings are retained.
     let result = InitializeResult {
         capabilities: ServerCapabilities {
@@ -171,6 +183,13 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
             }),
             hover_provider: Some(HoverProviderCapability::Simple(true)),
             definition_provider: Some(OneOf::Left(true)),
+            code_action_provider: code_actions.then(|| {
+                lsp_types::CodeActionProviderCapability::Options(lsp_types::CodeActionOptions {
+                    code_action_kinds: Some(vec![lsp_types::CodeActionKind::REFACTOR_REWRITE]),
+                    resolve_provider: Some(false),
+                    ..Default::default()
+                })
+            }),
             semantic_tokens_provider: Some(semantic::token_options().into()),
             execute_command_provider: Some(ExecuteCommandOptions {
                 commands: vec![semantic::SET_CONTEXT.into()],
@@ -202,6 +221,7 @@ pub fn serve(connection: Connection) -> Result<(), ServerError> {
     }
     let mut session = Session {
         encoding,
+        code_actions,
         documents: HashMap::new(),
         semantic_uris: HashSet::new(),
         next_generation: 0,
@@ -298,6 +318,7 @@ struct OpenDocument {
 
 struct Session {
     encoding: Encoding,
+    code_actions: bool,
     documents: HashMap<Uri, OpenDocument>,
     semantic_uris: HashSet<Uri>,
     next_generation: u32,
@@ -554,6 +575,12 @@ impl Session {
                             )
                         })
                     })
+            }
+            "textDocument/codeAction" => {
+                match serde_json::from_value::<lsp_types::CodeActionParams>(request.params) {
+                    Ok(params) => self.code_actions(params),
+                    Err(_) => Err(semantic::invalid("invalid code action parameters")),
+                }
             }
             "textDocument/completion" | "textDocument/hover" | "textDocument/definition" => {
                 match serde_json::from_value::<TextDocumentPositionParams>(request.params) {

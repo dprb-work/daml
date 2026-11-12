@@ -7,6 +7,7 @@
     reason = "Uri's cached metadata cannot change its string identity"
 )]
 
+mod code_actions;
 mod providers;
 
 use super::{
