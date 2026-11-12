@@ -8,6 +8,7 @@ use crate::{
 use lsp_types::CodeActionParams;
 use serde_json::{Value as Json, json};
 use std::collections::HashSet;
+use std::error::Error;
 
 use std::io::{self, Write};
 const MAX_ACTIONS: usize = 256;
@@ -71,10 +72,7 @@ impl Session {
             return empty();
         };
         if let Some(error) = document.text.error()
-            && matches!(
-                error.kind,
-                crate::ErrorKind::LimitExceeded | crate::ErrorKind::InvalidLimits
-            )
+            && exhausted(error)
         {
             return Err(failed(super::display(error)));
         }
@@ -90,7 +88,7 @@ impl Session {
         };
         let analysis = match self.analysis(uri, &[], &mut Vec::new()) {
             Ok(analysis) => analysis,
-            Err(AnalysisFailure::Native(error)) if error.kind == NativeErrorKind::LimitExceeded => {
+            Err(AnalysisFailure::Native(error)) if exhausted(&error) => {
                 return Err(failed(super::display(&error)));
             }
             Err(AnalysisFailure::Message("editor source overlay limit exceeded")) => {
@@ -100,7 +98,7 @@ impl Session {
         };
         let schemas = match &analysis.compilation.schemas {
             Ok(schemas) => schemas,
-            Err(error) if error.kind == NativeErrorKind::LimitExceeded => {
+            Err(error) if exhausted(error) => {
                 return Err(failed(super::display(error)));
             }
             Err(_) => return empty(),
@@ -108,12 +106,7 @@ impl Session {
         let expected = context.expected.as_deref();
         let resolved = match schemas.resolve_with_limits(data, expected, Default::default()) {
             Ok(resolved) => resolved,
-            Err(error)
-                if matches!(
-                    error.kind,
-                    ResolveErrorKind::LimitExceeded | ResolveErrorKind::NumericLimit
-                ) =>
-            {
+            Err(error) if exhausted(&error) => {
                 return Err(failed(super::display(&error)));
             }
             Err(_) => return empty(),
@@ -129,6 +122,42 @@ impl Session {
             expected,
             resolved.root(),
         )
+    }
+}
+
+// Native editor errors retain parser/schema causes under their domain category.
+// Translate exhausted bounds once here without changing diagnostic providers.
+fn exhausted(mut error: &(dyn Error + 'static)) -> bool {
+    loop {
+        if error
+            .downcast_ref::<crate::NativeError>()
+            .is_some_and(|error| error.kind == NativeErrorKind::LimitExceeded)
+            || error
+                .downcast_ref::<crate::SchemaError>()
+                .is_some_and(|error| error.kind == crate::SchemaErrorKind::LimitExceeded)
+            || error
+                .downcast_ref::<crate::ParseError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.kind,
+                        crate::ErrorKind::LimitExceeded | crate::ErrorKind::InvalidLimits
+                    )
+                })
+            || error
+                .downcast_ref::<crate::ResolveError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.kind,
+                        ResolveErrorKind::LimitExceeded | ResolveErrorKind::NumericLimit
+                    )
+                })
+        {
+            return true;
+        }
+        match error.source() {
+            Some(source) => error = source,
+            None => return false,
+        }
     }
 }
 

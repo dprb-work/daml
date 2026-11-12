@@ -29,7 +29,7 @@ Reuse already merged in PRs #53/#55/#57 and semantic-editor work:
 | `src/lsp/mod.rs`, `positions.rs` | Synchronous session, accepted document versions, negotiation, dispatch, encoded byte ranges and shutdown cutoff. |
 | `src/lsp/semantic.rs` | Explicit configuration context, fresh bundle compilation, unsaved overlays and dependency refresh. |
 | `src/resolve.rs`, `resolved.rs`, `semantic.rs` | Checked completion, origins, exact values/tags and `SemanticNode::from_resolved`. |
-| `src/source_edit.rs` | `SourceEdit::Insert`, schema-aware preparation, append placement, canonical rendering, bounds and checked `SourcePatch::apply`. |
+| `src/source_edit.rs` | `SourceEdit::Insert`, schema-aware preparation, append placement, canonical rendering and shared bounded source readmission. Actions inspect one checked resolution of the edited result; public `SourcePatch::apply` retains its existing validation contract. |
 
 Genuinely new: capability/request handling, containing-object selection, missing-field/default eligibility, eager edit assembly and completed-value equivalence checking. `Origin::Default` alone is insufficient: required-container synthesis also uses it; distinguish an explicit default through compiled provenance, not schema-hint guesses. Keep this internal to existing owners; no new service, cache or public editing API.
 
