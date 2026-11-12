@@ -87,6 +87,15 @@ impl Fixture {
         }
         fixture
     }
+    fn put(&self, path: &str, contents: impl AsRef<[u8]>) {
+        fs::write(self.0.join(path), contents).unwrap();
+    }
+    fn config_bytes(&self) -> Vec<u8> {
+        fs::read(self.0.join("workspace/config.daml")).unwrap()
+    }
+    fn bundle(&self) -> daml::Bundle {
+        daml::Bundle::open(self.0.join("workspace")).unwrap()
+    }
     fn uri(&self, path: impl AsRef<std::path::Path>) -> String {
         // The fixed fixture components are ASCII; encode the platform temp directory bytes.
         let path = self.0.join(path);
@@ -243,10 +252,9 @@ impl Server {
     fn code_actions(
         &mut self,
         uri: &str,
-        line: u32,
-        character: u32,
+        at: (u32, u32),
         only: Option<Value>,
-    ) -> lsp_server::Response {
+    ) -> Result<Value, lsp_server::ResponseError> {
         let mut context = json!({"diagnostics":[]});
         if let Some(only) = only {
             context["only"] = only;
@@ -255,11 +263,18 @@ impl Server {
             "textDocument/codeAction",
             json!({
                 "textDocument":{"uri":uri},
-                "range":{"start":{"line":line,"character":character},
-                         "end":{"line":line,"character":character}},
+                "range":{"start":{"line":at.0,"character":at.1},
+                         "end":{"line":at.0,"character":at.1}},
                 "context":context
             }),
         )
+        .response_result
+    }
+    fn actions(&mut self, uri: &str, at: (u32, u32)) -> Vec<Value> {
+        default_actions(self.code_actions(uri, at, None).unwrap())
+    }
+    fn action_error(&mut self, uri: &str, at: (u32, u32)) -> i32 {
+        self.code_actions(uri, at, None).unwrap_err().code
     }
     fn default_context(&mut self, uri: &str, root: &str) {
         self.context(uri, "configuration", Some(root), Some("app.Service"));
@@ -442,11 +457,14 @@ fn default_actions(response: Value) -> Vec<Value> {
         .clone()
 }
 
-fn action_labels(actions: &[Value]) -> Vec<String> {
-    actions
-        .iter()
-        .map(|action| action["title"].as_str().unwrap().to_owned())
-        .collect()
+fn assert_defaults(actions: &[Value], fields: &[&str]) {
+    assert_eq!(actions.len(), fields.len());
+    for (action, field) in actions.iter().zip(fields) {
+        assert_eq!(
+            action["title"].as_str().unwrap(),
+            format!("Insert this default: {field}")
+        );
+    }
 }
 
 fn action_edit(action: &Value) -> &Value {
@@ -455,12 +473,11 @@ fn action_edit(action: &Value) -> &Value {
 
 fn fixture_with_service_schema(source: &str, schema: &str) -> (Fixture, Server, String) {
     let fixture = Fixture::new();
-    fs::write(fixture.0.join("workspace/app/Service.daml"), schema).unwrap();
-    fs::write(
-        fixture.0.join("workspace/daml.bundle"),
+    fixture.put("workspace/app/Service.daml", schema);
+    fixture.put(
+        "workspace/daml.bundle",
         "{\n app: \"./app\"\n providers: \"../providers\"\n contracts: \"../contracts\"\n}",
-    )
-    .unwrap();
+    );
     let uri = fixture.uri("workspace/config.daml");
     let mut server = Server::start("utf-16");
     server.open(&uri, source);
@@ -484,8 +501,10 @@ fn completed(fixture: &Fixture, source: &str) -> daml::SemanticNode {
         }
     }
     let document = daml::parse(source).unwrap();
-    let bundle = daml::Bundle::open(fixture.0.join("workspace")).unwrap();
-    let schemas = bundle.compile(&document, Some("app.Service")).unwrap();
+    let schemas = fixture
+        .bundle()
+        .compile(&document, Some("app.Service"))
+        .unwrap();
     let resolved = schemas.resolve_as(&document, "app.Service").unwrap();
     let mut value = daml::SemanticNode::from_resolved(resolved.root());
     identities(&mut value);
@@ -569,22 +588,10 @@ fn insert_default_selects_closed_and_open_scalar_null_and_temporal_defaults() {
         );
         let source = "!app.Service { endpoint: \"ok\" }";
         let (fixture, mut server, uri) = fixture_with_service_schema(source, &schema);
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap(),
-        );
-        assert_eq!(
-            action_labels(&actions),
-            [
-                "Insert this default: at",
-                "Insert this default: day",
-                "Insert this default: exact",
-                "Insert this default: nullable",
-                "Insert this default: stamp",
-                "Insert this default: timeout"
-            ]
+        let actions = server.actions(&uri, (0, 1));
+        assert_defaults(
+            &actions,
+            &["at", "day", "exact", "nullable", "stamp", "timeout"],
         );
         for action in &actions {
             let applied = apply_default(&fixture, source, &uri, 1, "utf-16", action);
@@ -596,16 +603,11 @@ fn insert_default_selects_closed_and_open_scalar_null_and_temporal_defaults() {
         let present = "!app.Service { endpoint: \"ok\"\n nullable: null }";
         server.change(&uri, 2, present);
         completed(&fixture, present); // Valid explicit null is presence, not a validation failure.
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap(),
-        );
+        let actions = server.actions(&uri, (0, 1));
         assert!(
-            !action_labels(&actions)
+            !actions
                 .iter()
-                .any(|label| label.ends_with(": nullable"))
+                .any(|a| a["title"].as_str().unwrap().ends_with(": nullable"))
         );
     }
 }
@@ -623,28 +625,15 @@ fn insert_default_materializes_completed_compounds_without_replacing_present_con
 }"#;
     let source = "!app.Service {}";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    fs::write(fixture.0.join("workspace/app/Count.daml"), "!Int = 7").unwrap();
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
-    assert_eq!(
-        action_labels(&actions),
-        [
-            "Insert this default: settings",
-            "Insert this default: values"
-        ]
-    );
-    for action in &actions {
+    fixture.put("workspace/app/Count.daml", "!Int = 7");
+    let actions = server.actions(&uri, (0, 1));
+    assert_defaults(&actions, &["settings", "values"]);
+    for (action, (field, other)) in actions
+        .iter()
+        .zip([("settings", "values"), ("values", "settings")])
+    {
         let applied = apply_default(&fixture, source, &uri, 1, "utf-16", action);
         let document = daml::parse(&applied).unwrap();
-        let field = action["title"]
-            .as_str()
-            .unwrap()
-            .strip_prefix("Insert this default: ")
-            .unwrap();
         let node = document.get(document.root(), field).unwrap();
         let item = match &node.value {
             daml::Value::Sequence(items) => &items[0],
@@ -654,11 +643,6 @@ fn insert_default_materializes_completed_compounds_without_replacing_present_con
             document.get(item, "limit").is_some(),
             "completed child must be authored"
         );
-        let other = if field == "values" {
-            "settings"
-        } else {
-            "values"
-        };
         assert!(
             document.get(document.root(), other).is_none(),
             "one default, not insert all"
@@ -667,22 +651,9 @@ fn insert_default_materializes_completed_compounds_without_replacing_present_con
     let present = "!app.Service {\n settings: {}\n values: []\n}";
     server.change(&uri, 2, present);
     completed(&fixture, present);
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
-    let child = default_actions(
-        server
-            .code_actions(&uri, 1, 12, None)
-            .response_result
-            .unwrap(),
-    );
-    assert_eq!(action_labels(&child), ["Insert this default: limit"]);
+    assert!(server.actions(&uri, (0, 1)).is_empty());
+    let child = server.actions(&uri, (1, 12));
+    assert_defaults(&child, &["limit"]);
     apply_default(&fixture, present, &uri, 2, "utf-16", &child[0]);
 }
 
@@ -693,13 +664,8 @@ fn insert_default_targets_inner_objects_and_tag_and_closing_boundaries() {
     let source = "!app.Service {\n items: [\n  {} # inside list\n ]\n}\n";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
     for character in [2, 3] {
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 2, character, None)
-                .response_result
-                .unwrap(),
-        );
-        assert_eq!(action_labels(&actions), ["Insert this default: count"]);
+        let actions = server.actions(&uri, (2, character));
+        assert_defaults(&actions, &["count"]);
         apply_default(&fixture, source, &uri, 1, "utf-16", &actions[0]);
     }
     let extended = server.request(
@@ -710,49 +676,27 @@ fn insert_default_targets_inner_objects_and_tag_and_closing_boundaries() {
             "context":{"diagnostics":[]}
         }),
     );
-    assert_eq!(
-        action_labels(&default_actions(extended.response_result.unwrap())),
-        ["Insert this default: count"],
-        "only range.start selects scope"
+    // Only range.start selects scope, even when the selection ends outside the object.
+    assert_defaults(
+        &default_actions(extended.response_result.unwrap()),
+        &["count"],
     );
     for (line, character) in [(1, 9), (2, 4), (2, 7), (3, 1), (4, 1), (5, 0)] {
-        assert!(
-            default_actions(
-                server
-                    .code_actions(&uri, line, character, None)
-                    .response_result
-                    .unwrap()
-            )
-            .is_empty()
-        );
+        assert!(server.actions(&uri, (line, character)).is_empty());
     }
     let implicit = "!app.Service";
-    fs::write(
-        fixture.0.join("workspace/app/Service.daml"),
+    fixture.put(
+        "workspace/app/Service.daml",
         "closed !Object { count: !Int } = { count: 3 }",
-    )
-    .unwrap();
+    );
     server.change(&uri, 2, implicit);
     for character in [0, 2, 11] {
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, character, None)
-                .response_result
-                .unwrap(),
-        );
-        assert_eq!(action_labels(&actions), ["Insert this default: count"]);
+        let actions = server.actions(&uri, (0, character));
+        assert_defaults(&actions, &["count"]);
         let applied = apply_default(&fixture, implicit, &uri, 2, "utf-16", &actions[0]);
         assert_eq!(applied, "!app.Service {\ncount: 3\n}");
     }
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 12, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&uri, (0, 12)).is_empty());
 }
 
 #[test]
@@ -762,13 +706,8 @@ fn insert_default_preserves_exact_source_crlf_comments_and_number_spelling() {
         source,
         include_str!("fixtures/semantic-editor/workspace/app/Service.daml"),
     );
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 4, 3, None)
-            .response_result
-            .unwrap(),
-    );
-    assert_eq!(action_labels(&actions), ["Insert this default: timeout"]);
+    let actions = server.actions(&uri, (4, 3));
+    assert_defaults(&actions, &["timeout"]);
     let applied = apply_default(&fixture, source, &uri, 1, "utf-16", &actions[0]);
     assert_eq!(action_edit(&actions[0])["range"], range(6, 1, 1));
     assert_eq!(
@@ -786,28 +725,15 @@ fn insert_default_chosen_provider_suppresses_contextual_preset() {
 }"#;
     let source = "!app.Service { adapter: !providers.Http { endpoint: \"ok\" } }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 0, 27, None)
-            .response_result
-            .unwrap(),
-    );
-    assert_eq!(action_labels(&actions), ["Insert this default: timeout"]);
+    let actions = server.actions(&uri, (0, 27));
+    assert_defaults(&actions, &["timeout"]);
     let applied = apply_default(&fixture, source, &uri, 1, "utf-16", &actions[0]);
     assert_eq!(action_edit(&actions[0])["newText"], "\ntimeout: 30\n");
     assert!(!applied.contains("99"));
     let unchosen = "!app.Service { adapter: !contracts.Adapter { endpoint: \"ok\" } }";
     server.change(&uri, 2, unchosen);
     completed(&fixture, unchosen);
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 27, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&uri, (0, 27)).is_empty());
 }
 
 #[test]
@@ -815,35 +741,20 @@ fn insert_default_distinguishes_synthetic_required_parent_from_explicit_default(
     let source = "!app.Service {}";
     let schema = "closed !Object { settings: !self.Settings }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    fs::write(fixture.0.join("workspace/app/Count.daml"), "!Int = 7").unwrap();
-    fs::write(
-        fixture.0.join("workspace/app/Settings.daml"),
+    fixture.put("workspace/app/Count.daml", "!Int = 7");
+    fixture.put(
+        "workspace/app/Settings.daml",
         "!Object { limit: !self.Count }",
-    )
-    .unwrap();
+    );
     completed(&fixture, source);
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&uri, (0, 1)).is_empty());
     // The same completed data qualifies only after a parent default is declared.
-    fs::write(
-        fixture.0.join("workspace/app/Settings.daml"),
+    fixture.put(
+        "workspace/app/Settings.daml",
         "!Object { limit: !self.Count } = {}",
-    )
-    .unwrap();
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
     );
-    assert_eq!(action_labels(&actions), ["Insert this default: settings"]);
+    let actions = server.actions(&uri, (0, 1));
+    assert_defaults(&actions, &["settings"]);
     let applied = apply_default(&fixture, source, &uri, 1, "utf-16", &actions[0]);
     assert!(applied.contains("limit: 7"));
 }
@@ -854,19 +765,11 @@ fn insert_default_retains_tagged_compound_assertion_binding_after_reparse() {
     // The authored sibling admits this entry-visible spelling into compilation.
     let source = "!app.Service { witness: !contracts.Adapter { endpoint: \"visible\" } }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
-    assert_eq!(action_labels(&actions), ["Insert this default: adapter"]);
+    let actions = server.actions(&uri, (0, 1));
+    assert_defaults(&actions, &["adapter"]);
     let applied = apply_default(&fixture, source, &uri, 1, "utf-16", &actions[0]);
     let edited = daml::parse(&applied).unwrap();
-    let schemas = daml::Bundle::open(fixture.0.join("workspace"))
-        .unwrap()
-        .compile(&edited, None)
-        .unwrap();
+    let schemas = fixture.bundle().compile(&edited, None).unwrap();
     let resolved = schemas.resolve(&edited).unwrap();
     let adapter = resolved.root().get("adapter").unwrap();
     assert!(
@@ -880,51 +783,32 @@ fn insert_default_retains_tagged_compound_assertion_binding_after_reparse() {
 fn insert_default_omits_a_private_unrepresentable_tag_without_stripping_its_assertion() {
     let fixture = Fixture::new();
     fs::create_dir(fixture.0.join("private")).unwrap();
-    fs::write(fixture.0.join("private/daml.bundle"), "{}").unwrap();
-    fs::write(
-        fixture.0.join("private/Marker.daml"),
-        "!Object { endpoint: !String }",
-    )
-    .unwrap();
-    fs::write(
-        fixture.0.join("workspace/app/daml.bundle"),
+    fixture.put("private/daml.bundle", "{}");
+    fixture.put("private/Marker.daml", "!Object { endpoint: !String }");
+    fixture.put(
+        "workspace/app/daml.bundle",
         "{ private: \"../../private\" }",
-    )
-    .unwrap();
-    fs::write(
-        fixture.0.join("workspace/app/Service.daml"),
+    );
+    fixture.put(
+        "workspace/app/Service.daml",
         "!Object = { adapter: !private.Marker { endpoint: \"kept\" } }",
-    )
-    .unwrap();
+    );
     let source = "!app.Service {}";
     let document = daml::parse(source).unwrap();
-    let schemas = daml::Bundle::open(fixture.0.join("workspace"))
-        .unwrap()
-        .compile(&document, None)
-        .unwrap();
+    let schemas = fixture.bundle().compile(&document, None).unwrap();
     let resolved = schemas.resolve(&document).unwrap();
     let adapter = resolved.root().get("adapter").unwrap();
     assert!(adapter.tag_binding().is_some());
+    let value = daml::SemanticNode::from_resolved(adapter);
     let error = schemas
-        .format_semantic(
-            &daml::SemanticNode::from_resolved(adapter),
-            Default::default(),
-        )
+        .format_semantic(&value, Default::default())
         .unwrap_err();
     assert_eq!(error.kind, daml::SemanticErrorKind::UnrepresentableTag);
     let uri = fixture.uri("workspace/config.daml");
     let mut server = Server::start("utf-16");
     server.open(&uri, source);
     server.default_context(&uri, &fixture.uri("workspace"));
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&uri, (0, 1)).is_empty());
 }
 
 #[test]
@@ -932,78 +816,39 @@ fn insert_default_requires_capabilities_context_and_matching_kind_ancestry() {
     let source = "!app.Service { count: 1 }";
     let schema = "closed !Object {\n count: !Int\n missing: !Int\n} = { missing: 3 }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    for only in [
-        json!([""]),
-        json!(["refactor"]),
-        json!(["refactor.rewrite"]),
+    for (kinds, eligible) in [
+        (vec![""], true),
+        (vec!["refactor"], true),
+        (vec!["refactor.rewrite"], true),
+        (vec![], false),
+        (vec!["quickfix"], false),
+        (vec!["refactor.rewrite.child"], false),
+        (vec!["refact"], false),
     ] {
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, 1, Some(only))
-                .response_result
-                .unwrap(),
-        );
-        assert_eq!(action_labels(&actions), ["Insert this default: missing"]);
+        let result = server
+            .code_actions(&uri, (0, 1), Some(json!(kinds)))
+            .unwrap();
+        let actions = default_actions(result);
+        if eligible {
+            assert_defaults(&actions, &["missing"]);
+        } else {
+            assert!(actions.is_empty());
+        }
     }
-    for only in [
-        json!([]),
-        json!(["quickfix"]),
-        json!(["refactor.rewrite.child"]),
-        json!(["refact"]),
-    ] {
-        assert!(
-            default_actions(
-                server
-                    .code_actions(&uri, 0, 1, Some(only))
-                    .response_result
-                    .unwrap()
-            )
-            .is_empty()
-        );
-    }
-    for kind in ["syntax", "definition"] {
-        let root = fixture.uri("workspace");
-        server.context(
-            &uri,
-            kind,
-            (kind != "syntax").then_some(root.as_str()),
-            None,
-        );
-        assert!(
-            default_actions(
-                server
-                    .code_actions(&uri, 0, 1, None)
-                    .response_result
-                    .unwrap()
-            )
-            .is_empty()
-        );
+    let root = fixture.uri("workspace");
+    for (kind, root) in [("syntax", None), ("definition", Some(root.as_str()))] {
+        server.context(&uri, kind, root, None);
+        assert!(server.actions(&uri, (0, 1)).is_empty());
     }
     for (literal, changes) in [(false, true), (true, false), (false, false)] {
         let mut unsupported = Server::start_with_capabilities("utf-16", literal, changes);
         unsupported.open(&uri, source);
         unsupported.default_context(&uri, &fixture.uri("workspace"));
-        assert!(
-            default_actions(
-                unsupported
-                    .code_actions(&uri, 0, 1, None)
-                    .response_result
-                    .unwrap()
-            )
-            .is_empty()
-        );
+        assert!(unsupported.actions(&uri, (0, 1)).is_empty());
     }
     let unselected = fixture.uri("workspace/unselected.daml");
     server.open(&unselected, source);
-    assert!(
-        default_actions(
-            server
-                .code_actions(&unselected, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&unselected, (0, 1)).is_empty());
 }
 
 #[test]
@@ -1011,130 +856,65 @@ fn insert_default_latest_version_and_requests_do_not_mutate_source() {
     let source = "!app.Service { endpoint: \"old\" }";
     let schema = "closed !Object {\n endpoint: !String\n timeout: !Int\n} = { timeout: 30 }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-    let disk = fs::read(fixture.0.join("workspace/config.daml")).unwrap();
-    let first = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
+    let disk = fixture.config_bytes();
+    let first = server.actions(&uri, (0, 1));
     apply_default(&fixture, source, &uri, 1, "utf-16", &first[0]);
-    assert_eq!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        ),
-        first
-    );
+    assert_eq!(server.actions(&uri, (0, 1)), first);
     let changed = "!app.Service { endpoint: \"😀next\" }";
     server.change(&uri, 7, changed);
-    let fresh = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
+    let fresh = server.actions(&uri, (0, 1));
     assert_ne!(
         first[0]["edit"]["documentChanges"][0]["textDocument"]["version"],
         7
     );
     let applied = apply_default(&fixture, changed, &uri, 7, "utf-16", &fresh[0]);
     server.change(&uri, 8, &applied);
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
-    assert_eq!(
-        fs::read(fixture.0.join("workspace/config.daml")).unwrap(),
-        disk
-    );
+    assert!(server.actions(&uri, (0, 1)).is_empty());
+    assert_eq!(fixture.config_bytes(), disk);
     server.finish(); // Any unsolicited workspace/applyEdit would fail the protocol reader.
 }
 
 #[test]
 fn insert_default_invalid_ambiguous_and_conflicting_whole_configs_yield_no_actions() {
+    use daml::ResolveErrorKind::{AmbiguousDefault, SchemaViolation};
+    let invalid = "!app.Service { bad: \"wrong\"\n target: {} }";
+    let omitted = "!app.Service {\n target: {}\n}";
     for (choice, source, error_kind) in [
-        (
-            "!Int",
-            "!app.Service { bad: \"wrong\"\n target: {} }",
-            daml::ResolveErrorKind::SchemaViolation,
-        ),
+        ("!Int", invalid, SchemaViolation),
         (
             "(!Int = 1) | (!String = \"text\")",
-            "!app.Service {\n target: {}\n}",
-            daml::ResolveErrorKind::AmbiguousDefault,
+            omitted,
+            AmbiguousDefault,
         ),
-        (
-            "(!Int = 1) & (!Int = 2)",
-            "!app.Service {\n target: {}\n}",
-            daml::ResolveErrorKind::AmbiguousDefault,
-        ),
+        ("(!Int = 1) & (!Int = 2)", omitted, AmbiguousDefault),
     ] {
         let schema = "closed !Object {\n bad: !self.Choice\n target: !Object { count: !Int } = { count: 7 }\n}";
         let (fixture, mut server, uri) = fixture_with_service_schema(source, schema);
-        fs::write(fixture.0.join("workspace/app/Choice.daml"), choice).unwrap();
+        fixture.put("workspace/app/Choice.daml", choice);
         let document = daml::parse(source).unwrap();
-        let schemas = daml::Bundle::open(fixture.0.join("workspace"))
-            .unwrap()
-            .compile(&document, None)
-            .unwrap();
+        let schemas = fixture.bundle().compile(&document, None).unwrap();
         assert_eq!(schemas.resolve(&document).unwrap_err().kind, error_kind);
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 1, 10, None)
-                .response_result
-                .unwrap(),
-        );
+        let actions = server.actions(&uri, (1, 10));
         assert!(
             actions.is_empty(),
             "an error in a sibling must suppress otherwise eligible count"
         );
     }
     let (_fixture, mut server, uri) = fixture_with_service_schema("!app.Service {", "!Object");
-    assert!(
-        default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .is_empty()
-    );
+    assert!(server.actions(&uri, (0, 1)).is_empty());
     for (version, source) in [
         (2, "!missing.Type {}"),
         (3, "!app.Service { child: !missing.Type {} }"),
     ] {
         server.change(&uri, version, source);
-        assert!(
-            default_actions(
-                server
-                    .code_actions(&uri, 0, 1, None)
-                    .response_result
-                    .unwrap()
-            )
-            .is_empty()
-        );
+        assert!(server.actions(&uri, (0, 1)).is_empty());
     }
 }
 
 #[test]
 fn insert_default_rejects_malformed_unopened_reversed_and_invalid_encoded_ranges() {
     let mut server = Server::start("utf-16");
-    assert_eq!(
-        server
-            .code_actions("file:///missing.daml", 0, 0, None)
-            .response_result
-            .unwrap_err()
-            .code,
-        -32602
-    );
+    assert_eq!(server.action_error("file:///missing.daml", (0, 0)), -32602);
     let source = "!app.Service { value: \"😀\" }";
     let uri = "untitled:encoded";
     server.open(uri, source);
@@ -1145,14 +925,10 @@ fn insert_default_rejects_malformed_unopened_reversed_and_invalid_encoded_ranges
         json!({"textDocument":{"uri":uri},"range":range(0, 0, 24),"context":{"diagnostics":[]}}),
         json!({"textDocument":{"uri":uri},"range":range(9, 0, 0),"context":{"diagnostics":[]}}),
     ] {
-        assert_eq!(
-            server
-                .request("textDocument/codeAction", params)
-                .response_result
-                .unwrap_err()
-                .code,
-            -32602
-        );
+        let result = server
+            .request("textDocument/codeAction", params)
+            .response_result;
+        assert_eq!(result.unwrap_err().code, -32602);
     }
 }
 
@@ -1166,37 +942,20 @@ fn insert_default_edit_ranges_use_negotiated_utf8_utf16_and_utf32() {
         let mut server = Server::start(encoding);
         server.open(&uri, source);
         server.default_context(&uri, &fixture.uri("workspace"));
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, end, None)
-                .response_result
-                .unwrap(),
-        );
-        assert_eq!(action_labels(&actions), ["Insert this default: count"]);
+        let actions = server.actions(&uri, (0, end));
+        assert_defaults(&actions, &["count"]);
         apply_default(&fixture, source, &uri, 1, encoding, &actions[0]);
         // Move the closing brace after the astral character to test edit coordinates, not only selection.
         let inline = "!app.Service { text: \"😀\" }";
         server.change(&uri, 2, inline);
-        let actions = default_actions(
-            server
-                .code_actions(&uri, 0, 1, None)
-                .response_result
-                .unwrap(),
-        );
+        let actions = server.actions(&uri, (0, 1));
         assert_eq!(
             action_edit(&actions[0])["range"],
             range(0, end + 1, end + 1)
         );
         apply_default(&fixture, inline, &uri, 2, encoding, &actions[0]);
         if encoding == "utf-8" {
-            assert_eq!(
-                server
-                    .code_actions(&uri, 0, 23, None)
-                    .response_result
-                    .unwrap_err()
-                    .code,
-                -32602
-            );
+            assert_eq!(server.action_error(&uri, (0, 23)), -32602);
         }
     }
 }
@@ -1215,42 +974,15 @@ fn many_defaults(count: usize) -> String {
 fn insert_default_action_limit_accepts_256_and_rejects_257_without_partial_result() {
     let source = "!app.Service { field256: 256 }";
     let (fixture, mut server, uri) = fixture_with_service_schema(source, &many_defaults(257));
-    let disk = fs::read(fixture.0.join("workspace/config.daml")).unwrap();
-    let actions = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
+    let disk = fixture.config_bytes();
+    let actions = server.actions(&uri, (0, 1));
     assert_eq!(actions.len(), 256);
     server.change(&uri, 2, "!app.Service {}");
-    assert_eq!(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap_err()
-            .code,
-        -32803
-    );
-    assert_eq!(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap_err()
-            .code,
-        -32803
-    );
-    assert_eq!(
-        fs::read(fixture.0.join("workspace/config.daml")).unwrap(),
-        disk
-    );
+    assert_eq!(server.action_error(&uri, (0, 1)), -32803);
+    assert_eq!(server.action_error(&uri, (0, 1)), -32803);
+    assert_eq!(fixture.config_bytes(), disk);
     server.change(&uri, 3, source);
-    let recovered = default_actions(
-        server
-            .code_actions(&uri, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
+    let recovered = server.actions(&uri, (0, 1));
     assert_eq!(recovered.len(), 256);
     apply_default(&fixture, source, &uri, 3, "utf-16", &recovered[0]);
 }
@@ -1259,13 +991,8 @@ fn insert_default_action_limit_accepts_256_and_rejects_257_without_partial_resul
 fn insert_default_serialized_8mib_limit_rejects_the_whole_result() {
     let source = "!app.Service {}";
     let (fixture, mut server, short) = fixture_with_service_schema(source, &many_defaults(256));
-    let disk = fs::read(fixture.0.join("workspace/config.daml")).unwrap();
-    let mut expected = default_actions(
-        server
-            .code_actions(&short, 0, 1, None)
-            .response_result
-            .unwrap(),
-    );
+    let disk = fixture.config_bytes();
+    let mut expected = server.actions(&short, (0, 1));
     assert_eq!(expected.len(), 256);
     for length in [32_000, 32_700] {
         let uri = format!("untitled:{}", "a".repeat(length));
@@ -1275,37 +1002,18 @@ fn insert_default_serialized_8mib_limit_rejects_the_whole_result() {
         let bytes = serde_json::to_vec(&expected).unwrap().len();
         server.open(&uri, source);
         server.default_context(&uri, &fixture.uri("workspace"));
-        let result = server.code_actions(&uri, 0, 1, None).response_result;
+        let result = server.code_actions(&uri, (0, 1), None);
         if length == 32_000 {
             assert!(bytes < 8 * 1024 * 1024);
             assert_eq!(default_actions(result.unwrap()), expected);
         } else {
             assert!(bytes > 8 * 1024 * 1024);
             assert_eq!(result.unwrap_err().code, -32803);
-            assert_eq!(
-                server
-                    .code_actions(&uri, 0, 1, None)
-                    .response_result
-                    .unwrap_err()
-                    .code,
-                -32803
-            );
+            assert_eq!(server.action_error(&uri, (0, 1)), -32803);
         }
     }
-    assert_eq!(
-        default_actions(
-            server
-                .code_actions(&short, 0, 1, None)
-                .response_result
-                .unwrap()
-        )
-        .len(),
-        256
-    );
-    assert_eq!(
-        fs::read(fixture.0.join("workspace/config.daml")).unwrap(),
-        disk
-    );
+    assert_eq!(server.actions(&short, (0, 1)).len(), 256);
+    assert_eq!(fixture.config_bytes(), disk);
 }
 
 #[test]
@@ -1314,30 +1022,25 @@ fn insert_default_definition_and_manifest_parser_limits_fail_the_request() {
     for manifest in [false, true] {
         let (fixture, mut server, uri) =
             fixture_with_service_schema(source, "closed !Object { count: !Int } = { count: 3 }");
-        let disk = fs::read(fixture.0.join("workspace/config.daml")).unwrap();
+        let disk = fixture.config_bytes();
         if manifest {
-            fs::write(
-                fixture.0.join("workspace/daml.bundle"),
+            fixture.put(
+                "workspace/daml.bundle",
                 format!("{{ deep: {}0{} }}", "[".repeat(129), "]".repeat(129)),
-            )
-            .unwrap();
+            );
         } else {
-            fs::write(
-                fixture.0.join("workspace/app/Service.daml"),
+            fixture.put(
+                "workspace/app/Service.daml",
                 format!("{}!Object{}", "(".repeat(129), ")".repeat(129)),
-            )
-            .unwrap();
+            );
         }
-        let result = server.code_actions(&uri, 0, 1, None).response_result;
+        let result = server.code_actions(&uri, (0, 1), None);
         assert_eq!(
             result.unwrap_err().code,
             -32803,
             "wrapped parser limit, manifest={manifest}"
         );
-        assert_eq!(
-            fs::read(fixture.0.join("workspace/config.daml")).unwrap(),
-            disk
-        );
+        assert_eq!(fixture.config_bytes(), disk);
     }
 }
 
