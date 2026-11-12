@@ -1,6 +1,6 @@
 ## 1. Scope and checks
 
-- [ ] 1.1 Record Daniel's scope decision and yes/no answers in proposal.md; do not implement before acceptance.
+- [x] 1.1 Record Daniel's scope decision and yes/no answers in proposal.md; do not implement before acceptance.
 - [ ] 1.2 Independently freeze focused behavioral checks for every scenario, including chosen-provider suppression, synthetic versus explicit defaults, tag-preserving compound values, source fidelity and stale versions; retain the accepted check revision.
 
 ## 2. Server implementation after acceptance

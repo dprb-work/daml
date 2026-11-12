@@ -39,7 +39,10 @@ Version checks protect document text, not dependency/context changes after the r
 
 ## Open questions / scope decision
 
-Pending Daniel's acceptance; these are proposed defaults, not authorization to implement.
+Accepted 2026-11-12 by Daniel's orchestrator (session 01a1c78f), under Daniel's
+delegation, with every recommended answer below. Implementation and low-risk
+merge after passing checks and independent review are authorized. Release,
+tagging and publication remain Daniel's.
 
 - Require the whole configuration to resolve before offering edits? **Yes** — avoid hint-based edits; unrelated invalid data suppresses actions.
 - Include object/list defaults as completed subtrees? **Yes** — otherwise copying a partial preset can change meaning, especially with tags.

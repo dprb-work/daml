@@ -1633,6 +1633,13 @@ impl Schemas {
     pub(crate) fn canonical_binding_schema(&self, binding: &str) -> Option<SchemaView<'_>> {
         self.binding_identity(binding).map(|id| self.view(id))
     }
+
+    #[cfg(feature = "lsp")]
+    pub(crate) fn explicit_default_origins(&self) -> impl Iterator<Item = &SchemaLocation> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.default_origin.as_ref())
+    }
     fn view(&self, id: SchemaId) -> SchemaView<'_> {
         SchemaView { registry: self, id }
     }

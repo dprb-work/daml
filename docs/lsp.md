@@ -2,7 +2,7 @@
 
 `daml-lsp` provides syntax diagnostics and whole-document formatting over stdio.
 The source-built server adds standard semantic tokens for highlighting, plus
-opt-in semantic diagnostics, completion, hover and definition navigation.
+opt-in semantic diagnostics, completion, hover, definition navigation and default insertion.
 Highlighting needs no schema selection; validation and schema-aware providers
 require a [semantic context](#semantic-context).
 
@@ -39,6 +39,7 @@ The optional `lsp` feature enables pinned `lsp-server` 0.10.0 and `lsp-types`
 | Completion | Visible assertion/reference names and contract fields, including required/optional/default details and reliable incomplete prefixes. |
 | Hover | Applicable constraints/defaults; checked configuration values distinguish supplied input from completed defaults. Invalid/incomplete data receives labeled hints only. |
 | Definition | Actual native source locations for references and configuration fields; no invented built-in targets. |
+| Code actions | One eager, versioned `refactor.rewrite` action per checked omitted default; requires literal-action and document-change client support. |
 | Shutdown | A null shutdown response closes ordinary session dispatch permanently. Later requests receive InvalidRequest; non-exit notifications and unsolicited responses are ignored until exit. Graceful sessions terminate successfully even while the client stdin pipe remains open. |
 
 Without a selected context, documents use only client-provided URIs and text.
@@ -158,6 +159,45 @@ Hints do not rewrite source, insert defaults or certify incomplete data.
 Visible-name completion enumerates bounded names, not every compatible provider
 or unreferenced definition body. Strings, comments and unreliable prefixes
 receive no unrelated structural suggestions.
+
+### Insert a checked default
+
+`textDocument/codeAction` offers `Insert this default: <field>` for absent
+immediate fields of the innermost authored object at `range.start`. Both range
+endpoints must be valid negotiated positions in source order. Closing braces,
+keys, values, comments and whitespace select their containing object; the
+position after its closing brace does not. Objects inside lists also qualify.
+
+The whole configuration must parse, compile and resolve successfully under its
+explicit context and root contract. Only applicable explicit defaults qualify,
+including enclosing presets and the selected provider's defaults. Synthesized
+required containers are not defaults. Existing values, including null and partial
+containers, are never replaced. Object/list defaults insert completed subtrees,
+preserving exact values, intrinsic kinds and assertion identities; other omitted
+fields stay omitted. Unrepresentable or meaning-changing candidates are omitted.
+
+Actions are sorted by literal field name. There is no bulk action, command,
+resolve step or preferred-action flag. `context.only` honors kind ancestry.
+Clients must support literal code actions and `workspaceEdit.documentChanges`;
+unsupported clients receive no actions or fallback.
+
+Each action contains one `TextDocumentEdit` for the requested URI and latest
+accepted integer version. Clients must reject stale edits and request fresh
+actions. The server does not apply edits, write files or change its cached source.
+Versioning guards the buffer, not later schema/context changes: each eager action
+captures the request-time checked default.
+
+Insertion reuses the source editor's canonical 80-column fragment style and the
+parent's first physical line ending (LF when absent). It appends after existing
+entries/trivia, immediately before the closing brace; an implicit tagged empty
+object gains braces after its tag. Surrounding bytes remain unchanged. Existing
+indentation is not inferred and the document is not reformatted.
+
+Invalid parameters, unopened URIs and invalid/reversed ranges return
+`InvalidParams` (`-32602`). Ineligible configurations return `[]`. Resource
+exhaustion or unexpected edit/readmission failures return `RequestFailed`
+(`-32803`), without partial results. Requests allow at most 256 actions and
+8 MiB of serialized result, retaining core analysis and source-edit bounds.
 
 ### Dependency notifications
 
