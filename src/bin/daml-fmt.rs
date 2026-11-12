@@ -17,12 +17,19 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<u8, String> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        if args.next().is_some() {
+            return Err("--version cannot be combined with other arguments".into());
+        }
+        println!("daml-fmt {}", env!("CARGO_PKG_VERSION"));
+        return Ok(0);
+    }
     let mut check = false;
     let mut width = FormatOptions::default().line_width;
     let mut width_seen = false;
     let mut input_path: Option<OsString> = None;
     let mut args = std::env::args_os().skip(1);
-
     while let Some(arg) = args.next() {
         if arg == "--help" {
             if check || width_seen || input_path.is_some() || args.next().is_some() {
