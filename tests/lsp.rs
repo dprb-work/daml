@@ -99,7 +99,7 @@ fn version_reports_embedded_package_version_without_starting_protocol() {
 #[test]
 fn help_and_unknown_argument_exit_without_starting_protocol() {
     let binary = support::binary("daml-lsp", env!("CARGO_BIN_EXE_daml-lsp"));
-    let help = Command::new(binary)
+    let help = Command::new(&binary)
         .arg("--help")
         .stdin(Stdio::piped())
         .output()
