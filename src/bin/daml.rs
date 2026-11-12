@@ -151,7 +151,9 @@ fn main() -> ExitCode {
                 format!("daml {}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
             )))
         } else {
-            Err(Failure::usage("--version cannot be combined with other arguments"))
+            Err(Failure::usage(
+                "--version cannot be combined with other arguments",
+            ))
         }
     } else {
         parse_options(first.into_iter().chain(args))

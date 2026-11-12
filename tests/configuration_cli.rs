@@ -60,8 +60,6 @@ fn run(args: &[&str], input: Option<&[u8]>) -> Output {
     child.wait_with_output().unwrap()
 }
 
-
-
 #[test]
 fn version_reports_embedded_package_version_without_reading_stdin() {
     let output = run(&["--version"], None);
