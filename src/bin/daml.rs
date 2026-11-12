@@ -143,12 +143,20 @@ impl Failure {
 }
 
 fn main() -> ExitCode {
-    if env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--version")) {
-        println!("daml {}", env!("CARGO_PKG_VERSION"));
-        return ExitCode::SUCCESS;
-    }
-    let result =
-        parse_options(env::args_os().skip(1)).and_then(|options| options.map(execute).transpose());
+    let mut args = env::args_os().skip(1);
+    let first = args.next();
+    let result = if first.as_deref() == Some(std::ffi::OsStr::new("--version")) {
+        if args.next().is_none() {
+            Ok(Some(CommandOutput::Bytes(
+                format!("daml {}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
+            )))
+        } else {
+            Err(Failure::usage("--version cannot be combined with other arguments"))
+        }
+    } else {
+        parse_options(first.into_iter().chain(args))
+            .and_then(|options| options.map(execute).transpose())
+    };
     let result = result.and_then(|output| {
         let mut stdout = io::stdout().lock();
         stdout
