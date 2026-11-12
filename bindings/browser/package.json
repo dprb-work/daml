@@ -1,6 +1,6 @@
 {
   "name": "@dprb-work/daml-browser",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Standalone browser bindings for the native DAML engine",
   "license": "MIT",

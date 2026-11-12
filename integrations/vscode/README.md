@@ -21,7 +21,7 @@ From this directory, with Node.js and npm available:
 ```sh
 npm ci --ignore-scripts
 npm run package
-code --install-extension definitively-asserted-daml-0.2.1.vsix
+code --install-extension definitively-asserted-daml-0.2.2.vsix
 ```
 
 For another VS Code-compatible editor, use its **Install from VSIX** command and select the generated file. The declared VS Code engine baseline is `^1.85.0`. This project does not publish the extension to a marketplace.
@@ -62,7 +62,7 @@ Automation may invoke `definitivelyAssertedDaml.useConfiguration` with `{uri, bu
 ## Package maintenance
 
 `npm run package` derives the VSIX name from the manifest version and writes
-`definitively-asserted-daml-0.2.1.vsix` plus its checksum. It stages the canonical
+`definitively-asserted-daml-0.2.2.vsix` plus its checksum. It stages the canonical
 root `LICENSE` and `SOURCES.md`, records source/dirty-state provenance in
 `BUILD.json`, and generates dependency notices from the esbuild runtime graph.
 These files are generated, ignored inputs—not maintained legal copies.

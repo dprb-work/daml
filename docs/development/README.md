@@ -7,7 +7,7 @@ DAML is an independent experimental language and implementation. This section is
 - [Building and checks](building.md): toolchains, local commands, CI behavior, and change expectations.
 - [Architecture and implementation boundaries](architecture.md): code ownership and defaults for new work.
 - [Native archive distribution](distribution.md): build, install, provenance, and archive verification.
-- [Release preparation and publication](releases.md): coordinated versions, exact candidate identities, human approval and recovery.
+- [Release preparation and publication](releases.md): coordinated versions, exact candidate identities, human approval and recovery. [LSP lifecycle release notes and readiness](lsp-lifecycle-release-readiness.md) records the proposed next-release note and the unchecked qualification gates for PR #57.
 
 ## Research and historical evidence
 
