@@ -88,7 +88,7 @@ fn version_reports_stdout_write_failure_as_usage_error() {
     let output = Command::new(env!("CARGO_BIN_EXE_daml"))
         .arg("--version")
         .stdin(Stdio::null())
-        .stdout(full)
+        .stdout(fs::OpenOptions::new().write(true).open(full).unwrap())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap()
