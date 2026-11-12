@@ -44,6 +44,21 @@ fn cli(args: &[&str], input: &[u8]) -> Output {
 }
 
 #[test]
+fn version_reports_embedded_package_version_without_reading_stdin() {
+    let output = Command::new(support::binary("daml-fmt", env!("CARGO_BIN_EXE_daml-fmt")))
+        .arg("--version")
+        .stdin(std::process::Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        output.stdout,
+        format!("daml-fmt {}\n", env!("CARGO_PKG_VERSION")).as_bytes()
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn stdin_width_changes_layout_and_check_is_idempotent() {
     let source = b"{\n  alpha: 1\n  beta: 2\n}\n";
     let narrow = cli(&["--width", "8"], source);
