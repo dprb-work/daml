@@ -394,6 +394,48 @@ fn copied_selected_optional_branch_remains_an_obligation_after_removal() {
 }
 
 #[test]
+fn selected_optional_branch_survives_replacement_through_opaque_ancestor() {
+    let registry = schemas(json!({"Root": {"schema": {
+        "type": "object",
+        "properties": {
+            "p": {
+                "type": "object",
+                "properties": {
+                    "opt": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "properties": {"name": {"type": "string", "default": "fallback"}}
+                            },
+                            {"type": "null"}
+                        ]
+                    }
+                }
+            }
+        }
+    }}}));
+    let document = parse("!Root { p: {} }").unwrap();
+    let mut stage = Visitor::new(|_, _, round| {
+        Ok(match round {
+            0 => StageOutcome::Edits(vec![replace(
+                "/p",
+                "{ ref: \"runtime\"\n opt: { name: \"kept\" } }",
+            )]),
+            1 => StageOutcome::Edits(vec![replace("/p", "{}")]),
+            _ => StageOutcome::Ready { meaning: None },
+        })
+    });
+    stage.defer_refs = true;
+    let StageError::Resolve(error) = registry
+        .resolve_staged(&document, None, &[], &mut stage)
+        .unwrap_err()
+    else {
+        panic!("removing a previously materialized optional branch must be rejected")
+    };
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+}
+
+#[test]
 fn number_class_refines_recursive_defaults_and_final_candidates_only() {
     for keyword in ["allOf", "anyOf"] {
         let mut schema = json!({"type": "object"});

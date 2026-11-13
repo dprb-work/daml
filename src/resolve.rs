@@ -1013,9 +1013,6 @@ impl<'a> Resolver<'a, '_> {
                 pending.scope(path, &node, &mut self.budget)? != stage::DefaultScope::Skip;
         }
         self.budget.step(&node, path)?;
-        if let Some(branches) = self.search.branches.get_mut(path) {
-            branches.materialized = true;
-        }
         if depth >= 128
             && matches!(
                 node.value,
@@ -1449,7 +1446,7 @@ impl<'a> Resolver<'a, '_> {
                 return Ok(schemas);
             };
             self.budget.step(node, path)?;
-            let branch = self.search.branch(path, &union, present);
+            let branch = self.search.branch(path, &union);
             skipped.push((union.schema.id(), union.keyword));
             schemas.push(branch);
         }
@@ -2033,6 +2030,13 @@ impl<'a> Resolver<'a, '_> {
                 path,
             ));
         }
+        // PinCandidate visits the entire snapshot, including opaque descendants
+        // that completion deliberately skips, before the host can edit it again.
+        if matches!(admission, TagAdmission::PinCandidate)
+            && let Some(branches) = self.search.branches.get_mut(path)
+        {
+            branches.materialized = true;
+        }
         if let Some(tag) = node.tag() {
             let schema = tag_schema(self.schemas, node).ok_or_else(|| {
                 failure(
@@ -2363,14 +2367,15 @@ impl<'a> CompletionSearch<'a> {
         self.choices[cursor]
     }
 
-    fn branch(&mut self, path: &str, union: &Union<'a>, present: bool) -> SchemaView<'a> {
+    fn branch(&mut self, path: &str, union: &Union<'a>) -> SchemaView<'a> {
         let id = union.schema.id();
         let keyword = union.keyword;
-        if let Some(branches) = self.branches.get_mut(path) {
-            branches.materialized |= present;
-            if let Some(view) = branches.views.get(&(id, keyword)) {
-                return *view;
-            }
+        if let Some(view) = self
+            .branches
+            .get(path)
+            .and_then(|branches| branches.views.get(&(id, keyword)))
+        {
+            return *view;
         }
         let fixed = if path.is_empty() && keyword == "anyOf" {
             self.fixed_root_any_of.get(&id).copied()
@@ -2388,7 +2393,6 @@ impl<'a> CompletionSearch<'a> {
             union.branches[selected]
         };
         let branches = self.branches.entry(path.to_owned()).or_default();
-        branches.materialized |= present;
         branches.views.insert((id, keyword), branch);
         branch
     }

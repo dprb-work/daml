@@ -254,6 +254,40 @@ export function runStagedChecks(sdk) {
       },
     }), 'resolve', 'SchemaViolation');
 
+    const opaqueSchemas = sdk.Schemas.fromJsonModules([JSON.stringify({
+      types: { Root: { schema: {
+        type: 'object',
+        properties: {
+          p: {
+            type: 'object',
+            properties: { opt: { anyOf: [
+              { type: 'object', properties: { name: { type: 'string', default: 'fallback' } } },
+              { type: 'null' },
+            ] } },
+          },
+        },
+      } } },
+    })]);
+    const opaqueInput = sdk.parse('!Root { p: {} }');
+    owned.push(opaqueSchemas, opaqueInput);
+    errorIs(() => opaqueSchemas.resolveStaged(opaqueInput, {
+      defer(summary, path) { return path === '/p' && defer(summary); },
+      materialize(_value, _copies, round) {
+        if (round === 0) {
+          return [{
+            op: 'replace',
+            path: '/p',
+            value: map({
+              ref: { kind: 'string', value: 'runtime' },
+              opt: map({ name: { kind: 'string', value: 'kept' } }),
+            }),
+          }];
+        }
+        if (round === 1) return [{ op: 'replace', path: '/p', value: map({}) }];
+        return null;
+      },
+    }), 'resolve', 'SchemaViolation');
+
     document.free();
     schemas.free();
     bundle.free();
