@@ -75,10 +75,11 @@ def plan(
     for path in changed:
         if (
             path.startswith((".github/", ".cargo/", ".githooks/", "scripts/"))
-            or path in {"rust-toolchain.toml", "tests/ci_plan_test.py"}
+            or path == "tests/ci_plan_test.py"
             or PurePosixPath(path).name in {
                 "Cargo.toml", "Cargo.lock", "deny.toml", "package.json",
-                "package-lock.json", "pyproject.toml", "uv.lock",
+                "package-lock.json", "pyproject.toml", "uv.lock", "uv.toml",
+                "rust-toolchain.toml", "rust-toolchain", ".python-version", ".npmrc",
             }
             or path.startswith("fuzz/")
         ):
@@ -90,7 +91,9 @@ def plan(
 
         if path.startswith(("src/", "tests/", "examples/", "integrations/", "fuzz/")):
             continue
-        if path in docs or path.startswith("bindings/python/"):
+        if path in docs or path.startswith(
+            ("bindings/python/src/", "bindings/python/python/", "bindings/python/tests/")
+        ):
             continue
         # Unknown files, executable documentation, workflows, and new trees fail closed.
         return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}

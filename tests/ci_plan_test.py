@@ -101,6 +101,18 @@ class CiPlanContractTests(unittest.TestCase):
                 self.assertEqual(result["tier"], "full")
                 self.assertEqual(set(result["checks"]), expected)
 
+    def test_nested_binding_setup_requires_full_source(self) -> None:
+        for path in (
+            "bindings/python/rust-toolchain.toml", "bindings/python/uv.toml",
+            "bindings/python/new-setup.conf", "integrations/verify/rust-toolchain.toml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    plan("ready", path),
+                    {"tier": "full", "checks": ["docs", "core", "dependencies", "fuzz", "editors"]},
+                )
+
+
     def test_malformed_path_sets_fail_rather_than_selecting_a_cheap_tier(self) -> None:
         for path in ("../escape.rs", "/absolute.rs", "src\\file.rs", "src/\rfile.rs"):
             self.assertNotEqual(plan_result("ready", path).returncode, 0)
