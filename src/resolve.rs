@@ -714,7 +714,7 @@ impl<'a> Resolver<'a, '_> {
                                 .search
                                 .branches
                                 .values()
-                                .flat_map(|views| views.values())
+                                .flat_map(|branches| branches.views.values())
                                 .next()
                                 .map(|view| view.location());
                             return Err(match location {
@@ -789,12 +789,12 @@ impl<'a> Resolver<'a, '_> {
         }
         // Every selected branch must hold; enclosing validators still enforce
         // oneOf's exact-one semantics.
-        for (path, views) in &self.search.branches {
+        for (path, branches) in &self.search.branches {
             if let Some(node) = root.at_pointer(path) {
-                for view in views.values() {
+                for view in branches.views.values() {
                     Self::check_node(node, view, path, &mut self.budget)?;
                 }
-            } else if self.budget.stage.is_some() {
+            } else if self.budget.stage.is_some() && branches.materialized {
                 return Err(failure(
                     ResolveErrorKind::SchemaViolation,
                     &root,
@@ -810,7 +810,7 @@ impl<'a> Resolver<'a, '_> {
                 .search
                 .branches
                 .get("")
-                .and_then(|branches| branches.get(&(*id, "anyOf")))
+                .and_then(|branches| branches.views.get(&(*id, "anyOf")))
                 .is_some_and(|selected| selected.id() == branch.id())
             {
                 return Err(failure(
@@ -828,7 +828,7 @@ impl<'a> Resolver<'a, '_> {
                 .branches
                 .get("")
                 .into_iter()
-                .flat_map(|branches| branches.values().copied())
+                .flat_map(|branches| branches.views.values().copied())
                 .collect::<Vec<_>>();
             let reachable =
                 self.schema_conjunction(root_views.iter().copied().chain(selected), &root, "")?;
@@ -962,6 +962,7 @@ impl<'a> Resolver<'a, '_> {
             if let Some(branches) = self.search.branches.get(path) {
                 pending.extend(
                     branches
+                        .views
                         .iter()
                         .filter(|((parent, _), _)| *parent == view.id())
                         .map(|(_, branch)| (*branch, true)),
@@ -975,7 +976,7 @@ impl<'a> Resolver<'a, '_> {
             .branches
             .get(path)
             .into_iter()
-            .flat_map(|views| views.values().copied())
+            .flat_map(|branches| branches.views.values().copied())
             .collect::<Vec<_>>();
         while let Some(view) = pending.pop() {
             if owned.contains(&view.id())
@@ -1012,6 +1013,9 @@ impl<'a> Resolver<'a, '_> {
                 pending.scope(path, &node, &mut self.budget)? != stage::DefaultScope::Skip;
         }
         self.budget.step(&node, path)?;
+        if let Some(branches) = self.search.branches.get_mut(path) {
+            branches.materialized = true;
+        }
         if depth >= 128
             && matches!(
                 node.value,
@@ -1445,7 +1449,7 @@ impl<'a> Resolver<'a, '_> {
                 return Ok(schemas);
             };
             self.budget.step(node, path)?;
-            let branch = self.search.branch(path, &union);
+            let branch = self.search.branch(path, &union, present);
             skipped.push((union.schema.id(), union.keyword));
             schemas.push(branch);
         }
@@ -1480,7 +1484,7 @@ impl<'a> Resolver<'a, '_> {
                 .branches
                 .get(path)
                 .into_iter()
-                .flat_map(|branches| branches.values().copied());
+                .flat_map(|branches| branches.views.values().copied());
             let retained = asserted
                 .into_iter()
                 .chain(retained)
@@ -2323,6 +2327,13 @@ struct Union<'a> {
     branches: Vec<SchemaView<'a>>,
 }
 
+#[derive(Default)]
+struct SelectedBranches<'a> {
+    views: HashMap<(SchemaId, &'static str), SchemaView<'a>>,
+    // Probing an absent optional value must not make it required.
+    materialized: bool,
+}
+
 /// A depth-first, mixed-radix search through branch/default choices. A changed
 /// choice truncates its suffix, so every replay reaches the same choice prefix
 /// even when the next branch has a different shape. All replays share Budget.
@@ -2330,7 +2341,7 @@ struct Union<'a> {
 struct CompletionSearch<'a> {
     choices: Vec<usize>,
     arities: Vec<usize>,
-    branches: HashMap<String, HashMap<(SchemaId, &'static str), SchemaView<'a>>>,
+    branches: HashMap<String, SelectedBranches<'a>>,
     fixed_root_any_of: HashMap<SchemaId, SchemaView<'a>>,
     suppressed_root_default: Option<SchemaId>,
     conflict: Option<ResolveError>,
@@ -2352,15 +2363,14 @@ impl<'a> CompletionSearch<'a> {
         self.choices[cursor]
     }
 
-    fn branch(&mut self, path: &str, union: &Union<'a>) -> SchemaView<'a> {
+    fn branch(&mut self, path: &str, union: &Union<'a>, present: bool) -> SchemaView<'a> {
         let id = union.schema.id();
         let keyword = union.keyword;
-        if let Some(view) = self
-            .branches
-            .get(path)
-            .and_then(|views| views.get(&(id, keyword)))
-        {
-            return *view;
+        if let Some(branches) = self.branches.get_mut(path) {
+            branches.materialized |= present;
+            if let Some(view) = branches.views.get(&(id, keyword)) {
+                return *view;
+            }
         }
         let fixed = if path.is_empty() && keyword == "anyOf" {
             self.fixed_root_any_of.get(&id).copied()
@@ -2377,10 +2387,9 @@ impl<'a> CompletionSearch<'a> {
             };
             union.branches[selected]
         };
-        self.branches
-            .entry(path.to_owned())
-            .or_default()
-            .insert((id, keyword), branch);
+        let branches = self.branches.entry(path.to_owned()).or_default();
+        branches.materialized |= present;
+        branches.views.insert((id, keyword), branch);
         branch
     }
 
