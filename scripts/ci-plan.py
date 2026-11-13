@@ -15,6 +15,7 @@ CHECKS = ("docs", "core", "dependencies", "fuzz", "editors", "binaries")
 AUTOMATIC_CHECKS = tuple(check for check in CHECKS if check != "binaries")
 DOCS = {
     "README.md",
+    "CONTRIBUTING.md",
     "docs/distribution.md",
     "docs/formatting.md",
     "docs/lsp.md",
@@ -37,7 +38,7 @@ def plan(
     if not paths:
         raise ValueError("changed paths must not be empty")
     for path in paths:
-        if not path or "\\" in path or "\x00" in path:
+        if not path or any(char in path for char in ("\\", "\x00", "\n", "\r")):
             raise ValueError(f"malformed changed path: {path!r}")
         parsed = PurePosixPath(path)
         if parsed.is_absolute() or ".." in parsed.parts or path in {".", ".."}:
@@ -51,62 +52,51 @@ def plan(
         return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
     if mode == "manual-full":
         return {"tier": "full", "checks": list(CHECKS)}
+    if mode == "push":
+        return {"tier": "push", "checks": ["docs"]}
     if any(path in {"*", "**"} for path in paths):
         return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
 
     changed = set(paths)
-    if changed <= DOCS:
+    docs = DOCS | {
+        path for path in changed
+        if (path.startswith("docs/") and path.endswith(".md"))
+        or (path.startswith(("openspec/changes/", "openspec/specs/"))
+            and (path.endswith(".md") or PurePosixPath(path).name == ".openspec.yaml"))
+    }
+    if changed <= docs:
         return {"tier": "docs", "checks": ["docs"]}
 
-    if changed <= DOCS | {"SOURCES.md"} and "SOURCES.md" in changed:
-        checks = ["docs"] if changed & DOCS else []
+    if changed <= docs | {"SOURCES.md"} and "SOURCES.md" in changed:
+        checks = ["docs"] if changed & docs else []
         checks.append("core")
-        return {"tier": "targeted", "checks": checks}
+        return {"tier": "cheap", "checks": checks}
     selected = {"core"}
     for path in changed:
-        if path.startswith(".github/workflows/") or path.startswith(
-            ("scripts/check", "scripts/ci-plan")
+        if (
+            path.startswith((".github/", ".cargo/", ".githooks/", "scripts/"))
+            or path in {"rust-toolchain.toml", "tests/ci_plan_test.py"}
+            or PurePosixPath(path).name in {
+                "Cargo.toml", "Cargo.lock", "deny.toml", "package.json",
+                "package-lock.json", "pyproject.toml", "uv.lock",
+            }
+            or path.startswith("fuzz/")
         ):
             return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
-        if (
-            path in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml"}
-            or path.startswith(("bindings/python/", "fuzz/Cargo."))
-            or path == ".cargo/config.toml"
-        ):
-            selected.update(("dependencies", "fuzz", "editors"))
-        if path in {
-            "integrations/verify/syntect/Cargo.toml",
-            "integrations/verify/syntect/Cargo.lock",
-            "integrations/verify/syntect/deny.toml",
-        }:
-            selected.add("dependencies")
-        if (
-            path.startswith(("fuzz/", "tests/fixtures/", "src/"))
-            or path in {"Cargo.toml", "Cargo.lock", "deny.toml"}
-        ):
-            selected.add("fuzz")
         if path.startswith(
-            ("integrations/", "src/", "tests/fixtures/semantic-editor/")
+            ("integrations/", "tests/fixtures/semantic-editor/")
         ):
             selected.add("editors")
 
         if path.startswith(("src/", "tests/", "examples/", "integrations/", "fuzz/")):
             continue
-        if path in DOCS or path.startswith("bindings/python/"):
-            continue
-        if path in {
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            "deny.toml",
-            ".cargo/config.toml",
-        }:
+        if path in docs or path.startswith("bindings/python/"):
             continue
         # Unknown files, executable documentation, workflows, and new trees fail closed.
         return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
 
     return {
-        "tier": "targeted",
+        "tier": "cheap",
         "checks": [check for check in CHECKS if check in selected],
     }
 
