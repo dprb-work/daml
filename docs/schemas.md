@@ -448,6 +448,8 @@ preset precedence.
 Ready declares the host transformation finished, not the data valid. All native
 root, tag, selected-branch, expectation and conserved constraints must still
 hold. An opaque value may remain only if it passes those checks unchanged.
+Probing a branch for an absent optional value does not make that value required.
+Once a selected-branch value is materialized, removing it in a later round fails.
 
 An optional Ready meaning key distinguishes caller-defined meanings associated
 with equal native data. `StagedResolution::root()` and `meaning()` return the

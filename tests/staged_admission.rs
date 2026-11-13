@@ -276,6 +276,166 @@ fn copy_obligations_survive_transitive_copy_and_later_replacement() {
 }
 
 #[test]
+fn copying_optional_object_or_null_keeps_omission_and_completes_supplied_objects() {
+    let value_schema = json!({
+        "type": "object",
+        "properties": {
+            "opt": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {"name": {"type": "string", "default": "fallback"}}
+                    },
+                    {"type": "null"}
+                ]
+            }
+        }
+    });
+    let registry = schemas(json!({"Recipe": {"schema": {
+        "type": "object",
+        "properties": {
+            "params": {"type": "object", "properties": {"value": value_schema.clone()}},
+            "used": value_schema
+        },
+        "required": ["params"]
+    }}}));
+    for (source, expected) in [
+        ("!Recipe { params: { value: {} } }", json!({})),
+        (
+            "!Recipe { params: { value: { opt: null } } }",
+            json!({"opt": null}),
+        ),
+        (
+            "!Recipe { params: { value: { opt: {} } } }",
+            json!({"opt": {"name": "fallback"}}),
+        ),
+    ] {
+        let document = parse(source).unwrap();
+        let ordinary = registry.resolve(&document).unwrap();
+        assert_eq!(
+            ordinary
+                .root()
+                .get("params")
+                .unwrap()
+                .get("value")
+                .unwrap()
+                .to_json(),
+            expected
+        );
+        let mut stage = Visitor::new(|_, _, round| {
+            Ok(if round == 0 {
+                StageOutcome::Edits(vec![StageEdit::Copy {
+                    path: "/used".into(),
+                    from: "/params/value".into(),
+                }])
+            } else {
+                StageOutcome::Ready { meaning: None }
+            })
+        });
+        let staged = registry
+            .resolve_staged(&document, None, &[], &mut stage)
+            .unwrap();
+        assert_eq!(staged.root().get("used").unwrap().to_json(), expected);
+        assert_eq!(
+            staged.root().get("used").unwrap().to_json(),
+            staged
+                .root()
+                .get("params")
+                .unwrap()
+                .get("value")
+                .unwrap()
+                .to_json()
+        );
+    }
+}
+
+#[test]
+fn copied_selected_optional_branch_remains_an_obligation_after_removal() {
+    let value_schema = json!({
+        "type": "object",
+        "properties": {
+            "opt": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {"name": {"type": "string", "default": "fallback"}}
+                    },
+                    {"type": "null"}
+                ]
+            }
+        }
+    });
+    let registry = schemas(json!({"Recipe": {"schema": {
+        "type": "object",
+        "properties": {
+            "params": {"type": "object", "properties": {"value": value_schema.clone()}},
+            "used": value_schema
+        },
+        "required": ["params"]
+    }}}));
+    let document = parse("!Recipe { params: { value: { opt: {} } } }").unwrap();
+    let mut stage = Visitor::new(|_root, _, round| {
+        Ok(match round {
+            0 => StageOutcome::Edits(vec![StageEdit::Copy {
+                path: "/used".into(),
+                from: "/params/value".into(),
+            }]),
+            1 => StageOutcome::Edits(vec![replace("/used", "{}")]),
+            _ => StageOutcome::Ready { meaning: None },
+        })
+    });
+    let StageError::Resolve(error) = registry
+        .resolve_staged(&document, None, &[], &mut stage)
+        .unwrap_err()
+    else {
+        panic!("the copied branch obligation must remain a schema failure")
+    };
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+}
+
+#[test]
+fn selected_optional_branch_survives_replacement_through_opaque_ancestor() {
+    let registry = schemas(json!({"Root": {"schema": {
+        "type": "object",
+        "properties": {
+            "p": {
+                "type": "object",
+                "properties": {
+                    "opt": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "properties": {"name": {"type": "string", "default": "fallback"}}
+                            },
+                            {"type": "null"}
+                        ]
+                    }
+                }
+            }
+        }
+    }}}));
+    let document = parse("!Root { p: {} }").unwrap();
+    let mut stage = Visitor::new(|_, _, round| {
+        Ok(match round {
+            0 => StageOutcome::Edits(vec![replace(
+                "/p",
+                "{ ref: \"runtime\"\n opt: { name: \"kept\" } }",
+            )]),
+            1 => StageOutcome::Edits(vec![replace("/p", "{}")]),
+            _ => StageOutcome::Ready { meaning: None },
+        })
+    });
+    stage.defer_refs = true;
+    let StageError::Resolve(error) = registry
+        .resolve_staged(&document, None, &[], &mut stage)
+        .unwrap_err()
+    else {
+        panic!("removing a previously materialized optional branch must be rejected")
+    };
+    assert_eq!(error.kind, ResolveErrorKind::SchemaViolation);
+}
+
+#[test]
 fn number_class_refines_recursive_defaults_and_final_candidates_only() {
     for keyword in ["allOf", "anyOf"] {
         let mut schema = json!({"type": "object"});

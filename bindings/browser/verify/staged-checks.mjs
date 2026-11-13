@@ -194,6 +194,100 @@ export function runStagedChecks(sdk) {
     owned.push(replaced);
     same(replaced.value(), number('2'));
     if (replaced.origins()[''].kind !== 'semantic') fail('replacement fabricated a source span');
+    const copiedSchemas = sdk.Schemas.fromJsonModules([JSON.stringify({
+      types: { Recipe: { schema: {
+        type: 'object',
+        properties: {
+          params: { type: 'object', properties: { value: {
+            type: 'object',
+            properties: { opt: { anyOf: [
+              { type: 'object', properties: { name: { type: 'string', default: 'fallback' } } },
+              { type: 'null' },
+            ] } },
+          } } },
+          used: {
+            type: 'object',
+            properties: { opt: { anyOf: [
+              { type: 'object', properties: { name: { type: 'string', default: 'fallback' } } },
+              { type: 'null' },
+            ] } },
+          },
+        },
+        required: ['params'],
+      } } },
+    })]);
+    owned.push(copiedSchemas);
+    for (const [source, expected] of [
+      ['!Recipe { params: { value: {} } }', map({})],
+      ['!Recipe { params: { value: { opt: null } } }', map({ opt: { kind: 'null' } })],
+      ['!Recipe { params: { value: { opt: {} } } }', map({ opt: map({ name: { kind: 'string', value: 'fallback' } }) })],
+    ]) {
+      const copiedInput = sdk.parse(source);
+      owned.push(copiedInput);
+      const copiedResult = copiedSchemas.resolveStaged(copiedInput, {
+        defer() { return false; },
+        materialize(_value, _copies, round) {
+          return round === 0
+            ? [{ op: 'copy', path: '/used', from: '/params/value' }]
+            : null;
+        },
+      });
+      owned.push(copiedResult);
+      same(field(copiedResult.value(), 'used'), expected);
+      same(
+        field(copiedResult.value(), 'used'),
+        field(field(copiedResult.value(), 'params'), 'value'),
+      );
+    }
+    const selectedCopyInput = sdk.parse('!Recipe { params: { value: { opt: {} } } }');
+    owned.push(selectedCopyInput);
+    errorIs(() => copiedSchemas.resolveStaged(selectedCopyInput, {
+      defer() { return false; },
+      materialize(_value, _copies, round) {
+        if (round === 0) {
+          return [{ op: 'copy', path: '/used', from: '/params/value' }];
+        }
+        if (round === 1) {
+          return [{ op: 'replace', path: '/used', value: map({}) }];
+        }
+        return null;
+      },
+    }), 'resolve', 'SchemaViolation');
+
+    const opaqueSchemas = sdk.Schemas.fromJsonModules([JSON.stringify({
+      types: { Root: { schema: {
+        type: 'object',
+        properties: {
+          p: {
+            type: 'object',
+            properties: { opt: { anyOf: [
+              { type: 'object', properties: { name: { type: 'string', default: 'fallback' } } },
+              { type: 'null' },
+            ] } },
+          },
+        },
+      } } },
+    })]);
+    const opaqueInput = sdk.parse('!Root { p: {} }');
+    owned.push(opaqueSchemas, opaqueInput);
+    errorIs(() => opaqueSchemas.resolveStaged(opaqueInput, {
+      defer(summary, path) { return path === '/p' && defer(summary); },
+      materialize(_value, _copies, round) {
+        if (round === 0) {
+          return [{
+            op: 'replace',
+            path: '/p',
+            value: map({
+              ref: { kind: 'string', value: 'runtime' },
+              opt: map({ name: { kind: 'string', value: 'kept' } }),
+            }),
+          }];
+        }
+        if (round === 1) return [{ op: 'replace', path: '/p', value: map({}) }];
+        return null;
+      },
+    }), 'resolve', 'SchemaViolation');
+
     document.free();
     schemas.free();
     bundle.free();
