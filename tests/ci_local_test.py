@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class LocalGateTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -30,12 +31,12 @@ class LocalGateTests(unittest.TestCase):
         self.git("checkout", "-b", "candidate")
 
     def git(self, *args: str) -> str:
-        return subprocess.check_output(["git", *args], cwd=self.root, stderr=subprocess.DEVNULL, text=True).strip()
+        return subprocess.check_output(["git", *args], cwd=self.root, env=self.environment, stderr=subprocess.DEVNULL, text=True).strip()
 
     def gate(self, *args: str, incoming: str = "") -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["python3", "scripts/check-changes", *args], cwd=self.root,
-            input=incoming, capture_output=True, text=True, env=os.environ.copy(),
+            input=incoming, capture_output=True, text=True, env=self.environment,
         )
 
     def test_dirty_checkout_refuses_before_checks(self) -> None:
