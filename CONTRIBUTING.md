@@ -12,6 +12,7 @@ DAML is an experimental language and implementation. Contributions should improv
 ## Make and check changes
 
 Work from the repository root. Follow [building and checks](docs/development/building.md) for the pinned toolchain, local commands, and CI boundaries. Run the relevant checks before requesting review when practical, and report any checks you did not run.
+PR CI does not cover other platforms or installed distributions; see the [release/platform gate policy](.github/workflows/prepare-release.yml) at the top of the qualification workflow.
 
 Keep changes focused. Update the user or contributor documentation affected by a behavior or workflow change. Preserve source and license notices for reused material; see [`SOURCES.md`](SOURCES.md).
 
