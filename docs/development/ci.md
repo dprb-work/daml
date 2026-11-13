@@ -32,7 +32,7 @@ unsupported path bytes fail closed instead of truncating the change set.
   within the planner job.
 - **Targeted:** the planner returns applicable checks for known code and
   integration boundaries.
-- **Full:** all six check identities are selected. Executable documentation,
+- **Full:** all automatic check identities are selected. Executable documentation,
   workflow/control changes, and unknown paths fail closed to this tier. Invalid
   or incomplete path input fails planning, so the required aggregate cannot pass.
 - **Manual full:** dispatching `Check` runs every check group through the same
@@ -60,7 +60,7 @@ and integration README files and listed `docs/*.md` paths. The moved
 `docs/development/` tree is not added to that map; those paths fall through to
 the planner's full-verification tier. Check the script for the exact current
 allowlist. `SOURCES.md` is excluded from docs-only changes because native
-archives package it; it selects binary build and installed archive proof.
+archives package it; it selects core native compilation, with installed archive proof deferred to release qualification.
 
 ## Check applicability
 
@@ -71,26 +71,27 @@ archives package it; it selects binary build and installed archive proof.
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
 | `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Source changes and retained fixture/fuzz inputs select this boundary. |
 | `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Integration, protocol, shared parser, native formatter and semantic-editor fixture inputs select this boundary. |
-| `binaries` | Native archive builds/installed contracts and stable-ABI Python wheel builds/isolated installs on Linux x64, macOS ARM64 and Windows x64. The same wheel is exercised on CPython 3.12 and 3.13. Native source, package metadata, toolchain, and distribution inputs select this boundary. |
+| `binaries` | Release qualification and manual `Binaries` only: native archives/installed contracts and stable-ABI Python wheels on Ubuntu 22.04 x64, macOS ARM64 and Windows x64, exercised on CPython 3.12 and 3.13. |
 
-The planner selects `core`, `fuzz`, `binaries`, and `editors` for `src/**`.
+The automatic planner selects `core`, `fuzz`, and `editors` for `src/**`.
 The LSP consumes shared parser and native formatter behavior, so source-level
 engine changes retain the actual installed-editor integration proof instead of
 depending on a brittle per-file exclusion list. `tests/**` and `examples/**` select
 `core`; `tests/fixtures/**` also selects `fuzz`, and
 `tests/fixtures/semantic-editor/**` additionally selects `editors`. `SOURCES.md`
-selects only `binaries`. `integrations/**` selects `core` and `editors`. Cargo manifests,
+selects `core`. `integrations/**` selects `core` and `editors`. Cargo manifests,
 lockfiles, the Rust toolchain, and dependency policy select the affected
-dependencies, fuzz, binary, and editor boundaries as well as `core`. Selection is
+dependency, fuzz, and editor boundaries as well as `core`. Selection is
 based on the repository's input map, not file extensions.
 
 Native archive, Python wheel and VSIX Actions artifacts retain the existing
-14-day period. The binary workflow preserves the three supported native
-runners and archive verification, then builds a separate `daml-config` wheel
-and exercises installed base and `types`-extra consumers. It publishes no
-registry package or release asset. Editor verification runs in an Ubuntu
-Electron integration test. Linux uses Ubuntu 22.04; a local Linux run does not
-prove macOS or Windows execution.
+14-day period. Automatic core checks compile the native executables on Ubuntu
+24.04, so PR/push runs do not duplicate them in a binary-packaging leg.
+Release qualification and manual `Binaries` preserve all three native runners,
+installed archive verification and CPython 3.12/3.13 wheel consumers.
+Editor verification runs in an Ubuntu Electron integration test.
+See the [release/platform gate policy](../../.github/workflows/prepare-release.yml)
+at the top of the qualification workflow; a green PR does not prove those checks.
 
 Selected heavy work first checks coordinated shipping versions and the release
 admission regressions. Release preparation adds browser package/type/native-parity

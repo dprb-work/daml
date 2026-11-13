@@ -46,10 +46,27 @@ class CiPlanContractTests(unittest.TestCase):
             {"tier": "draft", "checks": []},
         )
 
-    def test_manual_full_selects_every_required_boundary_even_for_docs(self) -> None:
-        result = plan("manual-full", "README.md")
-        self.assertEqual(result["tier"], "full")
-        self.assertEqual(set(result["checks"]), {"docs", "core", "dependencies", "fuzz", "editors", "binaries"})
+    def test_release_preview_always_selects_every_qualification_group(self) -> None:
+        for path in ("README.md", "src/format.rs", "SOURCES.md", "unmapped/input"):
+            with self.subTest(path=path):
+                result = plan("manual-full", path)
+                self.assertEqual(result["tier"], "full")
+                self.assertEqual(
+                    set(result["checks"]),
+                    {"docs", "core", "dependencies", "fuzz", "editors", "binaries"},
+                )
+
+    def test_automatic_plans_never_select_the_cross_platform_binary_group(self) -> None:
+        for mode in ("draft", "ready", "push"):
+            for path in (
+                "README.md", "src/bin/daml-fmt.rs", "src/bin/daml-lsp.rs",
+                "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
+                "bindings/python/Cargo.toml", "SOURCES.md",
+                ".github/workflows/check.yml", "scripts/check", "scripts/ci-plan.py",
+                "unmapped/input", "*", "**",
+            ):
+                with self.subTest(mode=mode, path=path):
+                    self.assertNotIn("binaries", plan(mode, path)["checks"])
 
     def test_runtime_skill_markdown_is_not_documentation_only(self) -> None:
         result = plan("ready", "skills/verify-daml-distribution/SKILL.md")
@@ -61,13 +78,19 @@ class CiPlanContractTests(unittest.TestCase):
         self.assertNotEqual(result["tier"], "docs")
         assert_selected(result["checks"], "core")
 
-    def test_archive_manifest_selects_distribution_proof_without_docs_only_routing(self) -> None:
-        result = plan("ready", "SOURCES.md")
-        self.assertNotEqual(result["tier"], "docs")
-        assert_selected(result["checks"], "binaries")
+    def test_archive_manifest_keeps_native_compilation_without_platform_packaging(self) -> None:
+        for mode in ("ready", "push"):
+            for paths in (("SOURCES.md",), ("README.md", "SOURCES.md")):
+                with self.subTest(mode=mode, paths=paths):
+                    result = plan(mode, *paths)
+                    self.assertNotEqual(result["tier"], "docs")
+                    self.assertEqual(
+                        set(result["checks"]),
+                        {"core", "docs"} if len(paths) == 2 else {"core"},
+                    )
 
     def test_code_tests_and_fixture_inputs_select_required_behavioral_checks(self) -> None:
-        assert_selected(plan("ready", "src/resolve.rs")["checks"], "core", "binaries", "fuzz", "editors")
+        assert_selected(plan("ready", "src/resolve.rs")["checks"], "core", "fuzz", "editors")
         self.assertEqual(set(plan("ready", "tests/validation.rs")["checks"]), {"core"})
         self.assertEqual(
             set(plan("ready", "tests/fixtures/schema.json")["checks"]),
@@ -87,7 +110,7 @@ class CiPlanContractTests(unittest.TestCase):
                     self.assertEqual(set(result["checks"]), {"core", "fuzz", "editors"})
 
     def test_parser_and_native_formatter_changes_require_editor_integration(self) -> None:
-        required = {"core", "fuzz", "binaries", "editors"}
+        required = {"core", "fuzz", "editors"}
         for path in (
             "src/parser.rs",
             "src/parser/native.rs",
@@ -126,7 +149,7 @@ class CiPlanContractTests(unittest.TestCase):
                 self.assertEqual(set(result["checks"]), {"core", "editors"})
 
     def test_unknown_and_broad_paths_fail_closed(self) -> None:
-        all_checks = {"docs", "core", "dependencies", "fuzz", "editors", "binaries"}
+        all_checks = {"docs", "core", "dependencies", "fuzz", "editors"}
         for path in ("unmapped/new-input.bin", ".", "*.rs"):
             with self.subTest(path=path):
                 result = plan_result("ready", path)
@@ -146,8 +169,11 @@ class CiPlanContractTests(unittest.TestCase):
         planner = importlib.util.module_from_spec(planner_spec)
         planner_spec.loader.exec_module(planner)
         required_result = planner.required_result
-        selected = ["core", "editors"]
-        success = {"core": "success", "editors": "success"}
+        selected = plan("ready", ".github/workflows/check.yml")["checks"]
+        success = {
+            "docs": "success", "core": "success", "dependencies": "success",
+            "fuzz": "success", "editors": "success",
+        }
         current = dict(
             planned_head="head-1",
             planned_base="base-1",
@@ -155,11 +181,19 @@ class CiPlanContractTests(unittest.TestCase):
             current_base="base-1",
         )
         self.assertTrue(required_result(selected, success, **current))
-        for bad in ("failure", "cancelled", "skipped", "unknown"):
+        for check in selected:
+            for bad in ("failure", "cancelled", "skipped", "unknown"):
+                self.assertFalse(
+                    required_result(selected, {**success, check: bad}, **current),
+                    (check, bad),
+                )
             self.assertFalse(
-                required_result(selected, {**success, "editors": bad}, **current), bad
+                required_result(
+                    selected,
+                    {name: result for name, result in success.items() if name != check},
+                    **current,
+                )
             )
-        self.assertFalse(required_result(selected, {"core": "success"}, **current))
         self.assertFalse(
             required_result(["unknown-check"], {"unknown-check": "success"}, **current)
         )

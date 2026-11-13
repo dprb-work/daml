@@ -4,6 +4,7 @@ A release is a qualified set of files, not a build performed during upload.
 The preparation workflow builds and exercises those files. A separate workflow
 promotes only the version, source revision, run and manifest digest that the
 owner approves, to the separately approved publication target.
+The [release/platform gate policy](../../.github/workflows/prepare-release.yml) at the top of the qualification workflow lists release-only checks and the required response to failure.
 
 The coordinated source version is **0.2.2**, prepared as a fix-only release of
 the merged LSP lifecycle correction. See the [v0.2.2 notes and readiness](lsp-lifecycle-release-readiness.md).

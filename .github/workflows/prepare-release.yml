@@ -1,3 +1,11 @@
+# Release/platform gate — owner decision 13 Nov 2026: reduce CI cost.
+# ONLY release qualification (including explicit previews) runs macOS, Windows,
+# older-Ubuntu compatibility, installed native archives and CPython 3.12/3.13
+# wheels, browser SDK checks, and the complete release security suite.
+# Manual Binaries remains available for on-demand platform/archive/wheel checks.
+# Never publish without successful qualification of the exact source commit.
+# If any check fails, stop publication, fix the cause, then prepare and approve
+# a new complete candidate; never skip a failed check or reuse stale evidence.
 name: Prepare release
 
 on:

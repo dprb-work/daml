@@ -1,3 +1,4 @@
+# Required release/platform gate and failure policy: see prepare-release.yml header.
 name: Publish release
 run-name: Publish ${{ inputs.version }} to ${{ inputs.publication_target }} from ${{ inputs.source_sha }} / manifest ${{ inputs.manifest_sha256 }}
 

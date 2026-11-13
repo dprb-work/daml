@@ -10,6 +10,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
 CHECKS = ("docs", "core", "dependencies", "fuzz", "editors", "binaries")
+# Release-only platform policy: see the header of .github/workflows/prepare-release.yml.
+# Core already compiles native executables on Linux; do not duplicate packaging on PRs.
+AUTOMATIC_CHECKS = tuple(check for check in CHECKS if check != "binaries")
 DOCS = {
     "README.md",
     "docs/distribution.md",
@@ -43,7 +46,7 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
     if mode == "manual-full":
         return {"tier": "full", "checks": list(CHECKS)}
     if any(path in {"*", "**"} for path in paths):
-        return {"tier": "full", "checks": list(CHECKS)}
+        return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
 
     changed = set(paths)
     if changed <= DOCS:
@@ -51,20 +54,20 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
 
     if changed <= DOCS | {"SOURCES.md"} and "SOURCES.md" in changed:
         checks = ["docs"] if changed & DOCS else []
-        checks.append("binaries")
+        checks.append("core")
         return {"tier": "targeted", "checks": checks}
     selected = {"core"}
     for path in changed:
         if path.startswith(".github/workflows/") or path.startswith(
             ("scripts/check", "scripts/ci-plan")
         ):
-            return {"tier": "full", "checks": list(CHECKS)}
+            return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
         if (
             path in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "deny.toml"}
             or path.startswith(("bindings/python/", "fuzz/Cargo."))
             or path == ".cargo/config.toml"
         ):
-            selected.update(("dependencies", "fuzz", "binaries", "editors"))
+            selected.update(("dependencies", "fuzz", "editors"))
         if path in {
             "integrations/verify/syntect/Cargo.toml",
             "integrations/verify/syntect/Cargo.lock",
@@ -80,12 +83,6 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
             ("integrations/", "src/", "tests/fixtures/semantic-editor/")
         ):
             selected.add("editors")
-        if path.startswith("src/") or path in {
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-        }:
-            selected.add("binaries")
 
         if path.startswith(("src/", "tests/", "examples/", "integrations/", "fuzz/")):
             continue
@@ -100,7 +97,7 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
         }:
             continue
         # Unknown files, executable documentation, workflows, and new trees fail closed.
-        return {"tier": "full", "checks": list(CHECKS)}
+        return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
 
     return {
         "tier": "targeted",

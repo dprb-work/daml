@@ -51,5 +51,6 @@ CI runs dependency checks separately from the Rust gate. Root `deny.toml` allows
 ## CI path selection
 
 The path planner classifies changed files before installing heavier tools. See [CI path selection](ci.md) for the recorded workflow contract, path map, check groups, and platform limits. That document describes the workflow at its recorded revision; inspect current workflow files before using it as evidence of current CI behavior.
+PR/push CI builds native executables on Ubuntu 24.04, not the platform packaging matrix; see the [release/platform gate policy](../../.github/workflows/prepare-release.yml) at the top of the qualification workflow.
 
 Changes should include focused regression coverage where behavior changes and preserve the relevant API and resource limits. Run the aggregate gate before requesting review when practical. There are no additional documentation-specific governance gates.
