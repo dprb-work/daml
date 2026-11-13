@@ -42,6 +42,29 @@ unsupported path bytes fail closed instead of truncating the change set.
   integrations` and `Binaries` workflows remain available for their verification
   contracts; only `Binaries` retains its prior manual-dispatch entrypoint.
 
+### Nightly source verification
+
+At 03:47 UTC, `Check` runs all remaining source groups on the default-branch
+snapshot: core, dependencies, fuzz (including AddressSanitizer seeds), and the
+real editor/LSP integration suite. No platform binaries, browser release SDK,
+release candidate collection, or release-security scans are added to this route.
+The existing PR, push, and release-preview selections are unchanged.
+
+Before heavy setup, one Actions query reads the head of the last successful
+scheduled `Check` run. An equal head skips the source work and reports
+`unchanged`, not a new full-suite pass; missing history or lookup failure runs
+the source suite. This simple comparison does not track intervening failures or
+detect changed external advisories on unchanged source.
+
+Dispatch `Check` with `mode=nightly` to run source verification without the
+unchanged-head skip. It is advisory and does not qualify a release or admit PR
+proof. The default dispatch remains the existing complete release preview.
+`Nightly source` is separate from the PR's stable `Required` identity.
+A separate no-checkout reporter opens/updates the single `CI nightly: DAML`
+issue on failure and closes it on recovery. Actions must permit issue writes;
+the orchestrator must also inspect missing/cancelled runs or reporter failures.
+
+
 An `edited` PR event is metadata-only only when `changes` is nonempty, contains
 only `title` or `body`, and each value has exactly a `from` field. A previous
 body may be null. That run skips every later planner step and the heavy wrapper;

@@ -6,13 +6,22 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Release preview (default) or advisory full-source nightly proof
+        type: choice
+        options: [manual-full, nightly]
+        default: manual-full
+  schedule:
+    - cron: '47 3 * * *'
 
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 concurrency:
-  group: check-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null && (github.event.changes.title != null || github.event.changes.body != null) && 'metadata' || 'verification' }}
+  group: check-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base == null && (github.event.changes.title != null || github.event.changes.body != null) && 'metadata' || 'verification' }}-${{ github.event_name == 'schedule' || inputs.mode == 'nightly' }}
   cancel-in-progress: true
 
 jobs:
@@ -97,6 +106,19 @@ jobs:
       - name: Run protected planner contract
         if: steps.metadata.outputs.metadata_only != 'true'
         run: python3 tests/ci_plan_test.py
+      - id: previous
+        name: Read last successful scheduled head
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if head=$(gh api --method GET "repos/$REPOSITORY/actions/workflows/check.yml/runs" \
+            -f event=schedule -f status=success -f per_page=1 --jq '.workflow_runs[0].head_sha // ""'); then
+            echo "head=$head" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Cannot read last scheduled success; running full source."
+          fi
       - id: plan
         if: steps.metadata.outputs.metadata_only != 'true'
         env:
@@ -109,6 +131,8 @@ jobs:
           PUSH_HEAD: ${{ github.event.after }}
           EVENT_HEAD: ${{ github.sha }}
           EVENT_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          REQUEST_MODE: ${{ inputs.mode }}
+          LAST_SUCCESS_HEAD: ${{ steps.previous.outputs.head }}
         run: |
           base_ref=""
           paths="$RUNNER_TEMP/daml-changed-paths"
@@ -137,7 +161,7 @@ jobs:
               read_raw=true
             fi
           else
-            mode=manual-full
+            if [[ "$EVENT_NAME" == schedule || "$REQUEST_MODE" == nightly ]]; then mode=nightly; else mode=manual-full; fi
             draft=false
             base="$EVENT_HEAD"
             head="$EVENT_HEAD"
@@ -161,13 +185,13 @@ jobs:
           Path(sys.argv[2]).write_text(text, encoding="utf-8")
           PY
           fi
-          result=$(python3 scripts/ci-plan.py --mode "$mode" --paths-file "$paths")
+          result=$(python3 scripts/ci-plan.py --mode "$mode" --paths-file "$paths" --head "$EVENT_HEAD" --last-success-head "$LAST_SUCCESS_HEAD")
           RESULT="$result" MODE="$mode" BASE="$base" BASE_REF="$base_ref" HEAD="$head" CHECKOUT_SHA="$checkout_sha" DRAFT="$draft" python3 - <<'PY'
           import json, os, subprocess
           result = json.loads(os.environ["RESULT"])
           if "docs" in result["checks"]:
               mode, base, head = os.environ["MODE"], os.environ["BASE"], os.environ["HEAD"]
-              if mode == "manual-full":
+              if mode in {"manual-full", "nightly"}:
                   command = ["git", "diff", "--check", "--no-renames", "HEAD^", "HEAD"]
               elif mode in {"ready", "draft"}:
                   command = ["git", "diff", "--check", "--no-renames", f"{base}...{head}"]
@@ -179,6 +203,8 @@ jobs:
               output.write("checks=" + json.dumps(result["checks"], separators=(",", ":")) + "\n")
               output.write(f"base={os.environ['BASE']}\nbase_ref={os.environ['BASE_REF']}\nhead={os.environ['HEAD']}\ncheckout_sha={os.environ['CHECKOUT_SHA']}\nmode={os.environ['MODE']}\ndraft={os.environ['DRAFT']}\n")
           print(f"DAML CI tier: {result['tier']}; checks: {', '.join(result['checks']) or 'none'}")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(f"Source {os.environ['HEAD']}: {result['tier']}; checks: {', '.join(result['checks']) or 'unchanged since last successful schedule'}\n")
           PY
 
   heavy:
@@ -197,10 +223,10 @@ jobs:
     with:
       checks: ${{ needs.plan.outputs.checks }}
       ref: ${{ needs.plan.outputs.checkout_sha }}
-      prepare_release: ${{ github.event_name == 'workflow_dispatch' }}
+      prepare_release: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'nightly' }}
 
   required:
-    name: ${{ needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required' }}
+    name: ${{ needs.plan.outputs.mode == 'nightly' && 'Nightly source' || (needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required') }}
     needs: [plan, heavy]
     if: always() && !(needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true')
     runs-on: ubuntu-24.04
@@ -210,6 +236,7 @@ jobs:
           persist-credentials: false
       - id: current
         name: Read current candidate and target-base tip
+        if: needs.plan.outputs.mode != 'nightly'
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
@@ -252,18 +279,22 @@ jobs:
           PLAN_HEAD: ${{ needs.plan.outputs.head }}
           PLAN_BASE_REF: ${{ needs.plan.outputs.base_ref }}
           PLAN_DRAFT: ${{ needs.plan.outputs.draft }}
-          CURRENT_BASE: ${{ steps.current.outputs.base }}
-          CURRENT_HEAD: ${{ steps.current.outputs.head }}
+          CURRENT_BASE: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.base || steps.current.outputs.base }}
+          CURRENT_HEAD: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.head || steps.current.outputs.head }}
           CURRENT_BASE_REF: ${{ steps.current.outputs.base_ref }}
-          CURRENT_DRAFT: ${{ steps.current.outputs.draft }}
+          CURRENT_DRAFT: ${{ needs.plan.outputs.mode == 'nightly' && 'false' || steps.current.outputs.draft }}
           PLAN_RESULT: ${{ needs.plan.result }}
           HEAVY_RESULT: ${{ needs.heavy.result }}
+          PLAN_MODE: ${{ needs.plan.outputs.mode }}
         run: |
           python3 - <<'PY'
           import importlib.util, json, os, sys
           spec = importlib.util.spec_from_file_location("ci_plan", "scripts/ci-plan.py")
           planner = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(planner)
+          if os.environ["PLAN_MODE"] == "nightly" and os.environ["PLAN_TIER"] == "unchanged" and os.environ["PLAN_RESULT"] == "success":
+              print("Unchanged since last successful scheduled head; no new full-source verification.")
+              sys.exit(0)
           selected = json.loads(os.environ["PLAN_CHECKS"] or "[]")
           heavy = os.environ["HEAVY_RESULT"]
           results = {"docs": os.environ["PLAN_RESULT"], "core": heavy, "dependencies": heavy, "fuzz": heavy, "editors": heavy, "binaries": heavy}
@@ -273,3 +304,34 @@ jobs:
           print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; base current: {os.environ['CURRENT_BASE'] == os.environ['PLAN_BASE']}; base ref current: {base_ref_current}; readiness current: {draft_current}")
           sys.exit(0 if passed else 1)
           PY
+
+  nightly-report:
+    needs: [plan, heavy, required]
+    if: always() && (github.event_name == 'schedule' || inputs.mode == 'nightly')
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Update the single nightly issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULTS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          HEAD: ${{ github.sha }}
+        run: |
+          title="CI nightly: DAML"
+          issue=$(gh issue list --state all --search "$title in:title" --json number,title \
+            --jq '.[] | select(.title == "CI nightly: DAML") | .number' | head -n 1)
+          body=$(printf 'Source: %s\nRun: %s\nStages:\n%s\n' "$HEAD" "$RUN_URL" "$RESULTS")
+          if [[ "$(jq -r '.required.result' <<< "$RESULTS")" == success ]]; then
+            if [[ -n "$issue" ]]; then
+              gh issue comment "$issue" --body "Recovered or unchanged since green. $body"
+              gh issue close "$issue"
+            fi
+          elif [[ -n "$issue" ]]; then
+            gh issue reopen "$issue"
+            gh issue edit "$issue" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

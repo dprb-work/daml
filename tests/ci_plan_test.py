@@ -37,6 +37,34 @@ def assert_selected(actual: list[str], *required: str) -> None:
 
 
 class CiPlanContractTests(unittest.TestCase):
+    def test_nightly_runs_all_source_groups_without_release_qualification(self) -> None:
+        for path in ("README.md", "src/lsp.rs", "*"):
+            self.assertEqual(
+                plan("nightly", path),
+                {"tier": "full", "checks": ["docs", "core", "dependencies", "fuzz", "editors"]},
+            )
+
+    def test_nightly_skips_only_when_a_successful_scheduled_head_matches(self) -> None:
+        for current, previous, expected in (
+            ("a" * 40, "a" * 40, "unchanged"),
+            ("b" * 40, "a" * 40, "full"),
+            ("a" * 40, "", "full"),
+            ("", "", "full"),
+        ):
+            with self.subTest(current=current, previous=previous):
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8") as paths:
+                    paths.write("*\n")
+                    paths.flush()
+                    result = subprocess.run(
+                        ["python3", str(PLANNER), "--mode", "nightly",
+                         "--paths-file", paths.name, "--head", current,
+                         "--last-success-head", previous],
+                        cwd=ROOT, capture_output=True, text=True, check=True,
+                    )
+                selected = json.loads(result.stdout)
+                self.assertEqual(selected["tier"], expected)
+                self.assertEqual(bool(selected["checks"]), expected == "full")
+
     def test_ready_documentation_selects_only_docs(self) -> None:
         self.assertEqual(plan("ready", "README.md"), {"tier": "docs", "checks": ["docs"]})
 
