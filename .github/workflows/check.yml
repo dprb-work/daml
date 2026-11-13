@@ -192,11 +192,11 @@ jobs:
           if "docs" in result["checks"]:
               mode, base, head = os.environ["MODE"], os.environ["BASE"], os.environ["HEAD"]
               if mode in {"manual-full", "nightly"}:
-                  command = ["git", "diff", "--check", "--no-renames", "HEAD^", "HEAD"]
+                  command = ["./scripts/check-tier", "docs", "HEAD^..HEAD"]
               elif mode in {"ready", "draft"}:
-                  command = ["git", "diff", "--check", "--no-renames", f"{base}...{head}"]
+                  command = ["./scripts/check-tier", "docs", f"{base}...{head}"]
               else:
-                  command = ["git", "diff", "--check", "--no-renames", f"{base}..{head}"]
+                  command = ["./scripts/check-tier", "docs", f"{base}..{head}"]
               subprocess.run(command, check=True)
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"tier={result['tier']}\n")

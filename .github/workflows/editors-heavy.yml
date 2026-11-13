@@ -26,37 +26,10 @@ jobs:
           node-version: 24.19.0
       - name: Install pinned Rust toolchain
         run: rustup show
-      - name: Install VS Code integration dependencies
-        working-directory: integrations/vscode
-        run: npm ci --ignore-scripts
-      - name: Audit VS Code integration dependencies
-        working-directory: integrations/vscode
-        run: npm audit --audit-level=high
-      - name: Typecheck VS Code integration
-        working-directory: integrations/vscode
-        run: npm run typecheck
-      - name: Package installable VSIX
-        id: package
-        working-directory: integrations/vscode
-        run: npm run package
-      - name: Build locked DAML language server
-        run: cargo build --locked --release --features lsp --bin daml-lsp
-      - name: Install isolated Electron verifier dependencies
-        working-directory: integrations/verify
-        run: npm ci --ignore-scripts
-      - name: Audit Electron verifier dependencies
-        working-directory: integrations/verify
-        run: npm audit --audit-level=high
-      - name: Exercise DAML TextMate boundary scopes
-        working-directory: integrations/verify
-        run: npm run test:grammar
-      - name: Exercise installed VSIX in real Electron extension hosts
-        working-directory: integrations/verify
+      - name: Verify installed editor and language-server behavior
         env:
-          DAML_LSP_PATH: ${{ github.workspace }}/target/release/daml-lsp
-          DAML_VSIX_PATH: ${{ steps.package.outputs.vsix }}
           DAML_VSCODE_NO_SANDBOX: '1'
-        run: npm run test:vscode
+        run: ./scripts/check-tier editors
       - name: Retain private VSIX artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

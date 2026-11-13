@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Run the CI planner's cheap route, or explicitly run every source check."""
+import os
+import runpy
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[1]
+os.chdir(root)
+
+def git(*args: str) -> bytes:
+    return subprocess.check_output(["git", *args])
+
+if sys.argv[1:] not in ([], ["full"], ["pre-push"]):
+    raise SystemExit("usage: scripts/check-changes [full|pre-push]")
+start = time.monotonic()
+head = git("rev-parse", "HEAD").decode().strip()
+full = sys.argv[1:] == ["full"]
+if not full and git("status", "--porcelain"):
+    raise SystemExit("local gate requires a clean checkout")
+if sys.argv[1:] == ["pre-push"]:
+    tips = [line.split()[1] for line in sys.stdin if line.strip()]
+    tips = [tip for tip in tips if tip != "0" * 40]
+    if not tips:
+        raise SystemExit(0)
+    if any(tip != head for tip in tips):
+        raise SystemExit("push each outgoing tip from its own clean worktree")
+if full:
+    paths, mode, diff_range = ["*"], "nightly", "HEAD^..HEAD"
+else:
+    subprocess.run(["git", "fetch", "--quiet", "origin", "main"], check=True)
+    base = git("merge-base", "HEAD", "origin/main").decode().strip()
+    diff_range = f"{base}...{head}"
+    raw = git("diff", "--no-renames", "--name-only", "-z", diff_range)
+    if raw and not raw.endswith(b"\0"):
+        raise SystemExit("incomplete NUL-delimited changed paths")
+    paths, mode = raw[:-1].decode().split("\0") if raw else ["*"], "ready"
+subprocess.run(["python3", "tests/ci_plan_test.py"], check=True)
+planner = runpy.run_path(str(root / "scripts/ci-plan.py"))
+selected = planner["plan"](mode, paths)
+print(f"Local tier: {selected['tier']}; source {head}; checks: {selected['checks']}", flush=True)
+if any(check != "docs" for check in selected["checks"]):
+    subprocess.run(["./scripts/check-tier", "admission"], check=True)
+for check in selected["checks"]:
+    subprocess.run(["./scripts/check-tier", check, diff_range], check=True)
+if not full and (git("rev-parse", "HEAD").decode().strip() != head or git("status", "--porcelain")):
+    raise SystemExit("local gate inputs changed during verification")
+print(f"Local gate duration: {time.monotonic() - start:.2f} seconds", flush=True)

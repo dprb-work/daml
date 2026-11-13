@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+root="$PWD"
+case "${1:?name a check group or full}" in
+  full) exec python3 scripts/check-changes full ;;
+  docs) git diff --check --no-renames "${2:-HEAD^..HEAD}" ;;
+  core) exec ./scripts/check ;;
+  admission)
+    python3 scripts/release_common.py check-version
+    python3 -B -m unittest discover -s tests -p test_release_delivery.py
+    python3 -B -m unittest discover -s tests -p test_release_security.py
+    python3 -B tests/ci_local_test.py
+    ;;
+  dependencies)
+    cargo deny --locked check
+    cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
+    cargo deny --all-features --locked check
+    cargo deny --manifest-path integrations/verify/syntect/Cargo.toml --config integrations/verify/syntect/deny.toml --locked check
+    ;;
+  fuzz)
+    cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
+    cargo deny --manifest-path fuzz/Cargo.toml --locked check
+    ./scripts/fuzz-smoke 1000
+    ;;
+  editors)
+    (cd integrations/vscode
+      npm ci --ignore-scripts
+      npm audit --audit-level=high
+      npm run typecheck
+      npm run package)
+    cargo build --locked --release --features lsp --bin daml-lsp
+    export DAML_LSP_PATH="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/release/daml-lsp"
+    export DAML_VSIX_PATH="$root/integrations/vscode/$(node -p 'const p=require("./integrations/vscode/package.json"); `${p.name}-${p.version}.vsix`')"
+    (cd integrations/verify
+      npm ci --ignore-scripts
+      npm audit --audit-level=high
+      npm run test:grammar
+      npm run test:vscode)
+    ;;
+  *) echo "Unknown check group: $1" >&2; exit 2 ;;
+esac
