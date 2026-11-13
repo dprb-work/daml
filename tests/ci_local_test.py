@@ -73,6 +73,53 @@ class LocalGateTests(unittest.TestCase):
         self.assertIn("exit status 9", result.stderr)
         self.assertFalse((self.root / "unexpected-fuzz-effect").exists())
 
+    def test_editor_verification_only_cleans_artifacts_it_created(self) -> None:
+        vscode = self.root / "integrations/vscode"
+        vscode.mkdir(parents=True)
+        (self.root / "integrations/verify").mkdir()
+        tools = self.root / "fake-tools"
+        tools.mkdir()
+        scripts = {
+            "node": "#!/bin/sh\nprintf 'test-1.vsix\\n'\n",
+            "cargo": "#!/bin/sh\nif [ \"$1\" = metadata ]; then printf '{\"target_directory\":\"/tmp/test-target\"}\\n'; fi\n",
+            "npm": """#!/bin/sh
+if [ "$1 $2" = "run package" ]; then
+  [ ! -e test-1.vsix ] && [ ! -e test-1.vsix.sha256 ] || exit 7
+  printf 'verification-owned' > test-1.vsix
+  printf 'checksum' > test-1.vsix.sha256
+fi
+if [ "$1 $2" = "run test:vscode" ]; then exit "${FAIL_EDITOR:-0}"; fi
+""",
+        }
+        for name, content in scripts.items():
+            path = tools / name
+            path.write_text(content)
+            path.chmod(0o755)
+        environment = {**self.environment, "PATH": f"{tools}:{os.environ['PATH']}"}
+        environment.pop("GITHUB_OUTPUT", None)
+        result = subprocess.run(["./scripts/check-tier", "editors"], cwd=self.root, env=environment)
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse((vscode / "test-1.vsix").exists())
+        self.assertFalse((vscode / "test-1.vsix.sha256").exists())
+        failed = subprocess.run(
+            ["./scripts/check-tier", "editors"], cwd=self.root,
+            env={**environment, "FAIL_EDITOR": "9"},
+        )
+        self.assertEqual(failed.returncode, 9)
+        self.assertFalse((vscode / "test-1.vsix").exists())
+        (vscode / "test-1.vsix").write_text("pre-existing candidate")
+        refused = subprocess.run(["./scripts/check-tier", "editors"], cwd=self.root, env=environment)
+        self.assertEqual(refused.returncode, 7)
+        self.assertEqual((vscode / "test-1.vsix").read_text(), "pre-existing candidate")
+        (vscode / "test-1.vsix").unlink()
+        hosted = subprocess.run(
+            ["./scripts/check-tier", "editors"], cwd=self.root,
+            env={**environment, "GITHUB_OUTPUT": str(self.root / "step-output")},
+        )
+        self.assertEqual(hosted.returncode, 0)
+        self.assertTrue((vscode / "test-1.vsix").exists())
+        self.assertTrue((vscode / "test-1.vsix.sha256").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

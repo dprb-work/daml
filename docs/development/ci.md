@@ -44,6 +44,10 @@ sanitizer targets, npm audits/typecheck/VSIX packaging, release LSP build,
 grammar checks, and complete installed Electron aggregate. Core still delegates
 to `scripts/check`. Release-only platform/wheel/browser/security qualification
 keeps its existing separate exact-candidate graph and human publishing gate.
+Local editor verification removes only the VSIX/checksum it successfully
+produced, including after a later check fails. Pre-existing candidates still
+cause the producer to refuse and are never removed. Hosted output stays
+available for the following artifact-upload step.
 
 
 ## Tiers

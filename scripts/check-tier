@@ -29,9 +29,12 @@ case "${1:?name a check group or full}" in
       npm audit --audit-level=high
       npm run typecheck
       npm run package)
+    export DAML_VSIX_PATH="$root/integrations/vscode/$(node -p 'const p=require("./integrations/vscode/package.json"); `${p.name}-${p.version}.vsix`')"
+    if [[ -z "${GITHUB_OUTPUT:-}" ]]; then
+      trap 'rm -f "$DAML_VSIX_PATH" "$DAML_VSIX_PATH.sha256"' EXIT
+    fi
     cargo build --locked --release --features lsp --bin daml-lsp
     export DAML_LSP_PATH="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')/release/daml-lsp"
-    export DAML_VSIX_PATH="$root/integrations/vscode/$(node -p 'const p=require("./integrations/vscode/package.json"); `${p.name}-${p.version}.vsix`')"
     (cd integrations/verify
       npm ci --ignore-scripts
       npm audit --audit-level=high
