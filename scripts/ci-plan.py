@@ -134,7 +134,7 @@ def main() -> int:
     parser.add_argument("--last-success-head", default="")
     args = parser.parse_args()
     try:
-        with open(args.paths_file, encoding="utf-8") as stream:
+        with open(args.paths_file, encoding="utf-8", newline="") as stream:
             paths = [line.rstrip("\n") for line in stream]
         result = plan(args.mode, paths, args.head, args.last_success_head)
     except (OSError, UnicodeError, ValueError) as error:
