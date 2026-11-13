@@ -226,7 +226,7 @@ jobs:
       prepare_release: ${{ github.event_name == 'workflow_dispatch' && inputs.mode != 'nightly' }}
 
   required:
-    name: ${{ needs.plan.outputs.mode == 'nightly' && 'Nightly source' || (needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required') }}
+    name: ${{ (github.event_name == 'schedule' || inputs.mode == 'nightly') && 'Nightly source' || (needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true' && 'metadata-only' || 'Required') }}
     needs: [plan, heavy]
     if: always() && !(needs.plan.result == 'success' && needs.plan.outputs.metadata_only == 'true')
     runs-on: ubuntu-24.04
