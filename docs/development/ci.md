@@ -94,7 +94,8 @@ unchanged-head skip. It is advisory and does not qualify a release or admit PR
 proof. The default dispatch remains the existing complete release preview.
 `Nightly source` is separate from the PR's stable `Required` identity.
 A separate no-checkout reporter opens/updates the single `CI nightly: DAML`
-issue on failure and closes it on recovery. Actions must permit issue writes;
+issue on failure and closes an open issue on recovery. Already-closed issues
+receive no new green-night comments. Actions must permit issue writes;
 the orchestrator must also inspect missing/cancelled runs or reporter failures.
 
 

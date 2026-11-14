@@ -16,7 +16,7 @@ class LocalGateTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        for relative in ("scripts/ci-plan.py", "scripts/check-changes", "scripts/check-tier", "tests/ci_plan_test.py"):
+        for relative in ("scripts/ci-plan.py", "scripts/check-changes", "scripts/check-tier", "tests/ci_plan_test.py", ".github/workflows/check.yml"):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, target)

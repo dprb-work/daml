@@ -3,6 +3,7 @@
 Install [Rust through rustup](https://rustup.rs/). Run commands from the repository root unless a command says otherwise. DAML pins its Rust toolchain in `rust-toolchain.toml`; the pin includes rustfmt, Clippy, and standard-library sources for rust-analyzer. The pin is also the declared minimum supported Rust version. Supporting an older compiler requires testing it separately.
 
 Core checks need Rust and [uv](https://docs.astral.sh/uv/getting-started/installation/). Full source checks also need Node.js 24.19.0/npm, Xvfb, cargo-deny 0.20.2, cargo-fuzz 0.13.2, and the fuzz package's pinned nightly toolchain. CI prepares those tools before invoking the shared command. Python is not a DAML runtime dependency.
+The routed gate also needs Git, Bash, and jq for planner/reporting regressions.
 
 If Cargo is not on your shell's PATH after installing Rust, load its environment:
 

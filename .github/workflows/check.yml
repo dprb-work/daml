@@ -322,11 +322,12 @@ jobs:
           HEAD: ${{ github.sha }}
         run: |
           title="CI nightly: DAML"
-          issue=$(gh issue list --state all --search "$title in:title" --json number,title \
-            --jq '.[] | select(.title == "CI nightly: DAML") | .number' | head -n 1)
+          issue=$(gh issue list --state all --search "$title in:title" --json number,title,state \
+            --jq '.[] | select(.title == "CI nightly: DAML") | [.number, .state] | @tsv' | head -n 1)
+          read -r issue state <<< "$issue"
           body=$(printf 'Source: %s\nRun: %s\nStages:\n%s\n' "$HEAD" "$RUN_URL" "$RESULTS")
           if [[ "$(jq -r '.required.result' <<< "$RESULTS")" == success ]]; then
-            if [[ -n "$issue" ]]; then
+            if [[ -n "$issue" && "$state" == OPEN ]]; then
               gh issue comment "$issue" --body "Recovered or unchanged since green. $body"
               gh issue close "$issue"
             fi
