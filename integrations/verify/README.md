@@ -4,22 +4,25 @@ The verification package covers the VS Code extension host and DAML grammar.
 Local and CI editor checks use a source-built `daml-lsp` matching the checked-out
 extension. Older released executables may lack the semantic providers.
 
-## VS Code extension host (Linux/Xvfb)
+## Editor source gate (Linux/Xvfb)
 
-Prerequisites: Node.js, npm, `xvfb-run`, Rust/Cargo, and a matching source-built server.
-From the DAML repository root:
+Prepare the [pinned tools](../../docs/development/building.md), including
+Node.js/npm, Xvfb, and Rust. From the repository root, run the same editor group
+as hosted CI:
 
 ```sh
-cargo build --locked --features lsp --bin daml-lsp
-cd integrations/vscode
-npm ci --ignore-scripts
-npm run package
-cd ../verify
-npm ci --ignore-scripts
-DAML_LSP_PATH=/absolute/path/to/checkout/target/debug/daml-lsp \
-  DAML_VSIX_PATH=/absolute/path/to/definitively-asserted-daml-0.2.1.vsix \
-  npm run test:vscode
+./scripts/check-tier editors
 ```
+
+The shared runner installs locked dependencies, audits both npm graphs,
+typechecks/packages the VSIX, builds release-mode LSP, and runs grammar plus
+the complete Electron aggregate. Locally, it cleans up only the VSIX/checksum
+it produced; it never removes a pre-existing candidate.
+
+For the focused sub-suite commands below, prepare a retained VSIX with the
+[package producer](../vscode/README.md) and set absolute `DAML_LSP_PATH` and
+`DAML_VSIX_PATH` values matching that source build. Those diagnostic commands
+do not replace the routed pre-push gate.
 
 On an isolated headless host without a usable Chromium sandbox helper, prefix the
 test command with `DAML_VSCODE_NO_SANDBOX=1`. This existing runner option disables
