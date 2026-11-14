@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+unset $(git rev-parse --local-env-vars)
+exec python3 "$(git rev-parse --show-toplevel)/scripts/check-changes" pre-push

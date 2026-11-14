@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -284,6 +285,86 @@ class CiPlanContractTests(unittest.TestCase):
             required_result(selected, success, **{**current, "planned_head": ""})
         )
         self.assertFalse(required_result([], success, **current))
+
+class NightlyIssueContractTests(unittest.TestCase):
+    """Execute the actual reporter shell against isolated issue state."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        directory = Path(self.temporary.name)
+        self.store = directory / "issue.json"
+        self.store.write_text(json.dumps({"state": "CLOSED", "comments": ["previous report"]}))
+        gh = directory / "gh"
+        gh.write_text("""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+store = Path(os.environ["ISSUE_STORE"])
+issue = json.loads(store.read_text())
+args = sys.argv[1:]
+action = args[1]
+if action == "list":
+    if args[args.index("--state") + 1] == "open" and issue["state"] != "OPEN":
+        raise SystemExit(0)
+    fields = args[args.index("--json") + 1].split(",")
+    print("17\\t" + issue["state"] if "state" in fields else "17")
+elif action in {"comment", "close", "reopen", "edit"}:
+    if args[2] != "17":
+        raise SystemExit("wrong issue identity")
+    if action == "comment":
+        issue["comments"].append(args[args.index("--body") + 1])
+    elif action == "close":
+        issue["state"] = "CLOSED"
+    elif action == "reopen":
+        issue["state"] = "OPEN"
+    else:
+        issue["body"] = args[args.index("--body") + 1]
+    store.write_text(json.dumps(issue))
+else:
+    raise SystemExit("unexpected issue operation")
+""")
+        gh.chmod(0o755)
+        lines = (ROOT / ".github/workflows/check.yml").read_text().splitlines()
+        job = lines.index("  nightly-report:")
+        run = next(index for index in range(job, len(lines)) if lines[index] == "        run: |")
+        commands = []
+        for line in lines[run + 1:]:
+            if line and not line.startswith("          "):
+                break
+            commands.append(line[10:])
+        self.reporter = "\n".join(commands)
+        self.environment = {
+            **os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
+            "ISSUE_STORE": str(self.store), "HEAD": "a" * 40,
+            "RUN_URL": "https://example.invalid/run/1",
+        }
+
+    def run_reporter(self, result: str = "success") -> None:
+        subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", self.reporter], check=True,
+            env={**self.environment, "RESULTS": json.dumps({"required": {"result": result}})},
+            capture_output=True, text=True,
+        )
+
+    def test_green_does_not_comment_on_or_modify_a_closed_issue(self) -> None:
+        before = json.loads(self.store.read_text())
+        self.run_reporter()
+        self.assertEqual(json.loads(self.store.read_text()), before)
+
+    def test_recovery_closes_open_issue_without_repeated_green_comments(self) -> None:
+        self.store.write_text(json.dumps({"state": "OPEN", "comments": []}))
+        self.run_reporter()
+        recovered = json.loads(self.store.read_text())
+        self.assertEqual(recovered["state"], "CLOSED")
+        self.assertIn(self.environment["RUN_URL"], recovered["comments"][0])
+        self.run_reporter()
+        self.assertEqual(json.loads(self.store.read_text()), recovered)
+
+    def test_red_reopens_and_updates_the_existing_closed_issue(self) -> None:
+        self.run_reporter("failure")
+        issue = json.loads(self.store.read_text())
+        self.assertEqual(issue["state"], "OPEN")
+        self.assertIn(self.environment["RUN_URL"], issue["body"])
 
 
 

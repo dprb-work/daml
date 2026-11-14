@@ -53,12 +53,8 @@ jobs:
               if source != os.environ["EVENT_SHA"]:
                   raise SystemExit("release preparation must qualify this run's source SHA")
           PY
-      - name: Check all five shipping versions before heavy work
-        run: python3 scripts/release_common.py check-version
-      - name: Exercise frozen release admission regressions
-        run: python3 -B -m unittest discover -s tests -p test_release_delivery.py
-      - name: Exercise release security admission without running scanners
-        run: python3 -B -m unittest discover -s tests -p test_release_security.py
+      - name: Check shipping versions and source admission regressions
+        run: ./scripts/check-tier admission
 
   core:
     name: Check

@@ -23,6 +23,33 @@ lookup steps. Planner and aggregate code run without it. Pull-request paths come
 from a complete `git diff --no-renames --name-only -z` result; invalid or
 unsupported path bytes fail closed instead of truncating the change set.
 
+## Shared local and hosted source checks
+
+`scripts/ci-plan.py` is the only path-to-check-set owner.
+`scripts/check-tier` runs a named source group; `scripts/check-tier full`
+asks that planner for the complete source set. The tracked pre-push hook and
+documented `scripts/check-changes` command use the ready-PR route, reject dirty
+or changed outgoing heads, and run every selected group through that runner.
+There is no bypass option or local receipt store.
+
+The hosted workflows prepare pinned tools, route the selected groups onto
+parallel clean runners, and report statuses/artifacts. Local execution is
+sequential and uses the prepared developer environment. Hosted PR merge/base
+freshness and draft/metadata admission remain hosted responsibilities.
+Headless sandbox configuration is machine preparation, not a different test
+set. Source checks need no service containers or secrets.
+
+The runner owns the formerly inline version/admission checks, Cargo policy,
+sanitizer targets, npm audits/typecheck/VSIX packaging, release LSP build,
+grammar checks, and complete installed Electron aggregate. Core still delegates
+to `scripts/check`. Release-only platform/wheel/browser/security qualification
+keeps its existing separate exact-candidate graph and human publishing gate.
+Local editor verification removes only the VSIX/checksum it successfully
+produced, including after a later check fails. Pre-existing candidates still
+cause the producer to refuse and are never removed. Hosted output stays
+available for the following artifact-upload step.
+
+
 ## Tiers
 
 - **Draft:** classification runs, but no automatic heavy workflow runs. Both
@@ -67,7 +94,8 @@ unchanged-head skip. It is advisory and does not qualify a release or admit PR
 proof. The default dispatch remains the existing complete release preview.
 `Nightly source` is separate from the PR's stable `Required` identity.
 A separate no-checkout reporter opens/updates the single `CI nightly: DAML`
-issue on failure and closes it on recovery. Actions must permit issue writes;
+issue on failure and closes an open issue on recovery. Already-closed issues
+receive no new green-night comments. Actions must permit issue writes;
 the orchestrator must also inspect missing/cancelled runs or reporter failures.
 
 

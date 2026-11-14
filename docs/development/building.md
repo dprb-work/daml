@@ -2,7 +2,8 @@
 
 Install [Rust through rustup](https://rustup.rs/). Run commands from the repository root unless a command says otherwise. DAML pins its Rust toolchain in `rust-toolchain.toml`; the pin includes rustfmt, Clippy, and standard-library sources for rust-analyzer. The pin is also the declared minimum supported Rust version. Supporting an older compiler requires testing it separately.
 
-The full local gate needs Rust and [uv](https://docs.astral.sh/uv/getting-started/installation/). `uv` provisions the Python 3.12 binding environment from its lockfile. Python is not a runtime dependency of the Rust library or native executables.
+Core checks need Rust and [uv](https://docs.astral.sh/uv/getting-started/installation/). Full source checks also need Node.js 24.19.0/npm, Xvfb, cargo-deny 0.20.2, cargo-fuzz 0.13.2, and the fuzz package's pinned nightly toolchain. CI prepares those tools before invoking the shared command. Python is not a DAML runtime dependency.
+The routed gate also needs Git, Bash, and jq for planner/reporting regressions.
 
 If Cargo is not on your shell's PATH after installing Rust, load its environment:
 
@@ -18,13 +19,40 @@ Build the library:
 cargo build --locked
 ```
 
-Run the aggregate gate used by CI:
+Before pushing, run the same path-routed gate as PR CI from a clean worktree:
 
 ```sh
-./scripts/check
+./scripts/check-changes
 ```
 
-It checks library, fuzz and Syntect-verifier formatting, the default portable-library build, all-feature Clippy, Rust tests and doctests, warning-clean rustdoc, the isolated Syntect consumer's Clippy and grammar tests, and isolated Python extension build, Clippy, Ruff, and behavioral tests. Checks stop at the first failure. Run `./scripts/check-python` for the binding checks alone.
+The command fetches `origin/main`, checks the complete merge-base path set, and
+uses `scripts/ci-plan.py`. Docs run whitespace checks; ordinary source runs
+core; affected editor inputs add editor verification; risky/shared/unknown
+inputs run every source group. No bypass option is provided.
+
+Enable the tracked hook with `git config core.hooksPath .githooks`, or invoke
+the normal hook explicitly with `git -c core.hooksPath=.githooks push`.
+The hook uses that same command, checks outgoing tips against the clean
+checkout, and rejects a changed head or dirty checkout after verification.
+Push other outgoing tips from their own clean worktrees. No prior receipt
+store exists here and none is introduced.
+
+Run the full source suite explicitly:
+
+```sh
+./scripts/check-tier full
+```
+
+This runs planner/admission regressions and the same core, dependency-policy,
+fuzz/sanitizer, and installed-editor/LSP groups as nightly. On an isolated
+headless machine without a usable Chromium sandbox, set
+`DAML_VSCODE_NO_SANDBOX=1`; do not use that option for a normal editor session.
+Use `CARGO_BUILD_JOBS=2` to match hosted fuzz compilation limits.
+
+`./scripts/check` remains the core group: library/fuzz/Syntect formatting,
+portable-library build, all-feature Clippy, Rust tests/doctests, rustdoc,
+Syntect consumer checks, and isolated Python build/Clippy/Ruff/tests.
+Run `./scripts/check-python` for only the binding checks.
 
 Focused Rust commands are also available:
 
@@ -53,4 +81,4 @@ CI runs dependency checks separately from the Rust gate. Root `deny.toml` allows
 The path planner classifies changed files before installing heavier tools. See [CI path selection](ci.md) for the recorded workflow contract, path map, check groups, and platform limits. That document describes the workflow at its recorded revision; inspect current workflow files before using it as evidence of current CI behavior.
 PR CI builds native executables on Ubuntu 24.04; default-branch pushes run no heavy checks. The full source suite, including fuzz and editor/LSP behavior, runs nightly. Risky/shared/unknown PRs automatically run it too. Platform packaging, browser SDK qualification, and complete release security remain in the existing [exact-candidate release/platform gate](../../.github/workflows/prepare-release.yml), also reachable through the unchanged default manual `Check` dispatch.
 
-Changes should include focused regression coverage where behavior changes and preserve the relevant API and resource limits. Run the aggregate gate before requesting review when practical. There are no additional documentation-specific governance gates.
+Changes should include focused regression coverage where behavior changes and preserve the relevant API and resource limits. Run the routed gate before requesting review, or let the normal push hook run it once. Use the explicit full-source command when needed. There are no additional documentation-specific governance gates.

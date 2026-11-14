@@ -30,7 +30,7 @@ jobs:
         with:
           version: 0.12.10
       - name: Verify
-        run: ./scripts/check
+        run: ./scripts/check-tier core
 
   dependencies:
     if: contains(fromJSON(inputs.checks), 'dependencies')
@@ -46,11 +46,7 @@ jobs:
       - name: Install dependency policy tool
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Check advisories, licenses, bans, and sources
-        run: |
-          cargo deny --locked check
-          cargo deny --manifest-path bindings/python/Cargo.toml --config deny.toml --locked check
-          cargo deny --all-features --locked check
-          cargo deny --manifest-path integrations/verify/syntect/Cargo.toml --config integrations/verify/syntect/deny.toml --locked check
+        run: ./scripts/check-tier dependencies
 
   fuzz:
     if: contains(fromJSON(inputs.checks), 'fuzz')
@@ -71,9 +67,5 @@ jobs:
         run: |
           cargo install cargo-fuzz --version 0.13.2 --locked
           cargo install cargo-deny --version 0.20.2 --locked
-      - name: Lint fuzz harness
-        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets --locked -- -D warnings
-      - name: Check fuzz dependency policy
-        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
-      - name: Exercise address-sanitized targets and retained seeds
-        run: ./scripts/fuzz-smoke 1000
+      - name: Verify fuzz harness, policy, and sanitized seeds
+        run: ./scripts/check-tier fuzz
