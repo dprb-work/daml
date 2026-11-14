@@ -28,9 +28,11 @@ DOCS = {
 }
 
 
-def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
+def plan(
+    mode: str, paths: Sequence[str], head: str = "", last_success_head: str = ""
+) -> dict[str, object]:
     """Return the tier and stable check identities for repo-relative paths."""
-    if mode not in {"draft", "ready", "push", "manual-full"}:
+    if mode not in {"draft", "ready", "push", "manual-full", "nightly"}:
         raise ValueError(f"unknown mode: {mode}")
     if not paths:
         raise ValueError("changed paths must not be empty")
@@ -43,6 +45,10 @@ def plan(mode: str, paths: Sequence[str]) -> dict[str, object]:
 
     if mode == "draft":
         return {"tier": "draft", "checks": []}
+    if mode == "nightly":
+        if head and head == last_success_head:
+            return {"tier": "unchanged", "checks": []}
+        return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
     if mode == "manual-full":
         return {"tier": "full", "checks": list(CHECKS)}
     if any(path in {"*", "**"} for path in paths):
@@ -129,16 +135,18 @@ def required_result(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--mode", required=True, choices=("draft", "ready", "push", "manual-full")
+        "--mode", required=True, choices=("draft", "ready", "push", "manual-full", "nightly")
     )
     parser.add_argument(
         "--paths-file", required=True, help="newline-separated repository-relative changed paths"
     )
+    parser.add_argument("--head", default="")
+    parser.add_argument("--last-success-head", default="")
     args = parser.parse_args()
     try:
         with open(args.paths_file, encoding="utf-8") as stream:
             paths = [line.rstrip("\n") for line in stream]
-        result = plan(args.mode, paths)
+        result = plan(args.mode, paths, args.head, args.last_success_head)
     except (OSError, UnicodeError, ValueError) as error:
         print(f"ci-plan: {error}", file=sys.stderr)
         return 2
