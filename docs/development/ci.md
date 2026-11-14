@@ -30,11 +30,14 @@ unsupported path bytes fail closed instead of truncating the change set.
   result fails rather than treating skipped verification as a pass.
 - **Docs:** only the lightweight `git diff --check` documentation check runs
   within the planner job.
-- **Targeted:** the planner returns applicable checks for known code and
-  integration boundaries.
-- **Full:** all automatic check identities are selected. Executable documentation,
-  workflow/control changes, and unknown paths fail closed to this tier. Invalid
-  or incomplete path input fails planning, so the required aggregate cannot pass.
+- **Cheap:** known source/test/example/Python-binding changes run `core`.
+  Integration and semantic-editor fixture changes also run `editors`.
+- **Full source:** shared manifests/locks, toolchains, dependency policy, fuzz
+  harnesses, CI/setup/control files, and unknown paths automatically select all
+  source identities on the PR itself. No dispatch proof or admission lookup is
+  needed. Invalid or incomplete path input fails planning.
+- **Push:** default-branch pushes run only planner/admission and whitespace
+  checks, never heavy source verification.
 - **Manual full:** dispatching `Check` runs every check group through the same
   planner and additionally qualifies the packed browser SDK and collects a complete
   release candidate. This is a non-publishing preparation preview; it does not make
@@ -48,7 +51,10 @@ At 03:47 UTC, `Check` runs all remaining source groups on the default-branch
 snapshot: core, dependencies, fuzz (including AddressSanitizer seeds), and the
 real editor/LSP integration suite. No platform binaries, browser release SDK,
 release candidate collection, or release-security scans are added to this route.
-The existing PR, push, and release-preview selections are unchanged.
+Full source runs nightly or by advisory dispatch; risky PRs also run it
+automatically. Ordinary source PRs intentionally lose pre-merge sanitizer and
+shared-engine installed-editor coverage. Nightly detects those failures after
+merge; release qualification remains exact-candidate and fail-closed.
 
 Before heavy setup, one Actions query reads the head of the last successful
 scheduled `Check` run. An equal head skips the source work and reports
@@ -77,13 +83,12 @@ malformed changes take the normal full classification path.
 
 ## Positive documentation map
 
-The planner's documentation allowlist is owned by `scripts/ci-plan.py`, not by
-this document. At the recorded revision, its positive map contains selected root
-and integration README files and listed `docs/*.md` paths. The moved
-`docs/development/` tree is not added to that map; those paths fall through to
-the planner's full-verification tier. Check the script for the exact current
-allowlist. `SOURCES.md` is excluded from docs-only changes because native
-archives package it; it selects core native compilation, with installed archive proof deferred to release qualification.
+`scripts/ci-plan.py` owns the positive prose map: selected root/integration
+README files, contributor guidance, Markdown under `docs/`, and authored
+OpenSpec Markdown/`.openspec.yaml` metadata. Runtime skill Markdown, executable
+YAML, and unknown owners are not prose exceptions.
+`SOURCES.md` selects core native compilation; installed archive proof remains
+release-only.
 
 ## Check applicability
 
@@ -92,24 +97,19 @@ archives package it; it selects core native compilation, with installed archive 
 | `docs` | Whitespace check for the positive documentation map. |
 | `core` | `./scripts/check`: Rust formatting, library checks, all-feature Clippy and tests, rustdoc, and isolated Python binding checks. |
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
-| `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Source changes and retained fixture/fuzz inputs select this boundary. |
-| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Integration, protocol, shared parser, native formatter and semantic-editor fixture inputs select this boundary. |
+| `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Full-source PRs/nightlies/manual runs retain this boundary. |
+| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Affected integration/semantic-editor fixtures and every full-source run select it. |
 | `binaries` | Release qualification and manual `Binaries` only: native archives/installed contracts and stable-ABI Python wheels on Ubuntu 22.04 x64, macOS ARM64 and Windows x64, exercised on CPython 3.12 and 3.13. |
 
-The automatic planner selects `core`, `fuzz`, and `editors` for `src/**`.
-The LSP consumes shared parser and native formatter behavior, so source-level
-engine changes retain the actual installed-editor integration proof instead of
-depending on a brittle per-file exclusion list. `tests/**` and `examples/**` select
-`core`; `tests/fixtures/**` also selects `fuzz`, and
-`tests/fixtures/semantic-editor/**` additionally selects `editors`. `SOURCES.md`
-selects `core`. `integrations/**` selects `core` and `editors`. Cargo manifests,
-lockfiles, the Rust toolchain, and dependency policy select the affected
-dependency, fuzz, and editor boundaries as well as `core`. Selection is
-based on the repository's input map, not file extensions.
+`src/**`, ordinary `tests/**`, and `examples/**` select `core`.
+`integrations/**` and `tests/fixtures/semantic-editor/**` additionally select
+`editors`. Shared lockfiles/manifests and setup changes select every source
+group. A mixed docs/runtime change cannot suppress its runtime checks;
+renames/deletions are classified using both sides of the complete path set.
 
 Native archive, Python wheel and VSIX Actions artifacts retain the existing
 14-day period. Automatic core checks compile the native executables on Ubuntu
-24.04, so PR/push runs do not duplicate them in a binary-packaging leg.
+24.04. Pushes do not run that gate, and automatic routes never add binary packaging.
 Release qualification and manual `Binaries` preserve all three native runners,
 installed archive verification and CPython 3.12/3.13 wheel consumers.
 Editor verification runs in an Ubuntu Electron integration test.

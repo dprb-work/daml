@@ -68,6 +68,55 @@ class CiPlanContractTests(unittest.TestCase):
     def test_ready_documentation_selects_only_docs(self) -> None:
         self.assertEqual(plan("ready", "README.md"), {"tier": "docs", "checks": ["docs"]})
 
+    def test_owned_prose_and_openspec_metadata_are_docs_but_runtime_markdown_is_not(self) -> None:
+        for path in (
+            "docs/README.md", "docs/backlog.md", "docs/development/ci.md",
+            "openspec/changes/archive/change/.openspec.yaml",
+            "openspec/changes/archive/change/specs/contract/spec.md",
+        ):
+            self.assertEqual(plan("ready", path), {"tier": "docs", "checks": ["docs"]})
+        for path in ("docs/executable.yaml", "openspec/runner.yml", "skills/runtime/SKILL.md"):
+            self.assertEqual(plan("ready", path)["tier"], "full")
+
+    def test_push_never_selects_heavy_work_even_for_unknown_or_shared_changes(self) -> None:
+        for path in ("src/parser.rs", "Cargo.lock", ".github/workflows/check.yml", "*", "unknown"):
+            self.assertEqual(plan("push", path), {"tier": "push", "checks": ["docs"]})
+
+    def test_mixed_or_renamed_documentation_cannot_hide_a_runtime_input(self) -> None:
+        self.assertEqual(
+            plan("ready", "docs/old.md", "src/new.rs"),
+            {"tier": "cheap", "checks": ["core"]},
+        )
+        self.assertEqual(plan("ready", "docs/old.md", "unknown/new.md")["tier"], "full")
+
+    def test_risky_shared_and_setup_inputs_automatically_run_all_source_groups(self) -> None:
+        expected = {"docs", "core", "dependencies", "fuzz", "editors"}
+        for path in (
+            "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml",
+            "bindings/python/uv.lock", "integrations/vscode/package-lock.json",
+            "scripts/check-source", "tests/ci_plan_test.py", "fuzz/fuzz_targets/parse.rs",
+        ):
+            with self.subTest(path=path):
+                result = plan("ready", path)
+                self.assertEqual(result["tier"], "full")
+                self.assertEqual(set(result["checks"]), expected)
+
+    def test_nested_binding_setup_requires_full_source(self) -> None:
+        for path in (
+            "bindings/python/rust-toolchain.toml", "bindings/python/uv.toml",
+            "bindings/python/new-setup.conf", "integrations/verify/rust-toolchain.toml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    plan("ready", path),
+                    {"tier": "full", "checks": ["docs", "core", "dependencies", "fuzz", "editors"]},
+                )
+
+
+    def test_malformed_path_sets_fail_rather_than_selecting_a_cheap_tier(self) -> None:
+        for path in ("../escape.rs", "/absolute.rs", "src\\file.rs", "src/\rfile.rs"):
+            self.assertNotEqual(plan_result("ready", path).returncode, 0)
+
     def test_draft_with_new_heavy_workflow_path_never_selects_automatic_heavy_checks(self) -> None:
         self.assertEqual(
             plan("draft", ".github/workflows/new-heavy-job.yml"),
@@ -107,7 +156,7 @@ class CiPlanContractTests(unittest.TestCase):
         assert_selected(result["checks"], "core")
 
     def test_archive_manifest_keeps_native_compilation_without_platform_packaging(self) -> None:
-        for mode in ("ready", "push"):
+        for mode in ("ready",):
             for paths in (("SOURCES.md",), ("README.md", "SOURCES.md")):
                 with self.subTest(mode=mode, paths=paths):
                     result = plan(mode, *paths)
@@ -118,15 +167,15 @@ class CiPlanContractTests(unittest.TestCase):
                     )
 
     def test_code_tests_and_fixture_inputs_select_required_behavioral_checks(self) -> None:
-        assert_selected(plan("ready", "src/resolve.rs")["checks"], "core", "fuzz", "editors")
+        self.assertEqual(plan("ready", "src/resolve.rs")["checks"], ["core"])
         self.assertEqual(set(plan("ready", "tests/validation.rs")["checks"]), {"core"})
         self.assertEqual(
             set(plan("ready", "tests/fixtures/schema.json")["checks"]),
-            {"core", "fuzz"},
+            {"core"},
         )
 
     def test_semantic_editor_fixture_changes_select_real_editor_checks(self) -> None:
-        for mode in ("ready", "push"):
+        for mode in ("ready",):
             for path in (
                 "tests/fixtures/semantic-editor/workspace/daml.bundle",
                 "tests/fixtures/semantic-editor/providers/Http.daml",
@@ -134,11 +183,11 @@ class CiPlanContractTests(unittest.TestCase):
             ):
                 with self.subTest(mode=mode, path=path):
                     result = plan(mode, path)
-                    self.assertEqual(result["tier"], "targeted")
-                    self.assertEqual(set(result["checks"]), {"core", "fuzz", "editors"})
+                    self.assertEqual(result["tier"], "cheap")
+                    self.assertEqual(set(result["checks"]), {"core", "editors"})
 
-    def test_parser_and_native_formatter_changes_require_editor_integration(self) -> None:
-        required = {"core", "fuzz", "editors"}
+    def test_parser_and_native_formatter_use_core_while_nightly_covers_editor_and_fuzz(self) -> None:
+        required = {"core"}
         for path in (
             "src/parser.rs",
             "src/parser/native.rs",
@@ -146,24 +195,24 @@ class CiPlanContractTests(unittest.TestCase):
             "src/format.rs",
         ):
             result = plan("ready", path)
-            self.assertIn(result["tier"], {"targeted", "full"})
-            self.assertTrue(required <= set(result["checks"]))
+            self.assertEqual(result["tier"], "cheap")
+            self.assertEqual(required, set(result["checks"]))
 
 
     def test_lock_workflow_and_protocol_changes_cannot_select_docs_only(self) -> None:
         self.assertTrue({"core", "dependencies"} <= set(plan("ready", "Cargo.lock")["checks"]))
         workflow = plan("ready", ".github/workflows/check.yml")
         self.assertEqual(workflow["tier"], "full")
-        assert_selected(plan("ready", "src/lsp/adapter.rs")["checks"], "core", "editors")
+        assert_selected(plan("ready", "src/lsp/adapter.rs")["checks"], "core")
 
-    def test_syntect_consumer_dependency_inputs_require_their_scoped_audit(self) -> None:
-        for mode in ("ready", "push"):
+    def test_syntect_consumer_dependency_inputs_require_automatic_full_source(self) -> None:
+        for mode in ("ready",):
             for filename in ("Cargo.toml", "Cargo.lock", "deny.toml"):
                 with self.subTest(mode=mode, filename=filename):
                     result = plan(mode, f"integrations/verify/syntect/{filename}")
-                    self.assertEqual(result["tier"], "targeted")
+                    self.assertEqual(result["tier"], "full")
                     self.assertEqual(
-                        set(result["checks"]), {"core", "dependencies", "editors"}
+                        set(result["checks"]), {"docs", "core", "dependencies", "fuzz", "editors"}
                     )
 
     def test_syntect_grammar_and_checks_keep_existing_integration_boundaries(self) -> None:
@@ -173,7 +222,7 @@ class CiPlanContractTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 result = plan("ready", path)
-                self.assertEqual(result["tier"], "targeted")
+                self.assertEqual(result["tier"], "cheap")
                 self.assertEqual(set(result["checks"]), {"core", "editors"})
 
     def test_unknown_and_broad_paths_fail_closed(self) -> None:

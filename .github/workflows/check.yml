@@ -208,12 +208,13 @@ jobs:
           PY
 
   heavy:
-    name: Heavy verification
+    name: Selected source verification
     needs: plan
     if: >-
       needs.plan.result == 'success' &&
       needs.plan.outputs.metadata_only != 'true' &&
       needs.plan.outputs.tier != 'draft' &&
+      needs.plan.outputs.mode != 'push' &&
       (contains(fromJSON(needs.plan.outputs.checks || '[]'), 'core') ||
        contains(fromJSON(needs.plan.outputs.checks || '[]'), 'dependencies') ||
        contains(fromJSON(needs.plan.outputs.checks || '[]'), 'fuzz') ||
