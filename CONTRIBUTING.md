@@ -11,7 +11,7 @@ DAML is an experimental language and implementation. Contributions should improv
 
 ## Make and check changes
 
-Work from a linked worktree with the [pinned tools](docs/development/building.md). Before pushing, run `./scripts/check-changes` on a clean commit, or let the tracked `.githooks/pre-push` run it during `git -c core.hooksPath=.githooks push`. Local and hosted source checks use the same planner and named-check runner; risky/shared/unknown changes fail closed to full source. Use `./scripts/check-tier full` for an explicit full source run, not a bypass option.
+Work from a linked worktree with the [pinned tools](docs/development/building.md). Before pushing, run `./scripts/check-changes` on a clean commit, or let the tracked `.githooks/pre-push` run it during `git -c core.hooksPath=.githooks push`. Local and hosted source checks use the same planner and named-check runner; risky/shared/unknown changes fail closed to full source. Use `./scripts/check-tier full` for an explicit full source run, not a bypass option. Report any checks not run.
 PR CI is cheap and path-routed, with automatic full-source fallback for shared/setup/unknown changes. Nightly retains fuzz and editor behavior; default-branch pushes run no heavy checks. Platform and installed-distribution qualification still belongs to the unchanged [release/platform gate](.github/workflows/prepare-release.yml), not a green PR or prior nightly.
 
 Keep changes focused. Update the user or contributor documentation affected by a behavior or workflow change. Preserve source and license notices for reused material; see [`SOURCES.md`](SOURCES.md).
