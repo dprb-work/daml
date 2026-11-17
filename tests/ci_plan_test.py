@@ -275,8 +275,232 @@ class CiPlanContractTests(unittest.TestCase):
         self.assertFalse(required_result(selected, success, planned_head, "head-2"))
         self.assertFalse(required_result(selected, success, "", current_head))
         self.assertFalse(required_result([], success, planned_head, current_head))
-        # A changed base tip is intentionally not an input to this decision.
-        self.assertTrue(required_result(selected, success, planned_head, current_head))
+class WorkflowBoundaryTests(unittest.TestCase):
+    """Execute the planning, live-read, and aggregate steps from check.yml."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+        self.output = self.root / "step-output"
+        self.summary = self.root / "step-summary"
+        self.runner_temp = self.root / "runner-temp"
+        self.runner_temp.mkdir()
+        self.output.touch()
+        self.summary.touch()
+        self._init_repository()
+        self._install_python_stub()
+
+    def _init_repository(self) -> None:
+        self.git("init", "-b", "main")
+        self.git("config", "user.email", "ci@example.invalid")
+        self.git("config", "user.name", "CI boundary test")
+        self.git("config", "core.hooksPath", str(self.root / "empty-hooks"))
+        planner = self.root / "scripts" / "ci-plan.py"
+        planner.parent.mkdir(parents=True)
+        planner.write_bytes(PLANNER.read_bytes())
+        (self.root / "src").mkdir()
+        (self.root / "src" / "base.rs").write_text("base\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "base A")
+        self.base_a = self.git("rev-parse", "HEAD")
+        self.git("checkout", "-b", "head")
+        (self.root / "src" / "head.rs").write_text("head change\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "head H")
+        self.head = self.git("rev-parse", "HEAD")
+        self.git("checkout", "main")
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "base-advance.md").write_text("base-only change\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "advance base B")
+        self.base_b = self.git("rev-parse", "HEAD")
+        tree = self.git("rev-parse", f"{self.head}^{{tree}}")
+        self.merge = self.git("commit-tree", tree, "-p", self.base_a, "-p", self.head, "-m", "event merge M")
+        self.git("checkout", "--detach", self.merge)
+
+    def _install_python_stub(self) -> None:
+        stub = self.root / "bin"
+        stub.mkdir()
+        executable = stub / "python3"
+        executable.write_text(
+            f"""#!{os.sys.executable}
+import json, os, sys
+if sys.argv[-1:] == ["-"]:
+    source = sys.stdin.read()
+    import urllib.request
+    class Response:
+        def __init__(self, value):
+            self.value = value
+        def read(self, *args):
+            return json.dumps(self.value).encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+    def urlopen(request, *args, **kwargs):
+        pull = json.loads(os.environ["PR_RESPONSE"])
+        if "/git/ref/" in request.full_url:
+            return Response(dict(object=dict(sha=pull["base"]["sha"])))
+        return Response(pull)
+    urllib.request.urlopen = urlopen
+    exec(compile(source, "<workflow-step>", "exec"), {{"__name__": "__main__"}})
+else:
+    os.execv(os.environ["REAL_PYTHON"], [os.environ["REAL_PYTHON"], *sys.argv[1:]])
+"""
+        )
+        executable.chmod(0o755)
+        self.environment.update({
+            "PATH": f"{stub}:{os.environ['PATH']}",
+            "REAL_PYTHON": os.sys.executable,
+            "GITHUB_OUTPUT": str(self.output),
+            "GITHUB_STEP_SUMMARY": str(self.summary),
+            "RUNNER_TEMP": str(self.runner_temp),
+            "GH_TOKEN": "test-token",
+            "REPOSITORY": "owner/repo",
+            "PR_NUMBER": "72",
+            "EVENT_NAME": "pull_request",
+            "EVENT_PR_HEAD": self.head,
+            "EVENT_HEAD_REF": "feature",
+            "EVENT_HEAD_REPO": "fork/source",
+            "EVENT_BASE_REF": "main",
+            "EVENT_BASE_REPO": "owner/repo",
+            "PR_DRAFT": "false",
+            "PR_BASE": self.base_b,
+            "PR_HEAD": self.head,
+            "PR_BASE_REF": "main",
+            "PUSH_BASE": "",
+            "PUSH_HEAD": "",
+            "EVENT_HEAD": self.merge,
+            "REQUEST_MODE": "",
+            "LAST_SUCCESS_HEAD": "",
+            "REF": "refs/pull/72/merge",
+        })
+
+    def git(self, *args: str) -> str:
+        return subprocess.check_output(
+            ["git", *args], cwd=self.root, env=self.environment,
+            stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+
+    @staticmethod
+    def workflow_run(marker: str) -> str:
+        lines = (ROOT / ".github/workflows/check.yml").read_text().splitlines()
+        step = lines.index(marker)
+        run = next(index for index in range(step, len(lines)) if lines[index] == "        run: |")
+        commands = []
+        for line in lines[run + 1:]:
+            if line and not line.startswith("          "):
+                break
+            commands.append(line[10:])
+        return "\n".join(commands)
+
+    def run_step(self, marker: str, environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", self.workflow_run(marker)],
+            cwd=self.root, env={**self.environment, **environment},
+            capture_output=True, text=True,
+        )
+
+    def run_plan(self, base: str | None = None) -> subprocess.CompletedProcess[str]:
+        response = json.dumps(self._pr_response(base_sha=self.base_b))
+        context = self.run_step("      - id: pr-context", {"PR_RESPONSE": response})
+        if context.returncode != 0:
+            return context
+        context_outputs = dict(line.split("=", 1) for line in self.output.read_text().splitlines())
+        return self.run_step("      - id: plan", {
+            "PR_RESPONSE": response,
+            "PR_BASE": base or context_outputs["base"],
+            "PR_HEAD": context_outputs["head"],
+            "PR_BASE_REF": context_outputs["base_ref"],
+            "PR_DRAFT": context_outputs["draft"],
+        })
+
+    def test_admission_uses_event_merge_first_parent_when_live_base_advanced(self) -> None:
+        result = self.run_plan()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        outputs = dict(line.split("=", 1) for line in self.output.read_text().splitlines())
+        self.assertEqual(outputs["base"], self.base_a)
+        self.assertEqual(json.loads(outputs["checks"]), ["core"])
+
+    def test_admission_refuses_merge_with_wrong_head_parent(self) -> None:
+        wrong_merge = self.git(
+            "commit-tree", self.git("rev-parse", f"{self.merge}^{{tree}}"),
+            "-p", self.base_a, "-p", self.base_b, "-m", "wrong head parent",
+        )
+        self.git("checkout", "--detach", wrong_merge)
+        result = self.run_plan(self.base_a)
+        self.assertNotEqual(result.returncode, 0)
+
+    def _pr_response(self, **changes: object) -> dict[str, object]:
+        head: dict[str, object] = {"sha": self.head, "ref": "feature", "repo": {"full_name": "fork/source"}}
+        base: dict[str, object] = {"sha": self.base_a, "ref": "main", "repo": {"full_name": "owner/repo"}}
+        pull: dict[str, object] = {"state": "open", "draft": False, "head": head, "base": base}
+        for field, value in changes.items():
+            if field == "head_sha":
+                head["sha"] = value
+            elif field == "head_ref":
+                head["ref"] = value
+            elif field == "head_repo":
+                head["repo"] = {"full_name": value}
+            elif field == "base_sha":
+                base["sha"] = value
+            elif field == "base_ref":
+                base["ref"] = value
+            elif field == "base_repo":
+                base["repo"] = {"full_name": value}
+            else:
+                pull[field] = value
+        return pull
+
+    def _run_current_and_decision(self, response: dict[str, object]) -> subprocess.CompletedProcess[str]:
+        env = {"PR_RESPONSE": json.dumps(response)}
+        current = self.run_step("      - id: current", env)
+        if current.returncode != 0:
+            return current
+        current_outputs = dict(line.split("=", 1) for line in self.output.read_text().splitlines())
+        return self.run_step("      - name: Require all selected checks for the current candidate", {
+            **env,
+            "PLAN_TIER": "full",
+            "PLAN_CHECKS": '["docs"]',
+            "PLAN_HEAD": self.head,
+            "PLAN_BASE_REF": "main",
+            "CURRENT_STATE": response["state"],
+            "CURRENT_HEAD_REF": response["head"]["ref"],
+            "CURRENT_HEAD_REPO": response["head"]["repo"]["full_name"],
+            "CURRENT_BASE_REPO": response["base"]["repo"]["full_name"],
+            "PLAN_DRAFT": "false",
+            "CURRENT_BASE_REF": current_outputs.get("base_ref", ""),
+            "CURRENT_HEAD": current_outputs.get("head", ""),
+            "CURRENT_DRAFT": current_outputs.get("draft", ""),
+            "PLAN_RESULT": "success",
+            "HEAVY_RESULT": "success",
+            "PLAN_MODE": "ready",
+        })
+
+    def test_final_live_read_refuses_closed_draft_and_changed_pr_identity(self) -> None:
+        accepted = self._run_current_and_decision(self._pr_response())
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        refusals = {
+            "closed": {"state": "closed"},
+            "draft": {"draft": True},
+            "base ref": {"base_ref": "release"},
+            "base repository": {"base_repo": "other/repo"},
+            "head ref": {"head_ref": "other-branch"},
+            "head repository": {"head_repo": "other/source"},
+            "head SHA": {"head_sha": "f" * 40},
+        }
+        for field, change in refusals.items():
+            with self.subTest(field=field):
+                result = self._run_current_and_decision(self._pr_response(**change))
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_final_live_read_accepts_base_tip_movement_alone(self) -> None:
+        accepted = self._run_current_and_decision(self._pr_response(base_sha=self.base_b))
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+
 class NightlyIssueContractTests(unittest.TestCase):
     """Execute the actual reporter shell against isolated issue state."""
 
