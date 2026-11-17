@@ -240,7 +240,7 @@ class CiPlanContractTests(unittest.TestCase):
         result = plan_result("ready")
         self.assertNotEqual(result.returncode, 0)
 
-    def test_required_aggregate_rejects_failures_cancellation_and_stale_head_or_base(self) -> None:
+    def test_required_aggregate_rejects_failures_and_stale_head_but_ignores_base_tip(self) -> None:
         planner_spec = importlib.util.spec_from_file_location("ci_plan", PLANNER)
         self.assertIsNotNone(planner_spec)
         self.assertIsNotNone(planner_spec.loader)
@@ -252,40 +252,31 @@ class CiPlanContractTests(unittest.TestCase):
             "docs": "success", "core": "success", "dependencies": "success",
             "fuzz": "success", "editors": "success",
         }
-        current = dict(
-            planned_head="head-1",
-            planned_base="base-1",
-            current_head="head-1",
-            current_base="base-1",
-        )
-        self.assertTrue(required_result(selected, success, **current))
+        planned_head = "head-1"
+        current_head = "head-1"
+        self.assertTrue(required_result(selected, success, planned_head, current_head))
         for check in selected:
             for bad in ("failure", "cancelled", "skipped", "unknown"):
                 self.assertFalse(
-                    required_result(selected, {**success, check: bad}, **current),
+                    required_result(selected, {**success, check: bad}, planned_head, current_head),
                     (check, bad),
                 )
             self.assertFalse(
                 required_result(
                     selected,
                     {name: result for name, result in success.items() if name != check},
-                    **current,
+                    planned_head,
+                    current_head,
                 )
             )
         self.assertFalse(
-            required_result(["unknown-check"], {"unknown-check": "success"}, **current)
+            required_result(["unknown-check"], {"unknown-check": "success"}, planned_head, current_head)
         )
-        self.assertFalse(
-            required_result(selected, success, **{**current, "current_head": "head-2"})
-        )
-        self.assertFalse(
-            required_result(selected, success, **{**current, "current_base": "base-2"})
-        )
-        self.assertFalse(
-            required_result(selected, success, **{**current, "planned_head": ""})
-        )
-        self.assertFalse(required_result([], success, **current))
-
+        self.assertFalse(required_result(selected, success, planned_head, "head-2"))
+        self.assertFalse(required_result(selected, success, "", current_head))
+        self.assertFalse(required_result([], success, planned_head, current_head))
+        # A changed base tip is intentionally not an input to this decision.
+        self.assertTrue(required_result(selected, success, planned_head, current_head))
 class NightlyIssueContractTests(unittest.TestCase):
     """Execute the actual reporter shell against isolated issue state."""
 
