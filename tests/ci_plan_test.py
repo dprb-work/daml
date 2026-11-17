@@ -367,7 +367,6 @@ else:
             "EVENT_BASE_REF": "main",
             "EVENT_BASE_REPO": "owner/repo",
             "PR_DRAFT": "false",
-            "PR_BASE": self.base_b,
             "PR_HEAD": self.head,
             "PR_BASE_REF": "main",
             "PUSH_BASE": "",
@@ -403,7 +402,7 @@ else:
             capture_output=True, text=True,
         )
 
-    def run_plan(self, base: str | None = None) -> subprocess.CompletedProcess[str]:
+    def run_plan(self) -> subprocess.CompletedProcess[str]:
         response = json.dumps(self._pr_response(base_sha=self.base_b))
         context = self.run_step("      - id: pr-context", {"PR_RESPONSE": response})
         if context.returncode != 0:
@@ -411,7 +410,6 @@ else:
         context_outputs = dict(line.split("=", 1) for line in self.output.read_text().splitlines())
         return self.run_step("      - id: plan", {
             "PR_RESPONSE": response,
-            "PR_BASE": base or context_outputs["base"],
             "PR_HEAD": context_outputs["head"],
             "PR_BASE_REF": context_outputs["base_ref"],
             "PR_DRAFT": context_outputs["draft"],
@@ -430,7 +428,7 @@ else:
             "-p", self.base_a, "-p", self.base_b, "-m", "wrong head parent",
         )
         self.git("checkout", "--detach", wrong_merge)
-        result = self.run_plan(self.base_a)
+        result = self.run_plan()
         self.assertNotEqual(result.returncode, 0)
 
     def _pr_response(self, **changes: object) -> dict[str, object]:
