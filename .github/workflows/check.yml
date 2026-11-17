@@ -86,15 +86,10 @@ jobs:
               pull_request = json.load(response)
           if pull_request["head"]["sha"] != os.environ["EVENT_PR_HEAD"]:
               raise SystemExit("ci-plan: current PR head differs from triggering event")
-          repository = pull_request["base"]["repo"]["full_name"]
           base_ref = pull_request["base"]["ref"]
-          base_ref_path = urllib.parse.quote(base_ref, safe="/")
-          endpoint = f"https://api.github.com/repos/{repository}/git/ref/heads/{base_ref_path}"
-          with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
-              base = json.load(response)["object"]["sha"]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"head={pull_request['head']['sha']}\n")
-              output.write(f"base={base}\n")
+              output.write("base=\n")
               output.write(f"draft={str(pull_request['draft']).lower()}\n")
               output.write(f"base_ref={base_ref}\n")
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -124,7 +119,6 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_DRAFT: ${{ steps.pr-context.outputs.draft || github.event.pull_request.draft }}
-          PR_BASE: ${{ steps.pr-context.outputs.base || github.event.pull_request.base.sha }}
           PR_HEAD: ${{ steps.pr-context.outputs.head || github.event.pull_request.head.sha }}
           PR_BASE_REF: ${{ steps.pr-context.outputs.base_ref || github.event.pull_request.base.ref }}
           PUSH_BASE: ${{ github.event.before }}
@@ -141,12 +135,11 @@ jobs:
           if [[ "$EVENT_NAME" == pull_request ]]; then
             if [[ "$PR_DRAFT" == true ]]; then mode=draft; else mode=ready; fi
             draft="$PR_DRAFT"
-            base="$PR_BASE"
+            base=$(git rev-parse HEAD^1)
             head="$PR_HEAD"
             base_ref="$PR_BASE_REF"
-            merge_base=$(git rev-parse HEAD^1)
             merge_head=$(git rev-parse HEAD^2)
-            [[ "$merge_base" == "$base" && "$merge_head" == "$head" ]]
+            [[ "$merge_head" == "$head" ]]
             git diff --no-renames --name-only -z "$base...$head" > "$raw"
             read_raw=true
           elif [[ "$EVENT_NAME" == push ]]; then
@@ -253,28 +246,45 @@ jobs:
               with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
                   pull_request = json.load(response)
               head = pull_request["head"]["sha"]
-              draft = str(pull_request["draft"]).lower()
+              head_ref = pull_request["head"]["ref"]
+              head_repo = pull_request["head"]["repo"]["full_name"]
               base_ref = pull_request["base"]["ref"]
+              base_repo = pull_request["base"]["repo"]["full_name"]
+              state = pull_request["state"]
+              draft = str(pull_request["draft"]).lower()
           else:
               ref = os.environ["REF"].removeprefix("refs/")
               endpoint = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/git/ref/{urllib.parse.quote(ref, safe='/')}"
               with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
                   head = json.load(response)["object"]["sha"]
+              head_ref = ""
+              head_repo = ""
               base_ref = ""
+              base_repo = ""
+              state = ""
               draft = "false"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"head={head}\nbase_ref={base_ref}\ndraft={draft}\n")
+              output.write(f"head={head}\nhead_ref={head_ref}\nhead_repo={head_repo}\n")
+              output.write(f"base_ref={base_ref}\nbase_repo={base_repo}\nstate={state}\ndraft={draft}\n")
           PY
       - name: Require all selected checks for the current candidate
         env:
           PLAN_TIER: ${{ needs.plan.outputs.tier }}
           PLAN_CHECKS: ${{ needs.plan.outputs.checks }}
           PLAN_HEAD: ${{ needs.plan.outputs.head }}
-          PLAN_BASE_REF: ${{ needs.plan.outputs.base_ref }}
           PLAN_DRAFT: ${{ needs.plan.outputs.draft }}
+          CURRENT_STATE: ${{ steps.current.outputs.state }}
+          CURRENT_HEAD_REF: ${{ steps.current.outputs.head_ref }}
+          CURRENT_HEAD_REPO: ${{ steps.current.outputs.head_repo }}
           CURRENT_BASE_REF: ${{ steps.current.outputs.base_ref }}
+          CURRENT_BASE_REPO: ${{ steps.current.outputs.base_repo }}
           CURRENT_HEAD: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.head || steps.current.outputs.head }}
           CURRENT_DRAFT: ${{ needs.plan.outputs.mode == 'nightly' && 'false' || steps.current.outputs.draft }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_BASE_REPO: ${{ github.event.pull_request.base.repo.full_name }}
+          EVENT_NAME: ${{ github.event_name }}
           PLAN_RESULT: ${{ needs.plan.result }}
           HEAVY_RESULT: ${{ needs.heavy.result }}
           PLAN_MODE: ${{ needs.plan.outputs.mode }}
@@ -290,10 +300,16 @@ jobs:
           selected = json.loads(os.environ["PLAN_CHECKS"] or "[]")
           heavy = os.environ["HEAVY_RESULT"]
           results = {"docs": os.environ["PLAN_RESULT"], "core": heavy, "dependencies": heavy, "fuzz": heavy, "editors": heavy, "binaries": heavy}
-          base_ref_current = os.environ["CURRENT_BASE_REF"] == os.environ["PLAN_BASE_REF"]
+          identity_current = os.environ["EVENT_NAME"] != "pull_request" or (
+              os.environ["CURRENT_STATE"] == "open"
+              and os.environ["CURRENT_HEAD_REF"] == os.environ["EVENT_HEAD_REF"]
+              and os.environ["CURRENT_HEAD_REPO"] == os.environ["EVENT_HEAD_REPO"]
+              and os.environ["CURRENT_BASE_REF"] == os.environ["EVENT_BASE_REF"]
+              and os.environ["CURRENT_BASE_REPO"] == os.environ["EVENT_BASE_REPO"]
+          )
           draft_current = os.environ["CURRENT_DRAFT"] == os.environ["PLAN_DRAFT"]
-          passed = os.environ["PLAN_TIER"] != "draft" and base_ref_current and draft_current and planner.required_result(selected, results, os.environ["PLAN_HEAD"], os.environ["CURRENT_HEAD"])
-          print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; base ref current: {base_ref_current}; readiness current: {draft_current}")
+          passed = os.environ["PLAN_TIER"] != "draft" and identity_current and draft_current and planner.required_result(selected, results, os.environ["PLAN_HEAD"], os.environ["CURRENT_HEAD"])
+          print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; PR identity current: {identity_current}; readiness current: {draft_current}")
           sys.exit(0 if passed else 1)
           PY
 

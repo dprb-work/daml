@@ -12,11 +12,11 @@ The JSON result reports a tier and stable check identities: `docs`, `core`,
 `dependencies`, `fuzz`, `editors`, and `binaries`.
 The automatic `Check` workflow runs the protected planner contract once, calls
 only selected reusable heavy groups, and emits one `Check / Required` aggregate
-for all selected identities. For PRs, the plan admits only the event merge commit
-whose parents match the current head and live target-branch tip. It passes that
-immutable SHA to every heavy group. The aggregate rechecks the head, target ref,
-tip, and draft state. Malformed, incomplete, stale, missing, failed, or
-cancelled work cannot pass.
+for all selected identities. For PRs, the plan requires the event merge commit's
+second parent to match the current head and uses its first parent as the immutable
+planning base. It passes that immutable merge SHA to every heavy group.
+The aggregate rechecks the head, PR identity, and draft state, but not the base
+tip. Malformed, incomplete, stale, missing, failed, or cancelled work cannot pass.
 
 The `Check` workflow exposes its read-only GitHub token only to isolated PR/ref
 lookup steps. Planner and aggregate code run without it. Pull-request paths come
