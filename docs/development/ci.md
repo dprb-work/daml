@@ -36,6 +36,9 @@ The hosted workflows prepare pinned tools, route the selected groups onto
 parallel clean runners, and report statuses/artifacts. Local execution is
 sequential and uses the prepared developer environment. Hosted PR merge/base
 freshness and draft/metadata admission remain hosted responsibilities.
+The aggregate requires the planned head to remain current, but a moved base no
+longer fails it; combination breakage is caught by the 03:47 UTC scheduled run
+on main. Path selection still uses the base read by the plan.
 Headless sandbox configuration is machine preparation, not a different test
 set. Source checks need no service containers or secrets.
 

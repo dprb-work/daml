@@ -236,7 +236,7 @@ jobs:
         with:
           persist-credentials: false
       - id: current
-        name: Read current candidate and target-base tip
+        name: Read current candidate
         if: needs.plan.outputs.mode != 'nightly'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -244,7 +244,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PLAN_BASE: ${{ needs.plan.outputs.base }}
         run: |
           python3 -I - <<'PY'
           import json, os, urllib.parse, urllib.request
@@ -255,34 +254,26 @@ jobs:
                   pull_request = json.load(response)
               head = pull_request["head"]["sha"]
               draft = str(pull_request["draft"]).lower()
-              repository = pull_request["base"]["repo"]["full_name"]
               base_ref = pull_request["base"]["ref"]
-              base_ref_path = urllib.parse.quote(base_ref, safe="/")
-              endpoint = f"https://api.github.com/repos/{repository}/git/ref/heads/{base_ref_path}"
-              with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
-                  base = json.load(response)["object"]["sha"]
           else:
               ref = os.environ["REF"].removeprefix("refs/")
               endpoint = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/git/ref/{urllib.parse.quote(ref, safe='/')}"
               with urllib.request.urlopen(urllib.request.Request(endpoint, headers=headers), timeout=20) as response:
-                  current = json.load(response)
-              head, base = current["object"]["sha"], os.environ["PLAN_BASE"]
+                  head = json.load(response)["object"]["sha"]
               base_ref = ""
               draft = "false"
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"head={head}\nbase={base}\nbase_ref={base_ref}\ndraft={draft}\n")
+              output.write(f"head={head}\nbase_ref={base_ref}\ndraft={draft}\n")
           PY
-      - name: Require all selected checks for the current candidate and base
+      - name: Require all selected checks for the current candidate
         env:
           PLAN_TIER: ${{ needs.plan.outputs.tier }}
           PLAN_CHECKS: ${{ needs.plan.outputs.checks }}
-          PLAN_BASE: ${{ needs.plan.outputs.base }}
           PLAN_HEAD: ${{ needs.plan.outputs.head }}
           PLAN_BASE_REF: ${{ needs.plan.outputs.base_ref }}
           PLAN_DRAFT: ${{ needs.plan.outputs.draft }}
-          CURRENT_BASE: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.base || steps.current.outputs.base }}
-          CURRENT_HEAD: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.head || steps.current.outputs.head }}
           CURRENT_BASE_REF: ${{ steps.current.outputs.base_ref }}
+          CURRENT_HEAD: ${{ needs.plan.outputs.mode == 'nightly' && needs.plan.outputs.head || steps.current.outputs.head }}
           CURRENT_DRAFT: ${{ needs.plan.outputs.mode == 'nightly' && 'false' || steps.current.outputs.draft }}
           PLAN_RESULT: ${{ needs.plan.result }}
           HEAVY_RESULT: ${{ needs.heavy.result }}
@@ -301,8 +292,8 @@ jobs:
           results = {"docs": os.environ["PLAN_RESULT"], "core": heavy, "dependencies": heavy, "fuzz": heavy, "editors": heavy, "binaries": heavy}
           base_ref_current = os.environ["CURRENT_BASE_REF"] == os.environ["PLAN_BASE_REF"]
           draft_current = os.environ["CURRENT_DRAFT"] == os.environ["PLAN_DRAFT"]
-          passed = os.environ["PLAN_TIER"] != "draft" and base_ref_current and draft_current and planner.required_result(selected, results, os.environ["PLAN_HEAD"], os.environ["PLAN_BASE"], os.environ["CURRENT_HEAD"], os.environ["CURRENT_BASE"])
-          print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; base current: {os.environ['CURRENT_BASE'] == os.environ['PLAN_BASE']}; base ref current: {base_ref_current}; readiness current: {draft_current}")
+          passed = os.environ["PLAN_TIER"] != "draft" and base_ref_current and draft_current and planner.required_result(selected, results, os.environ["PLAN_HEAD"], os.environ["CURRENT_HEAD"])
+          print(f"DAML CI tier: {os.environ['PLAN_TIER']}; selected checks: {', '.join(selected) or 'none'}; candidate current: {os.environ['CURRENT_HEAD'] == os.environ['PLAN_HEAD']}; base ref current: {base_ref_current}; readiness current: {draft_current}")
           sys.exit(0 if passed else 1)
           PY
 

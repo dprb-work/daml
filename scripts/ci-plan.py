@@ -108,17 +108,13 @@ def required_result(
     selected: Sequence[str],
     results: Mapping[str, str],
     planned_head: str,
-    planned_base: str,
     current_head: str,
-    current_base: str,
 ) -> bool:
-    """Return whether selected checks passed for the still-current candidate/base."""
+    """Return whether selected checks passed for the still-current candidate."""
     if (
         not selected
         or not planned_head
-        or not planned_base
         or planned_head != current_head
-        or planned_base != current_base
         or len(set(selected)) != len(selected)
     ):
         return False
