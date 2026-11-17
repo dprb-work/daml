@@ -89,7 +89,6 @@ jobs:
           base_ref = pull_request["base"]["ref"]
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"head={pull_request['head']['sha']}\n")
-              output.write("base=\n")
               output.write(f"draft={str(pull_request['draft']).lower()}\n")
               output.write(f"base_ref={base_ref}\n")
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
