@@ -20,6 +20,7 @@ class LocalGateTests(unittest.TestCase):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / relative, target)
+        (self.root / "tests/ci_plan_test.py").write_text("raise SystemExit(0)\n")
         self.git("init", "-b", "main")
         self.git("config", "user.email", "gate@example.invalid")
         self.git("config", "user.name", "Gate test")
@@ -38,6 +39,45 @@ class LocalGateTests(unittest.TestCase):
             ["python3", "scripts/check-changes", *args], cwd=self.root,
             input=incoming, capture_output=True, text=True, env=self.environment,
         )
+
+    def prepare_recording_gate(self) -> Path:
+        log = Path(self.temporary.name).parent / f"{Path(self.temporary.name).name}-checks.log"
+        self.addCleanup(lambda: log.unlink(missing_ok=True))
+        self.environment["CI_CHECK_LOG"] = str(log)
+        runner = self.root / "scripts/check-tier"
+        runner.write_text(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$CI_CHECK_LOG\"\nexit 0\n"
+        )
+        runner.chmod(0o755)
+        (self.root / "tests/ci_plan_test.py").write_text("raise SystemExit(0)\n")
+        self.git("add", "scripts/check-tier", "tests/ci_plan_test.py")
+        self.git("commit", "--amend", "--no-edit")
+        self.git("branch", "-f", "main", "HEAD")
+        return log
+
+    def commit_path(self, relative: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("candidate\n")
+        self.git("add", relative)
+        self.git("commit", "-m", f"add {relative}")
+
+    def test_unknown_path_runs_the_complete_local_source_gate(self) -> None:
+        log = self.prepare_recording_gate()
+        self.commit_path("unmapped/input.bin")
+        result = self.gate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            log.read_text().splitlines(),
+            ["admission", "docs", "core", "dependencies", "fuzz", "editors"],
+        )
+
+    def test_ordinary_source_path_runs_only_core_after_admission(self) -> None:
+        log = self.prepare_recording_gate()
+        self.commit_path("src/lib.rs")
+        result = self.gate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text().splitlines(), ["admission", "core"])
 
     def test_dirty_checkout_refuses_before_checks(self) -> None:
         (self.root / "README.md").write_text("uncommitted\n")

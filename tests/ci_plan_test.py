@@ -77,7 +77,7 @@ class CiPlanContractTests(unittest.TestCase):
         ):
             self.assertEqual(plan("ready", path), {"tier": "docs", "checks": ["docs"]})
         for path in ("docs/executable.yaml", "openspec/runner.yml", "skills/runtime/SKILL.md"):
-            self.assertEqual(plan("ready", path)["tier"], "full")
+            self.assertEqual(plan("ready", path), {"tier": "cheap", "checks": ["docs", "core"]})
 
     def test_push_never_selects_heavy_work_even_for_unknown_or_shared_changes(self) -> None:
         for path in ("src/parser.rs", "Cargo.lock", ".github/workflows/check.yml", "*", "unknown"):
@@ -88,35 +88,82 @@ class CiPlanContractTests(unittest.TestCase):
             plan("ready", "docs/old.md", "src/new.rs"),
             {"tier": "cheap", "checks": ["core"]},
         )
-        self.assertEqual(plan("ready", "docs/old.md", "unknown/new.md")["tier"], "full")
+        self.assertEqual(
+            plan("ready", "docs/old.md", "unknown/new.md"),
+            {"tier": "cheap", "checks": ["docs", "core"]},
+        )
 
-    def test_risky_shared_and_setup_inputs_automatically_run_all_source_groups(self) -> None:
-        expected = {"docs", "core", "dependencies", "fuzz", "editors"}
+    def test_risky_shared_and_setup_inputs_split_local_full_from_ready_cheap(self) -> None:
+        full_source = ["docs", "core", "dependencies", "fuzz", "editors"]
         for path in (
             "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml",
             "bindings/python/uv.lock", "integrations/vscode/package-lock.json",
             "scripts/check-source", "tests/ci_plan_test.py", "fuzz/fuzz_targets/parse.rs",
-        ):
-            with self.subTest(path=path):
-                result = plan("ready", path)
-                self.assertEqual(result["tier"], "full")
-                self.assertEqual(set(result["checks"]), expected)
-
-    def test_nested_binding_setup_requires_full_source(self) -> None:
-        for path in (
             "bindings/python/rust-toolchain.toml", "bindings/python/uv.toml",
             "bindings/python/new-setup.conf", "integrations/verify/rust-toolchain.toml",
+            "integrations/verify/syntect/Cargo.toml",
+            "integrations/verify/syntect/Cargo.lock",
+            "integrations/verify/syntect/deny.toml",
+            ".github/workflows/check.yml",
         ):
             with self.subTest(path=path):
                 self.assertEqual(
+                    plan("local", path),
+                    {"tier": "full", "checks": full_source},
+                )
+                self.assertEqual(
                     plan("ready", path),
-                    {"tier": "full", "checks": ["docs", "core", "dependencies", "fuzz", "editors"]},
+                    {"tier": "cheap", "checks": ["docs", "core"]},
                 )
 
+    def test_malformed_and_empty_path_sets_fall_back_locally_but_fail_ready(self) -> None:
+        full_source = ["docs", "core", "dependencies", "fuzz", "editors"]
+        for paths in (
+            ("../escape.rs",), ("/absolute.rs",), ("src\\file.rs",),
+            ("src/\rfile.rs",), (),
+        ):
+            with self.subTest(paths=paths):
+                local = plan_result("local", *paths)
+                self.assertEqual(local.returncode, 0, local.stderr)
+                self.assertEqual(
+                    json.loads(local.stdout),
+                    {"tier": "full", "checks": full_source},
+                )
+                self.assertEqual(plan_result("ready", *paths).returncode, 2)
+
+    def test_ready_and_local_path_class_routing_is_split(self) -> None:
+        full_source = ["docs", "core", "dependencies", "fuzz", "editors"]
+        cases = (
+            ("docs", ("README.md",), {"tier": "docs", "checks": ["docs"]},
+             {"tier": "docs", "checks": ["docs"]}),
+            ("ordinary source", ("src/lib.rs",), {"tier": "cheap", "checks": ["core"]},
+             {"tier": "cheap", "checks": ["core"]}),
+            ("editor input", ("integrations/vscode/src/extension.ts",),
+             {"tier": "cheap", "checks": ["core", "editors"]},
+             {"tier": "cheap", "checks": ["core"]}),
+            ("archive manifest", ("SOURCES.md",), {"tier": "cheap", "checks": ["core"]},
+             {"tier": "cheap", "checks": ["core"]}),
+            ("risky setup", ("Cargo.toml",), {"tier": "full", "checks": full_source},
+             {"tier": "cheap", "checks": ["docs", "core"]}),
+            ("workflow", (".github/workflows/check.yml",),
+             {"tier": "full", "checks": full_source},
+             {"tier": "cheap", "checks": ["docs", "core"]}),
+            ("unknown", ("unmapped/input.bin",), {"tier": "full", "checks": full_source},
+             {"tier": "cheap", "checks": ["docs", "core"]}),
+            ("broad", ("**",), {"tier": "full", "checks": full_source},
+             {"tier": "cheap", "checks": ["docs", "core"]}),
+        )
+        forbidden = {"dependencies", "fuzz", "editors", "binaries"}
+        for name, paths, local_expected, ready_expected in cases:
+            with self.subTest(path_class=name):
+                self.assertEqual(plan("local", *paths), local_expected)
+                ready = plan("ready", *paths)
+                self.assertEqual(ready, ready_expected)
+                self.assertFalse(forbidden.intersection(ready["checks"]))
 
     def test_malformed_path_sets_fail_rather_than_selecting_a_cheap_tier(self) -> None:
         for path in ("../escape.rs", "/absolute.rs", "src\\file.rs", "src/\rfile.rs"):
-            self.assertNotEqual(plan_result("ready", path).returncode, 0)
+            self.assertEqual(plan_result("ready", path).returncode, 2)
 
     def test_draft_with_new_heavy_workflow_path_never_selects_automatic_heavy_checks(self) -> None:
         self.assertEqual(
@@ -133,8 +180,6 @@ class CiPlanContractTests(unittest.TestCase):
                     set(result["checks"]),
                     {"docs", "core", "dependencies", "fuzz", "editors", "binaries"},
                 )
-
-    def test_automatic_plans_never_select_the_cross_platform_binary_group(self) -> None:
         for mode in ("draft", "ready", "push"):
             for path in (
                 "README.md", "src/bin/daml-fmt.rs", "src/bin/daml-lsp.rs",
@@ -157,7 +202,7 @@ class CiPlanContractTests(unittest.TestCase):
         assert_selected(result["checks"], "core")
 
     def test_archive_manifest_keeps_native_compilation_without_platform_packaging(self) -> None:
-        for mode in ("ready",):
+        for mode in ("ready", "local"):
             for paths in (("SOURCES.md",), ("README.md", "SOURCES.md")):
                 with self.subTest(mode=mode, paths=paths):
                     result = plan(mode, *paths)
@@ -175,17 +220,18 @@ class CiPlanContractTests(unittest.TestCase):
             {"core"},
         )
 
-    def test_semantic_editor_fixture_changes_select_real_editor_checks(self) -> None:
-        for mode in ("ready",):
-            for path in (
-                "tests/fixtures/semantic-editor/workspace/daml.bundle",
-                "tests/fixtures/semantic-editor/providers/Http.daml",
-                "tests/fixtures/semantic-editor/contracts/Adapter.daml",
-            ):
-                with self.subTest(mode=mode, path=path):
-                    result = plan(mode, path)
-                    self.assertEqual(result["tier"], "cheap")
-                    self.assertEqual(set(result["checks"]), {"core", "editors"})
+    def test_semantic_editor_fixture_changes_select_editor_checks_locally(self) -> None:
+        for path in (
+            "tests/fixtures/semantic-editor/workspace/daml.bundle",
+            "tests/fixtures/semantic-editor/providers/Http.daml",
+            "tests/fixtures/semantic-editor/contracts/Adapter.daml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    plan("local", path),
+                    {"tier": "cheap", "checks": ["core", "editors"]},
+                )
+                self.assertEqual(plan("ready", path), {"tier": "cheap", "checks": ["core"]})
 
     def test_parser_and_native_formatter_use_core_while_nightly_covers_editor_and_fuzz(self) -> None:
         required = {"core"}
@@ -201,45 +247,44 @@ class CiPlanContractTests(unittest.TestCase):
 
 
     def test_lock_workflow_and_protocol_changes_cannot_select_docs_only(self) -> None:
-        self.assertTrue({"core", "dependencies"} <= set(plan("ready", "Cargo.lock")["checks"]))
-        workflow = plan("ready", ".github/workflows/check.yml")
-        self.assertEqual(workflow["tier"], "full")
+        self.assertEqual(
+            plan("local", "Cargo.lock"),
+            {"tier": "full", "checks": ["docs", "core", "dependencies", "fuzz", "editors"]},
+        )
+        self.assertEqual(
+            plan("ready", "Cargo.lock"),
+            {"tier": "cheap", "checks": ["docs", "core"]},
+        )
+        self.assertEqual(
+            plan("ready", ".github/workflows/check.yml"),
+            {"tier": "cheap", "checks": ["docs", "core"]},
+        )
         assert_selected(plan("ready", "src/lsp/adapter.rs")["checks"], "core")
-
-    def test_syntect_consumer_dependency_inputs_require_automatic_full_source(self) -> None:
-        for mode in ("ready",):
-            for filename in ("Cargo.toml", "Cargo.lock", "deny.toml"):
-                with self.subTest(mode=mode, filename=filename):
-                    result = plan(mode, f"integrations/verify/syntect/{filename}")
-                    self.assertEqual(result["tier"], "full")
-                    self.assertEqual(
-                        set(result["checks"]), {"docs", "core", "dependencies", "fuzz", "editors"}
-                    )
-
     def test_syntect_grammar_and_checks_keep_existing_integration_boundaries(self) -> None:
         for path in (
             "integrations/syntect/daml.sublime-syntax",
             "integrations/verify/syntect/tests/grammar.rs",
         ):
             with self.subTest(path=path):
-                result = plan("ready", path)
-                self.assertEqual(result["tier"], "cheap")
-                self.assertEqual(set(result["checks"]), {"core", "editors"})
+                self.assertEqual(
+                    plan("local", path),
+                    {"tier": "cheap", "checks": ["core", "editors"]},
+                )
+                self.assertEqual(plan("ready", path), {"tier": "cheap", "checks": ["core"]})
 
-    def test_unknown_and_broad_paths_fail_closed(self) -> None:
-        all_checks = {"docs", "core", "dependencies", "fuzz", "editors"}
-        for path in ("unmapped/new-input.bin", ".", "*.rs"):
+    def test_unknown_and_broad_paths_use_local_full_and_ready_cheap(self) -> None:
+        full_source = ["docs", "core", "dependencies", "fuzz", "editors"]
+        for path in ("unmapped/new-input.bin", ".", "*.rs", "*", "**"):
             with self.subTest(path=path):
-                result = plan_result("ready", path)
-                if result.returncode == 0:
-                    selected = json.loads(result.stdout)
-                    self.assertEqual(selected["tier"], "full")
-                    self.assertEqual(set(selected["checks"]), all_checks)
-
-    def test_empty_path_file_is_not_a_successful_plan(self) -> None:
-        result = plan_result("ready")
-        self.assertNotEqual(result.returncode, 0)
-
+                self.assertEqual(
+                    plan("local", path),
+                    {"tier": "full", "checks": full_source},
+                )
+                self.assertEqual(
+                    plan("ready", path),
+                    {"tier": "cheap", "checks": ["docs", "core"]},
+                )
+    
     def test_required_aggregate_rejects_failures_and_stale_head_but_ignores_base_tip(self) -> None:
         planner_spec = importlib.util.spec_from_file_location("ci_plan", PLANNER)
         self.assertIsNotNone(planner_spec)
@@ -247,7 +292,7 @@ class CiPlanContractTests(unittest.TestCase):
         planner = importlib.util.module_from_spec(planner_spec)
         planner_spec.loader.exec_module(planner)
         required_result = planner.required_result
-        selected = plan("ready", ".github/workflows/check.yml")["checks"]
+        selected = plan("local", ".github/workflows/check.yml")["checks"]
         success = {
             "docs": "success", "core": "success", "dependencies": "success",
             "fuzz": "success", "editors": "success",
