@@ -6,7 +6,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) and the relevant documented behavior bef
 
 - Before pushing a clean commit, run `./scripts/check-changes`, or let the normal push hook run it with `git -c core.hooksPath=.githooks push`. Do not run the same gate immediately before a hooked push.
 - `scripts/ci-plan.py` owns both local and hosted routing. `scripts/check-tier` owns source check execution. Do not add workflow-only check lists or local bypass flags.
-- Ordinary source changes run the cheap selected checks. Shared/setup/control/unknown scope automatically runs full source. Preserve every check that the selected route requires.
+- Hosted ready PRs run only the cheap tier (`docs`, `core`). The local push gate runs the heavy groups a path set selects; shared/setup/control/unknown/broad/malformed scope runs full source there. Preserve every check that the selected route requires.
 - The hook verifies outgoing tips from the clean current worktree. Push other tips from their own clean worktrees; never silently omit them.
 - Run `./scripts/check-tier full` for explicit complete source verification. Nightly uses those same source groups, including sanitizer fuzz and real editor/LSP behavior.
 - Follow [building and checks](docs/development/building.md) for tool preparation and [CI ownership](docs/development/ci.md) for real local/hosted differences.

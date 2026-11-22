@@ -28,9 +28,22 @@ unsupported path bytes fail closed instead of truncating the change set.
 `scripts/ci-plan.py` is the only path-to-check-set owner.
 `scripts/check-tier` runs a named source group; `scripts/check-tier full`
 asks that planner for the complete source set. The tracked pre-push hook and
-documented `scripts/check-changes` command use the ready-PR route, reject dirty
-or changed outgoing heads, and run every selected group through that runner.
-There is no bypass option or local receipt store.
+documented `scripts/check-changes` command use the planner's `local` route,
+reject dirty or changed outgoing heads, and run every selected group through
+that runner. There is no bypass option or local receipt store.
+
+Hosted ready-PR runs and the local push gate split the work. The hosted `ready`
+route keeps only the cheap tier, `docs` and `core`, for every path set. The
+`local` route keeps the heavy groups (`dependencies`, `fuzz`, `editors`) that a
+path set selects, so the push gate and the nightly carry them, not the PR.
+
+| Changed paths | Hosted `ready` | Local push gate (`local`) |
+|---|---|---|
+| Positive documentation map only | `docs` | `docs` |
+| Ordinary source, tests, examples, Python binding, `SOURCES.md` | `core` (`docs` too when `SOURCES.md` has prose beside it) | same |
+| Integrations and semantic-editor fixtures | `core` | `core`, `editors` |
+| Manifests, locks, toolchains, fuzz, CI/setup/control, unknown or broad (`*`, `**`, `.`) | `docs`, `core` | full source |
+| Empty or malformed path sets | planning fails | full source |
 
 The hosted workflows prepare pinned tools, route the selected groups onto
 parallel clean runners, and report statuses/artifacts. Local execution is
@@ -60,12 +73,15 @@ available for the following artifact-upload step.
   result fails rather than treating skipped verification as a pass.
 - **Docs:** only the lightweight `git diff --check` documentation check runs
   within the planner job.
-- **Cheap:** known source/test/example/Python-binding changes run `core`.
-  Integration and semantic-editor fixture changes also run `editors`.
-- **Full source:** shared manifests/locks, toolchains, dependency policy, fuzz
-  harnesses, CI/setup/control files, and unknown paths automatically select all
-  source identities on the PR itself. No dispatch proof or admission lookup is
-  needed. Invalid or incomplete path input fails planning.
+- **Cheap:** every non-documentation ready PR runs `core` hosted; risky,
+  unknown and broad path sets also run the `docs` whitespace check.
+  Integration and semantic-editor fixture changes add `editors` only in the
+  local push gate.
+- **Full source (local):** shared manifests/locks, toolchains, dependency policy,
+  fuzz harnesses, CI/setup/control files, unknown and broad paths, and empty or
+  malformed path sets select every source group in the local push gate. Hosted
+  ready PRs never select `dependencies`, `fuzz`, `editors`, or `binaries`;
+  invalid or incomplete hosted path input fails planning.
 - **Push:** default-branch pushes run only planner/admission and whitespace
   checks, never heavy source verification.
 - **Manual full:** dispatching `Check` runs every check group through the same
@@ -81,10 +97,11 @@ At 03:47 UTC, `Check` runs all remaining source groups on the default-branch
 snapshot: core, dependencies, fuzz (including AddressSanitizer seeds), and the
 real editor/LSP integration suite. No platform binaries, browser release SDK,
 release candidate collection, or release-security scans are added to this route.
-Full source runs nightly or by advisory dispatch; risky PRs also run it
-automatically. Ordinary source PRs intentionally lose pre-merge sanitizer and
-shared-engine installed-editor coverage. Nightly detects those failures after
-merge; release qualification remains exact-candidate and fail-closed.
+Full source runs nightly, by advisory dispatch, and in the local push gate for
+risky paths. Ready PRs intentionally lose hosted pre-merge dependency policy,
+sanitizer, and installed-editor coverage. The local push gate and the nightly
+detect those failures; release qualification remains exact-candidate and
+fail-closed.
 
 Before heavy setup, one Actions query reads the head of the last successful
 scheduled `Check` run. An equal head skips the source work and reports
@@ -128,15 +145,16 @@ release-only.
 | `docs` | Whitespace check for the positive documentation map. |
 | `core` | `./scripts/check`: Rust formatting, library checks, all-feature Clippy and tests, rustdoc, and isolated Python binding checks. |
 | `dependencies` | Cargo advisory, license, ban, and source checks for the native, Python-binding, and all-feature graphs. |
-| `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Full-source PRs/nightlies/manual runs retain this boundary. |
-| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Affected integration/semantic-editor fixtures and every full-source run select it. |
+| `fuzz` | Fuzz harness lint, fuzz dependency policy, and bounded AddressSanitizer smoke. Full-source local pushes, nightlies and manual runs retain this boundary. |
+| `editors` | VS Code packaging, dependency audits, language-server build, grammar checks, and installed Electron lifecycle/semantic verification. Local pushes of affected integration/semantic-editor fixtures, every full-source run, nightlies and manual runs select it. |
 | `binaries` | Release qualification and manual `Binaries` only: native archives/installed contracts and stable-ABI Python wheels on Ubuntu 22.04 x64, macOS ARM64 and Windows x64, exercised on CPython 3.12 and 3.13. |
 
 `src/**`, ordinary `tests/**`, and `examples/**` select `core`.
 `integrations/**` and `tests/fixtures/semantic-editor/**` additionally select
-`editors`. Shared lockfiles/manifests and setup changes select every source
-group. A mixed docs/runtime change cannot suppress its runtime checks;
-renames/deletions are classified using both sides of the complete path set.
+`editors` in the local push gate. Shared lockfiles/manifests and setup changes
+select every source group in the local push gate. A mixed docs/runtime change
+cannot suppress its runtime checks; renames/deletions are classified using both
+sides of the complete path set.
 
 Native archive, Python wheel and VSIX Actions artifacts retain the existing
 14-day period. Automatic core checks compile the native executables on Ubuntu

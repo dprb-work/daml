@@ -36,7 +36,7 @@ else:
     raw = git("diff", "--no-renames", "--name-only", "-z", diff_range)
     if raw and not raw.endswith(b"\0"):
         raise SystemExit("incomplete NUL-delimited changed paths")
-    paths, mode = raw[:-1].decode().split("\0") if raw else ["*"], "ready"
+    paths, mode = raw[:-1].decode().split("\0") if raw else ["*"], "local"
 subprocess.run(["python3", "tests/ci_plan_test.py"], check=True)
 planner = runpy.run_path(str(root / "scripts/ci-plan.py"))
 selected = planner["plan"](mode, paths)

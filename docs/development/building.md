@@ -19,16 +19,17 @@ Build the library:
 cargo build --locked
 ```
 
-Before pushing, run the same path-routed gate as PR CI from a clean worktree:
+Before pushing, run the routed local gate from a clean worktree:
 
 ```sh
 ./scripts/check-changes
 ```
 
 The command fetches `origin/main`, checks the complete merge-base path set, and
-uses `scripts/ci-plan.py`. Docs run whitespace checks; ordinary source runs
-core; affected editor inputs add editor verification; risky/shared/unknown
-inputs run every source group. No bypass option is provided.
+uses the `local` route of `scripts/ci-plan.py`. Docs run whitespace checks;
+ordinary source runs core; affected editor inputs add editor verification;
+risky/shared/unknown/broad inputs and unclassifiable path sets run every source
+group. Hosted ready PRs run only the cheap tier. No bypass option is provided.
 
 Enable the tracked hook with `git config core.hooksPath .githooks`, or invoke
 the normal hook explicitly with `git -c core.hooksPath=.githooks push`.
@@ -79,6 +80,6 @@ CI runs dependency checks separately from the Rust gate. Root `deny.toml` allows
 ## CI path selection
 
 The path planner classifies changed files before installing heavier tools. See [CI path selection](ci.md) for the recorded workflow contract, path map, check groups, and platform limits. That document describes the workflow at its recorded revision; inspect current workflow files before using it as evidence of current CI behavior.
-PR CI builds native executables on Ubuntu 24.04; default-branch pushes run no heavy checks. The full source suite, including fuzz and editor/LSP behavior, runs nightly. Risky/shared/unknown PRs automatically run it too. Platform packaging, browser SDK qualification, and complete release security remain in the existing [exact-candidate release/platform gate](../../.github/workflows/prepare-release.yml), also reachable through the unchanged default manual `Check` dispatch.
+PR CI builds native executables on Ubuntu 24.04; default-branch pushes run no heavy checks. The full source suite, including fuzz and editor/LSP behavior, runs nightly and in the local push gate for risky/shared/unknown changes; ready PRs never run it hosted. Platform packaging, browser SDK qualification, and complete release security remain in the existing [exact-candidate release/platform gate](../../.github/workflows/prepare-release.yml), also reachable through the unchanged default manual `Check` dispatch.
 
 Changes should include focused regression coverage where behavior changes and preserve the relevant API and resource limits. Run the routed gate before requesting review, or let the normal push hook run it once. Use the explicit full-source command when needed. There are no additional documentation-specific governance gates.
