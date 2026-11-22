@@ -10,9 +10,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
 CHECKS = ("docs", "core", "dependencies", "fuzz", "editors", "binaries")
+MODES = ("draft", "ready", "local", "push", "manual-full", "nightly")
 # Release-only platform policy: see the header of .github/workflows/prepare-release.yml.
 # Core already compiles native executables on Linux; do not duplicate packaging on PRs.
 AUTOMATIC_CHECKS = tuple(check for check in CHECKS if check != "binaries")
+# Hosted ready-PR runs keep only these; the local push gate and the nightly run the rest.
+CHEAP_CHECKS = ("docs", "core")
+BROAD_PATHS = {"*", "**", "."}
 DOCS = {
     "README.md",
     "CONTRIBUTING.md",
@@ -29,20 +33,31 @@ DOCS = {
 }
 
 
+def malformed(path: str) -> bool:
+    """Return whether a changed path is not a plain repository-relative path."""
+    parsed = PurePosixPath(path)
+    return (
+        not path
+        or any(char in path for char in ("\\", "\x00", "\n", "\r"))
+        or parsed.is_absolute()
+        or ".." in parsed.parts
+    )
+
+
 def plan(
     mode: str, paths: Sequence[str], head: str = "", last_success_head: str = ""
 ) -> dict[str, object]:
     """Return the tier and stable check identities for repo-relative paths."""
-    if mode not in {"draft", "ready", "push", "manual-full", "nightly"}:
+    if mode not in MODES:
         raise ValueError(f"unknown mode: {mode}")
+    invalid = [path for path in paths if malformed(path)]
+    # The local push gate cannot classify these, so it runs every source group.
+    if mode == "local" and (not paths or invalid):
+        return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
     if not paths:
         raise ValueError("changed paths must not be empty")
-    for path in paths:
-        if not path or any(char in path for char in ("\\", "\x00", "\n", "\r")):
-            raise ValueError(f"malformed changed path: {path!r}")
-        parsed = PurePosixPath(path)
-        if parsed.is_absolute() or ".." in parsed.parts or path in {".", ".."}:
-            raise ValueError(f"changed path is not repository-relative: {path!r}")
+    if invalid:
+        raise ValueError(f"malformed changed path: {invalid[0]!r}")
 
     if mode == "draft":
         return {"tier": "draft", "checks": []}
@@ -54,7 +69,18 @@ def plan(
         return {"tier": "full", "checks": list(CHECKS)}
     if mode == "push":
         return {"tier": "push", "checks": ["docs"]}
-    if any(path in {"*", "**"} for path in paths):
+    routed = route(paths)
+    if mode == "local" or routed["tier"] == "docs":
+        return routed
+    return {
+        "tier": "cheap",
+        "checks": [check for check in routed["checks"] if check in CHEAP_CHECKS],
+    }
+
+
+def route(paths: Sequence[str]) -> dict[str, list[str] | str]:
+    """Return the local push gate's checks for valid, non-empty changed paths."""
+    if any(path in BROAD_PATHS for path in paths):
         return {"tier": "full", "checks": list(AUTOMATIC_CHECKS)}
 
     changed = set(paths)
@@ -123,9 +149,7 @@ def required_result(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--mode", required=True, choices=("draft", "ready", "push", "manual-full", "nightly")
-    )
+    parser.add_argument("--mode", required=True, choices=MODES)
     parser.add_argument(
         "--paths-file", required=True, help="newline-separated repository-relative changed paths"
     )
