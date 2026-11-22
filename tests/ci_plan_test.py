@@ -260,6 +260,7 @@ class CiPlanContractTests(unittest.TestCase):
             {"tier": "cheap", "checks": ["docs", "core"]},
         )
         assert_selected(plan("ready", "src/lsp/adapter.rs")["checks"], "core")
+
     def test_syntect_grammar_and_checks_keep_existing_integration_boundaries(self) -> None:
         for path in (
             "integrations/syntect/daml.sublime-syntax",
@@ -284,7 +285,7 @@ class CiPlanContractTests(unittest.TestCase):
                     plan("ready", path),
                     {"tier": "cheap", "checks": ["docs", "core"]},
                 )
-    
+
     def test_required_aggregate_rejects_failures_and_stale_head_but_ignores_base_tip(self) -> None:
         planner_spec = importlib.util.spec_from_file_location("ci_plan", PLANNER)
         self.assertIsNotNone(planner_spec)
