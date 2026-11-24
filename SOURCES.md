@@ -175,7 +175,7 @@ source change. Upgrading the editor support baseline is a separate decision.
 `integrations/verify/package-lock.json` pins independent development-only
 `@vscode/test-electron` 3.1.0 and TextMate 9.3.2/Oniguruma 2.0.1 verification
 tools. The Electron test helper requires Node 22 or newer; the editor workflow
-continues to use Node 24.19.0. Its downloaded VS Code runtime remains pinned
+continues to use Node 24.22.3. Its downloaded VS Code runtime remains pinned
 to 1.105.1 in the verifier and is an ignored local test cache, not a redistributed
 part of DAML. Native archives retain their separate Cargo graph and legal payload.
 
@@ -221,7 +221,7 @@ reported CVE-2026-118764. Release-side dependency inspection found that VSCE 4.1
 and 4.1.1-0 still declare the affected range. This is a bounded local dependency
 override, not upstream endorsement or an advisory suppression. The inspected
 VSCE calls use retained named minimatch APIs through CommonJS, and the release
-build uses Node 24.19.0, above minimatch 11's Node 22 minimum. The installed
+build uses Node 24.22.3, above minimatch 11's Node 22 minimum. The installed
 language client's minimatch 5 dependency is outside this override.
 Real VSIX packaging, installed Electron-host behavior and a fresh complete Trivy
 scan must establish compatibility and remediation before release acceptance;

@@ -8,6 +8,7 @@ case "${1:?name a check group or full}" in
   core) exec ./scripts/check ;;
   admission)
     python3 scripts/release_common.py check-version
+    python3 -B scripts/check_base_deps.py
     python3 -B -m unittest discover -s tests -p test_release_delivery.py
     python3 -B -m unittest discover -s tests -p test_release_security.py
     python3 -B tests/ci_local_test.py
