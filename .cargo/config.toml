@@ -1,2 +1,2 @@
 [env]
-TMPDIR = { value = ".scratch/tmp", relative = true }
+TMPDIR = { value = ".scratch/tmp", relative = true, force = true }

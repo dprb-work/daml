@@ -27,8 +27,12 @@ The check, fuzz, and measurement scripts create it automatically and export
 installing Cargo tools. Build caches stay in their existing locations.
 These commands do not clear unrelated `.scratch/` contents.
 
-For a direct Node verification command, first create `.scratch/tmp` at the
-repository root and export `TMPDIR="$PWD/.scratch/tmp"` before changing directories.
+For direct non-socket Node checks, first create `.scratch/tmp` at the repository
+root and export `TMPDIR="$PWD/.scratch/tmp"` before changing directories.
+Socket-bearing VS Code/Electron and Chromium checks instead use a short, owned
+`/tmp` directory and remove it on exit. The editor check script and browser CI
+job set this up automatically; direct browser verification follows its
+[own instructions](../../bindings/browser/verify/README.md).
 The browser verifier uses Playwright's library API, not its test runner, so
 there is no Playwright `outputDir` to configure.
 

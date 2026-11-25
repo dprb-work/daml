@@ -42,7 +42,9 @@ case "${1:?name a check group or full}" in
       npm ci --ignore-scripts
       npm audit --audit-level=high
       npm run test:grammar
-      npm run test:vscode)
+      socket_tmp=$(mktemp -d /tmp/daml-editor.XXXXXX)
+      trap 'rm -rf "$socket_tmp"' EXIT
+      TMPDIR="$socket_tmp" npm run test:vscode)
     ;;
   *) echo "Unknown check group: $1" >&2; exit 2 ;;
 esac
