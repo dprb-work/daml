@@ -306,6 +306,7 @@ From the repository root, select the browser package directory. Use the pinned
 Rust toolchain, Node.js 22 or newer, and `wasm-bindgen` 0.2.129:
 
 ```sh
+mkdir -p .scratch/tmp
 cd bindings/browser
 rustup target add wasm32-unknown-unknown
 npm run build -- --dev  # local feedback only

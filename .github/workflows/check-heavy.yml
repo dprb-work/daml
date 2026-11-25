@@ -43,6 +43,8 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup show
+      - name: Create Cargo scratch directory before tool installation
+        run: mkdir -p .scratch/tmp
       - name: Install dependency policy tool
         run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Check advisories, licenses, bans, and sources
@@ -63,6 +65,8 @@ jobs:
         run: |
           rustup show
           (cd fuzz && rustup show)
+      - name: Create Cargo scratch directory before tool installation
+        run: mkdir -p .scratch/tmp
       - name: Install pinned fuzz and policy tools
         run: |
           cargo install cargo-fuzz --version 0.13.2 --locked

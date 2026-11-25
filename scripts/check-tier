@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
+mkdir -p .scratch/tmp
+export TMPDIR="$root/.scratch/tmp"
 case "${1:?name a check group or full}" in
   full) exec python3 scripts/check-changes full ;;
   docs) git diff --check --no-renames "${2:-HEAD^..HEAD}" ;;
@@ -40,7 +42,9 @@ case "${1:?name a check group or full}" in
       npm ci --ignore-scripts
       npm audit --audit-level=high
       npm run test:grammar
-      npm run test:vscode)
+      socket_tmp=$(mktemp -d /tmp/daml-editor.XXXXXX)
+      trap 'rm -rf "$socket_tmp"' EXIT
+      TMPDIR="$socket_tmp" npm run test:vscode)
     ;;
   *) echo "Unknown check group: $1" >&2; exit 2 ;;
 esac
