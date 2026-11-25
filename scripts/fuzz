@@ -15,6 +15,8 @@ case "$target" in
     *) echo 'target must be parse, schema, resolve, or format' >&2; exit 2 ;;
 esac
 cd "$root/fuzz"
+mkdir -p "$root/.scratch/tmp"
+export TMPDIR="$root/.scratch/tmp"
 # cargo-fuzz does not expose Cargo's --locked switch.
 # Validate and fetch the committed graph before its internal build.
 cargo fetch --locked

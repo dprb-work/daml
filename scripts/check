@@ -3,6 +3,8 @@ set -eu
 
 # Resolve the crate root so this also works from outside the repository.
 cd "$(dirname "$0")/.."
+mkdir -p .scratch/tmp
+export TMPDIR="$PWD/.scratch/tmp"
 
 cargo fmt --all --check
 cargo fmt --manifest-path fuzz/Cargo.toml --check

@@ -16,8 +16,21 @@ If Cargo is not on your shell's PATH after installing Rust, load its environment
 Build the library:
 
 ```sh
+mkdir -p .scratch/tmp
 cargo build --locked
 ```
+
+Cargo uses `.scratch/tmp` for temporary files through `.cargo/config.toml`.
+Create that directory before the first direct Cargo invocation in a fresh worktree.
+The check, fuzz, and measurement scripts create it automatically and export
+`TMPDIR` for their Rust, Python, and Node subprocesses. CI creates it before
+installing Cargo tools. Build caches stay in their existing locations.
+These commands do not clear unrelated `.scratch/` contents.
+
+For a direct Node verification command, first create `.scratch/tmp` at the
+repository root and export `TMPDIR="$PWD/.scratch/tmp"` before changing directories.
+The browser verifier uses Playwright's library API, not its test runner, so
+there is no Playwright `outputDir` to configure.
 
 Before pushing, run the routed local gate from a clean worktree:
 

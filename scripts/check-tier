@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root="$PWD"
+mkdir -p .scratch/tmp
+export TMPDIR="$root/.scratch/tmp"
 case "${1:?name a check group or full}" in
   full) exec python3 scripts/check-changes full ;;
   docs) git diff --check --no-renames "${2:-HEAD^..HEAD}" ;;

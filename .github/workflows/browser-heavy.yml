@@ -26,6 +26,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
+      - name: Create tool scratch directory
+        run: mkdir -p .scratch/tmp
       - name: Install pinned Rust and browser build tools
         run: |
           rustup show
@@ -76,6 +78,8 @@ jobs:
           node bindings/browser/verify/node_modules/typescript/bin/tsc -p "$consumer/tsconfig.json"
       - name: Exercise the packed SDK in real Chromium
         run: node bindings/browser/verify/run.mjs --dist="$RUNNER_TEMP/daml-browser-sdk/package/dist" --native-result="$RUNNER_TEMP/native-parity.json"
+        env:
+          TMPDIR: ${{ github.workspace }}/.scratch/tmp
       - name: Retain the qualified browser package
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
