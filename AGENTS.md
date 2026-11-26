@@ -2,7 +2,7 @@
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the relevant documented behavior before editing. Keep the primary checkout read-only; use a linked worktree.
 
-Follow [docs/conventions.md](docs/conventions.md) for general code and style rules; this file holds only DAML's own. It is a byte-identical copy of project-template's generated `CONVENTIONS.md`: update it by copying, never edit it here. `python3 scripts/check_base_deps.py --template <project-template checkout> .` checks the copy; `scripts/check_base_deps.py` is copied from project-template the same way.
+Follow [docs/conventions.md](docs/conventions.md) for general code and style rules; this file holds only DAML's own. It is a byte-identical copy of project-template's authored `CONVENTIONS.md`: update it by copying, never edit it here. `python3 scripts/check_base_deps.py --template <project-template checkout> .` checks the copy; `scripts/check_base_deps.py` is copied from project-template the same way.
 
 ## Verification
 

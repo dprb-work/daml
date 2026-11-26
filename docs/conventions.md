@@ -1,6 +1,6 @@
 # Conventions
 
-These are the general code and style rules shared by this family of repositories. Every repository carries an identical copy of this generated file, kept in step by a drift check: do not edit a copy; change the upstream rules instead. A repository's own instructions (its `AGENTS.md`) take precedence where they differ, and a language section applies only where that language is used.
+These are the general code and style rules shared by this family of repositories. CONVENTIONS.md in project-template is the authored source. Every repository carries an identical copy at docs/conventions.md, kept in step by a drift check: do not edit a copy; change CONVENTIONS.md in project-template instead. A repository's own instructions (its `AGENTS.md`) take precedence where they differ, and a language section applies only where that language is used.
 
 ## General
 
@@ -8,6 +8,15 @@ These are the general code and style rules shared by this family of repositories
   and commit subjects. The cancel family is the one exception: write
   `cancelled` and `cancelling` with two l, as Python does. Rename existing
   public names only deliberately, as a listed change.
+- Use the worktree's ignored .scratch/ for general temporary work, including
+  notes and test output, never durable records or a replacement for the selected
+  tracker. Removing the worktree removes its scratch. Test output uses
+  .scratch/pytest for pytest's base temporary directory, .scratch/tmp for
+  Python, Rust, and Node test runs' `TMPDIR` (create it before the run), and
+  .scratch/playwright for Playwright output. Each tool cleans only its own
+  subfolder, never .scratch/ as a whole. Build caches such as target/, .vite,
+  and tool caches stay in their native locations. Tests that need Unix sockets
+  use a short, owned directory under /tmp to avoid socket-path length limits.
 - For all code, put comments on their own line above the explained line, never trailing on it.
   Only tool-required same-line markers (linter/Sonar suppressions or type-checker directives) are exceptions.
 - When the owner declares a Sonar finding a false positive, disable it in code on the reported line with the rule ID and a short reason; never mark it on the server or rewrite working code.
@@ -93,17 +102,26 @@ These are the general code and style rules shared by this family of repositories
   repository's release or main branch and can merge on its own. Never stack a
   branch on an unmerged pull request; a change that truly needs another
   unmerged change is blocked, not stacked.
-- Small adjustments may share a pull request. Up to five minor, unrelated
-  changes may go into one pull request, or ride on an open pull request that
-  has not yet been reviewed, when each is something the owner would skim and
-  approve: documentation wording, a rename, a spelling fix, an explanatory or
-  analyzer-disable comment, a default value. Each adjustment is one line in the
-  description, so it can be read and rejected alone; one that the owner or a
-  reviewer questions is taken out rather than holding the rest. Not eligible: a
+- Small changes share a pull request. A change under about 50 changed lines,
+  tests included, does not get a pull request of its own: it rides with up to
+  four other small changes in one pull request per repository, opened once a
+  day or as soon as five are ready. A minor change of any size that the owner
+  would skim and approve (documentation wording, a rename, a spelling fix, an
+  explanatory or analyzer-disable comment, a default value) may join such a
+  pull request too, or ride on an open pull request that has not yet been
+  reviewed. Each change is one line in the description, so it can be read and
+  rejected alone; one that the owner or a reviewer questions is taken out
+  rather than holding the rest. A bundle holds at most five changes and about
+  100 changed production lines; a change that would exceed either waits for
+  the next bundle, and a single change above the line cap gets its own pull
+  request. However small, these keep their own pull request: a
   feature; a behavior change that needs its own tests-first round; anything
-  touching authorization, credentials, concurrency or the CI gate; and any
-  bundle above about 100 changed production lines. Those keep their own pull
-  request.
+  touching authorization, credentials, concurrency or the CI gate.
+  The exemption for changes that unblock pushes or the nightly run, security
+  fixes, and owner-designated urgent changes skips only the waiting, not
+  bundling, and a lane about to push takes eligible Ready ride-along items
+  from its repository before review, with the same initiative first and
+  within the five-item and about 100-production-line bundle limits.
 - The project owns how a pull request description is built: its conventions
   and, where present, its `.github/pull_request_template.md` define it. Start
   every description from that template; `gh pr create --body-file` skips it, so
@@ -115,18 +133,26 @@ These are the general code and style rules shared by this family of repositories
 - Prefer functional, data-oriented design when it fits the domain and framework. Start with small functions, explicit inputs and outputs, closures that capture data (not control flow), generators, comprehensions, `functools`, `itertools`, and `contextlib` lifecycle helpers before adding private behavior classes. A class needs a reason a reader can name: identity, polymorphism, a protocol, long-lived owned state, or a framework contract.
 - Do not subclass `dict`, `list` or `set` to attach behavior, and do not hide work (locks, I/O, construction) behind `__missing__`, `__getitem__` or a property. A cache is a function plus the project's cache helper.
 - Use one typed record per shape. Decode once into a record or a tagged union, then branch on the type with one exhaustive `match`; below the decoder, no `isinstance` check ends in `raise`. Do not pass `dict[str, Any]` between internal functions, build internal records as dict literals, or choose behavior by string comparison or string keys (`.get("kind") == "…"`, `x["key"]`); string keys belong at the decode boundary.
+- Records use the project's struct form (such as its `@struct` decorator), not `TypedDict`, and are serialized at the boundary with the project's serializer. Use `TypedDict` only where code must run with the standard library alone, for example a CI script that runs before dependencies are installed.
 - A closed set of named values that code compares or branches on (a status, a state, a kind, a reason) is an enum (by default `StrEnum` or `Enum`); code compares against its members, not string literals. `Literal` is for a small option set that is only passed through to one consumer.
-- Order new/touched Python modules: docstring; imports; one constants block; type aliases/type variables; domain types (enums, structs, protocols; data before behavior); public functions and classes with behavior; private helpers. Functions go top-down: entry points, then helpers in first-use order.
+- Module order: docstring; `from __future__` imports; imports (including an `if TYPE_CHECKING:` block at their end); `__all__` (package `__init__.py` only); module-level values: `logger = logging.getLogger(__name__)` first, then constants in one block; type aliases; domain types; public functions; private helpers; functions top-down; `if __name__ == '__main__':` last.
   Constants: public before private, related values adjacent, derived after inputs, units in names (`_SECONDS`, `_BYTES`), import-time values only. Never scatter constants or mass-reorder existing modules; reorder-only work is a separate deliberate PR.
+  - No `__version__` in source (the version comes from the package metadata).
+  - A module `__getattr__` only for an expensive optional import, with a reason.
+  - `@overload` signatures directly above their implementation.
+  - No module-level mutable state (registries, dict caches) except the logger and `functools` caches on functions.
+  - The `__main__` guard only in scripts, not library modules.
 - Declare value constraints on the type (for example `type Positive = Annotated[int, Meta(ge=1)]`) and let the decoder refuse bad values. Hand-write only cross-field rules, once, at the owner; do not re-check downstream.
 - Name a condition with more than two `and`/`or` terms as a predicate, or let the type carry it.
-- Declare type aliases with the `type` statement; do not use `NewType`. Do not add a `TypedDict` where the project has a record type. Do not `cast` to quiet the type checker: fix the type that forces it, or state the reason at the line.
+- Declare type aliases with the `type` statement; do not use `NewType`. Do not `cast` to quiet the type checker: fix the type that forces it, or state the reason at the line.
 - Do not import an underscore name from another module: it is that module's interface (drop the underscore), or the importing code belongs in that module.
+- Package re-exports and `__all__`. A package's `__init__.py` re-exports only the few names that are the package's primary entry point for its consumers, so consumers need not dig into submodules. The list is deliberately short; each re-exported name has a reason a consumer would look for it at the package level. Everything else is imported from the module that defines it, not from `__init__.py`. Only `__init__.py` files have an `__all__`, and it lists exactly those re-exports.
 - `pytest.raises` names the exception type; then assert the reason or the carried field, never `match=` on prose (the language-neutral exception rule).
 - For lifecycle or resource code, prefer `contextmanager`, `asynccontextmanager`, `ExitStack`, `AsyncExitStack`, or a cleanup callable over an ad hoc manager class.
 - For evolving state, prefer a transition function such as `next_state = step(state, event)` over mutating `self` when object identity is not the abstraction.
 - Prefer explicit pytest marks on each test instead of module-wide `pytestmark`.
 - Request pytest fixtures by naming them as test-function parameters, even when only their side effects are needed. Do not use `@pytest.mark.usefixtures`.
+- Share fixtures through the nearest common `conftest.py` (or root `pytest_plugins`) and helpers through support modules. Never import from another test module or another folder's `conftest.py`, and never add `__all__` or a re-export to keep a fixture import alive.
 - For inline test patches, use `monkeypatch` (or the test's existing seam).
 - In Ruff-managed repositories, prefer `ruff check --fix` before manual cleanup of autofixable issues.
 - Use concise Google-style docstrings when documentation is useful.
@@ -195,3 +221,10 @@ builds and use `--locked` where reproducibility is promised; a published library
 lockfile does not pin its consumers, so check supported dependency ranges too.
 Select dependency-policy checks, fuzzing, Loom and Miri for the actual risk rather
 than adding all tools automatically.
+
+## UI
+
+For repositories with a UI:
+
+- For UI changes, the pull request must show applicable hover, focus, selected, expanded, press feedback/toggle, disabled, busy and invalid states. Identify inapplicable states rather than inventing them.
+- Storybook examples and browser evidence must cover light and dark themes, wrapped content at 390px and desktop at 1440px. Compare label/control grouping and section gaps after text wraps. Check keyboard operation, including focus return for disclosed content where applicable.
